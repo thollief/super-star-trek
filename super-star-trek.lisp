@@ -500,6 +500,8 @@ empty string if the planet class can't be determined."
 (defstruct snapshot ; C: snapshot
   (crew 0) ; C: crew, crew complement
   (remaining-klingons 0) ; C: remkl
+  (captured-klingons 0)
+  (brig-free 0)
   (remaining-commanders 0) ; C: remcom
   (remaining-super-commanders 0) ; C: nscrem
   (remaining-bases 0) ; C: rembase
@@ -611,6 +613,8 @@ empty string if the planet class can't be determined."
 (defparameter *crew* +full-crew+) ; C: crew, crew complement
 (defparameter *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
 (defparameter *casualties* 0) ; C: casual
+(defparameter *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
+(defparameter *brig-free* 0 "room in the brig") ; C: brigfree
 (defparameter *dilithium-crystals-on-board-p* nil) ; C: icrystl
 ;; TODO - is the probability crystals will work or that they will fail?
 (defparameter *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
@@ -635,6 +639,7 @@ empty string if the planet class can't be determined."
 
 (defparameter *initial-klingons* 0) ; C: inkling
 (defparameter *remaining-klingons* 0) ; C: remkl
+(defparameter *captured-klingons* 0 "number of captured Klingons") ; C: kcaptured
 
 (defparameter *initial-commanders* 0) ; C: incom
 (defparameter *commander-quadrants* () "List of coordinate structs, these are quadrants containing commanders.")
@@ -665,6 +670,8 @@ empty string if the planet class can't be determined."
 
   (setf *crew* (snapshot-crew *snapshot*))
   (setf *remaining-klingons* (snapshot-remaining-klingons *snapshot*))
+  (setf *captured-klingons* (snapshot-captured-klingons *snapshot*))
+  (setf *brig-free* (snapshot-brig-free *snapshot*))
   (setf *remaining-super-commanders* (snapshot-remaining-super-commanders *snapshot*))
   (setf *remaining-resources* (snapshot-remaining-resources *snapshot*))
   (setf *remaining-time* (snapshot-remaining-time *snapshot*))
@@ -2967,6 +2974,127 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           (toggle-high-speed-shield-control requested-energy))) ; requested energy not important when raising shields
       (check-for-phasers-overheating requested-energy))))
 
+;; This copyright notice applies to the `capture' and `selectKlingon' functions:
+;;	$NetBSD: capture.c,v 1.6 2003/08/07 09:37:50 agc Exp $
+;;
+;; Copyright (c) 1980, 1993
+;;	The Regents of the University of California.  All rights reserved.
+;;
+;; Redistribution and use in source and binary forms, with or without
+;; modification, are permitted provided that the following conditions
+;; are met:
+;; 1. Redistributions of source code must retain the above copyright
+;;    notice, this list of conditions and the following disclaimer.
+;; 2. Redistributions in binary form must reproduce the above copyright
+;;    notice, this list of conditions and the following disclaimer in the
+;;    documentation and/or other materials provided with the distribution.
+;; 3. Neither the name of the University nor the names of its contributors
+;;    may be used to endorse or promote products derived from this software
+;;    without specific prior written permission.
+;;
+;; THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+;; ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+;; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+;; ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+;; FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+;; DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+;; OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+;; HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+;; LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+;; OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+;; SUCH DAMAGE.
+
+(defun capture () ; C: void capture(void)
+  "Ask a Klingon To Surrender
+
+(Fat chance)
+
+The Subspace Radio is needed to ask a Klingon if he will kindly
+surrender.  A random Klingon from the ones in the quadrant is
+chosen.
+
+The Klingon is requested to surrender.  The probability of this
+is a function of that Klingon's remaining power, our power, etc."
+
+  (setf *action-taken-p* nil) ; Nothing if we fail
+  (setf *time-taken-by-current-operation* 0.0)
+
+  (cond
+    ;; Make sure there is room in the brig
+    ((= *brig-free* 0)
+     (print-message "Security reports the brig is already full.")
+     (return-from capture nil))
+
+    ((damagedp +subspace-radio+)
+     (print-message "Uhura- \"We have no subspace radio communication, sir.\"")
+     (return-from capture nil))
+
+    ((damagedp +transporter+)
+     (print-message "Scotty- \"Transporter damaged, sir.\"")
+     (return-from capture nil))
+    ;; find out if there are any at all
+    ((< *klingons-here* 1)
+     (print-message "Uhura- \"Getting no response, sir.\"")
+     (return-from capture nil))
+    (t
+     (setf *time-taken-by-current-operation* 0.05) ; This action will take some time
+     (setf *action-taken-p* t) ; So any others can strike back
+     ;; If there is more than one Klingon, find out which one
+     (let ((klingon-index (select-klingon-for-capture)) ; C: k
+           k-coord
+           x) ; C: x
+       ;; Check out that Klingon
+       (setf k-coord (aref *klingon-sectors* klingon-index))
+       ;; The algorithm isn't that great and could use some more intelligent design
+       ;; (setf x (+ 300 (* 25 (skill-level-value *skill-level*)))) - just use ship energy for now
+       ;; Multiplier would originally have been equivalent of 1.4, but we want the command to work more often, more humanely
+       (setf x (* (/ *ship-energy* (* (aref *klingon-energy* klingon-index) *enemies-here*)) 2.5))
+       (if (<= x (* (random 1.0) 100))
+           ;; Big surprise, he refuses to surrender
+           (progn
+             (print-message "Fat chance, captain")
+             (return-from capture nil)))
+       ;; Guess what, he surrendered!!!
+           (progn
+             (print-message (format nil "Klingon captain at ~A surrenders" (format-coordinates k-coord)))
+             ;; Assume a crew of 200 on the Klingon ship
+             (let ((klingons-captured (round (* 200 (random 1.0))))) ; C: i
+               (when (> klingons-captured 0)
+                 (print-message (format nil "~D Klingons commit suicide rather than be taken captive."
+                                        (- 200 klingons-captured))))
+               (when (and (> klingons-captured *brig-free*)
+                          (not *dockedp*))
+                 (print-message (format nil "~D Klingons die because there is no room for them in the brig"
+                                        (- klingons-captured *brig-free*)))
+                 (setf klingons-captured *brig-free*))
+               (if *dockedp*
+                   (progn
+                     (setf *captured-klingons* (+ *captured-klingons* klingons-captured))
+                     (print-message (format nil "~D captives taken and transferred to base"
+                                            klingons-captured)))
+                   (progn
+                     (setf *brig-free* (- *brig-free* klingons-captured))
+                     (print-message (format nil "~D captives taken" klingons-captured)))))
+             (dead-enemy k-coord (coord-ref *quadrant-contents* k-coord) k-coord)
+             (when (= *remaining-klingons* 0)
+               (finish +won+)))))))
+
+(defun select-klingon-for-capture () ; C: int selectklingon()
+  "Cruddy, just takes one at random.  Should ask the captain.
+Nah, just select the weakest one since it is most likely to
+surrender (Tom Almy mod)"
+
+  (let ((klingon-index 0)
+        (klingon-energy (aref *klingon-energy* 0)))
+    ;; Select the weakest one
+    (do ((i 1 (1+ i))) ; C: int j
+        ((>= i *enemies-here*))
+      (unless (string= (coord-ref *quadrant-contents* (aref *klingon-sectors* i)) +romulan+) ; No Romulans surrender
+        (when (> (aref *klingon-energy* i) klingon-energy)
+          (setf klingon-index i)
+          (setf klingon-energy (aref *klingon-energy* i)))))
+    (return-from select-klingon-for-capture klingon-index)))
+
 (defun displace-ship (x-coord y-coord hit-angle)
   "When a torpedo hits a ship at position x-coord, y-coord at angle hit-angle, displace the ship
 and return the x and y coordinates to which it was displaced."
@@ -3728,6 +3856,7 @@ is a string suitable for use with the format function."
 ;; TODO - add an option to write the final score to a file, or record it some other way.
 ;; TODO - can the format be moved to the helper functions? Can the format specification
 ;;        also put the score in the correct column?
+;; TODO - check the grammar of all items, single actions should not use plural nouns
 (defun score () ; C: score(void)
   "Compute player's score."
 
@@ -3751,6 +3880,8 @@ is a string suitable for use with the format function."
                   (* 200 (- *initial-super-commanders* *remaining-super-commanders*)))
   (score-multiple "~6,2F Klingons per stardate                     ~5@A"
                   (klingons-per-stardate) (round (+ (* 500 (klingons-per-stardate)) 0.5)))
+  (score-multiple "~6@A Klingons captured               ~5@A"
+                  *captured-klingons* (* 3 *captured-klingons*))
   (score-multiple "~6@A stars destroyed by your action            ~5@A"
                   *destroyed-stars* (* -5 *destroyed-stars*))
   (score-multiple "~6@A uninhabited planets destroyed by your action ~2@A"
@@ -3870,6 +4001,12 @@ is a string suitable for use with the format function."
      (print-message "the Federation.")
      (when (/= *remaining-romulans* 0)
        (print-message (format nil "The remaining ~A Romulans surrender to Starfleet Command." *remaining-romulans*)))
+     ;; Captured Klingon crew will get transfered to starbase
+     (when (and *alivep*
+                (> (- *brig-capacity* *brig-free*) 0))
+       (setf *captured-klingons* (+ *captured-klingons* (- *brig-capacity* *brig-free*)))
+       (print-message (format nil "The ~D captured Klingons are transferred to Star Fleet Command."
+                              (- *brig-capacity* *brig-free*))))
      (when *alivep*
        (let ((bad-points 0.0))
          (setf bad-points (+ (* 5.0 *destroyed-stars*)
@@ -4457,12 +4594,11 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
            (finish +abandon+)
            (return-from abandon-ship nil))
          ;; Dispose of crew.
-         ;; Before the introduction of habitable planets the message was
+         ;; Before the introduction of inhabited planets the message was
          ;; "Remainder of ship's complement beam down"
          ;; "to nearest habitable planet."
          (let ((p (first (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))) ; non-nil if planet exists
            (if (and p
-                    (> (planet-inhabited p) -1)
                     (not (damagedp +transporter+)))
                (print-message (format nil "Remainder of ship's complement beam down to ~A."
                                       (aref *system-names* (planet-inhabited p))))
@@ -4510,6 +4646,8 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
     (print-message "The dilithium crystals have been moved."))
   (setf *miningp* nil)
   (setf *landing-craft-location* "offship") ; Galileo disappears
+  (setf *brig-capacity* 300) ; Less capacity now
+  (setf *brig-free* *brig-capacity*)
   ;; Resupply ship
   (setf *dockedp* t)
   (do ((device-index 0 (1+ device-index)))
@@ -4550,6 +4688,11 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
      (setf *torpedoes* *initial-torpedos*)
      (setf *life-support-reserves* *initial-life-support-reserves*)
      (setf *crew* +full-crew+)
+     (when (> (- *brig-capacity* *brig-free*) 0)
+       (print-message (format nil "~D captured Klingons transferred to base."
+                              (- *brig-capacity* *brig-free*)))
+       (setf *captured-klingons* (+ *captured-klingons* (- *brig-capacity* *brig-free*)))
+       (setf *brig-free* *brig-capacity*))
      ;; TODO - Possible approach for base attack report seen: make each report an event and only
      ;;        report the event when the radio is functioning or after it has been repaired.
      (when (and (or (/= *super-commander-attacking-base* 0)
@@ -6318,6 +6461,13 @@ quadrant experiencing a supernova)."
     (attack-report))
   (when (> *casualties* 0)
     (print-message (format nil "~A casualt~A suffered so far." *casualties* (if (= *casualties* 1) "y" "ies"))))
+  (when (/= *brig-capacity* *brig-free*)
+    (print-message (format nil "~D Klingon~A in brig."
+                           (- *brig-capacity* *brig-free*)
+                           (when (> (- *brig-capacity* *brig-free*) 1) "s"))))
+  (when (> *captured-klingons* 0)
+    (print-message (format nil "~D captured Klingon~A turned in to Star Fleet."
+                           *captured-klingons* (when (> *captured-klingons* 1) "s"))))
   (when (> *calls-for-help* 0)
     (print-message (format nil "There ~A ~A call~A for help."
                            (if (= *calls-for-help* 1) "was" "were")
@@ -7288,6 +7438,9 @@ it's your problem."
     (setf *damage-factor* (read s))
     (setf *snapshot-taken-p* (read s))
     (setf *crew* (read s))
+    (setf *captured-klingons* (read s))
+    (setf *brig-capacity* (read s))
+    (setf *brig-free* (read s))
     (setf *remaining-klingons* (read s))
     (setf *remaining-super-commanders* (read s))
     (setf *remaining-resources* (read s))
@@ -7409,6 +7562,9 @@ loop, in effect continuously saving the current state of the game."
     (print *damage-factor* s)
     (print *snapshot-taken-p* s)
     (print *crew* s)
+    (print *captured-klingons* s)
+    (print *brig-capacity* s)
+    (print *brig-free* s)
     (print *remaining-klingons* s)
     (print *remaining-super-commanders* s)
     (print *remaining-resources* s)
@@ -7613,6 +7769,7 @@ There are a lot of magic numbers in these settings."
                                               0.1)
                                            0.15)))
     (setf *remaining-klingons* *initial-klingons*)
+    (setf *captured-klingons* 0)
     (when (> *initial-klingons* 50) ; That's a lot of klingons, give the player another base
       (setf *initial-bases* (+ *initial-bases* 1)))
     (setf *initial-commanders* (min +max-commanders-per-game+
@@ -7630,6 +7787,8 @@ There are a lot of magic numbers in these settings."
     ;; Prepare the Enterprise
     (setf *all-done-p* nil)
     (setf *game-won-p* nil)
+    (setf *ship-quadrant* (get-random-quadrant))
+    (setf *ship-sector* (get-random-sector))
     (setf *ship* +enterprise+)
     (setf *crew* +full-crew+)
     (setf *initial-energy* 5000.0)
@@ -7640,8 +7799,6 @@ There are a lot of magic numbers in these settings."
     (setf *shields-are-up-p* nil)
     (setf *initial-life-support-reserves* 4.0)
     (setf *life-support-reserves* 4.0)
-    (setf *ship-quadrant* (get-random-quadrant))
-    (setf *ship-sector* (get-random-sector))
     (setf *initial-torpedos* 10)
     (setf *torpedoes* 10)
     ;; Give the player 2-4 of these wonders
@@ -7650,6 +7807,8 @@ There are a lot of magic numbers in these settings."
     (do ((i 0 (+ i 1)))
         ((>= i +number-of-devices+))
       (setf (aref *device-damage* i) 0.0))
+    (setf *brig-capacity* 400)
+    (setf *brig-free* *brig-capacity*)
 
     ;; Set up assorted game parameters
     (setf *initial-stardate* (* 100.0 (+ (* 31.0 (random 1.0)) 20.0))) ; C: 100.0*(int)(31.0*Rand()+20.0)
@@ -7971,11 +8130,11 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
   ;; <esc> or <tilde> menus in some graphical games. The idea is to not "break the 4th wall"
   ;; during gameplay. These commands are commands, emexit, freeze, quit, save, debug, help
   (do ((exit-game-p nil)
-       (commands (list "abandon" "chart" "commands" "computer" "crystals" "dock" "damages" "deathray"
-                       "destruct" "emexit" "exit" "help" "impulse" "lrscan" "move" "mayday"
-                       "mine" "orbit" "phasers" "photons" "planets" "probe" "quit" "rest" "report"
-                       "request" "srscan" "status" "score" "sensors" "shields" "shuttle" "sos"
-                       "transport" "torpedoes" "visual" "warp"))
+       (commands (list "abandon" "chart" "capture" "commands" "computer" "crystals" "dock"
+                       "damages" "deathray" "destruct" "emexit" "exit" "help" "impulse" "lrscan"
+                       "move" "mayday" "mine" "orbit" "phasers" "photons" "planets" "probe" "quit"
+                       "rest" "report" "request" "srscan" "status" "score" "sensors" "shields"
+                       "shuttle" "sos" "transport" "torpedoes" "visual" "warp"))
        command
        hit-me-p) ;; When true, player has taken an action which consumes game time or a turn,
                  ;; after which enemies take their action turn, usually an attack.
@@ -8000,6 +8159,10 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (abandon-ship))
       ((string= command "chart")
        (chart))
+      ((string= command "capture") ; Attempt to get Klingon ship to surrender
+       (capture)
+       (when *action-taken-p*
+         (setf hit-me-p t)))
       ((string= command "commands")
        (display-commands commands))
       ((string= command "computer")
