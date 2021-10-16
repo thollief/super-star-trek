@@ -2,12 +2,6 @@
 
 (in-package help)
 
-;; TODO - "help <command> should show the help for that command even if
-;;        aliases are possible. For example, "help sos" and "help mayday"
-;;        should display the same help text.
-;; TODO - the help topics don't display well. There probably needs to be
-;;        an intermediate layer of command aliases and topics, and only
-;;        the canonical topic is displayed in the list of help topics
 (defparameter *help-database* (list (cons "credits"
 "                SSSSS   U   U   PPPPP   EEEEE   RRRRR
                 S       U   U   P   P   E       R   R
@@ -203,8 +197,10 @@ and start a new game.
 
 The Klingons are waiting.")
 
-                                    (cons "issuing commands"
-"When the game is waiting for you to enter a command it will print out
+                                    (cons "input"
+"Issuing Commands
+
+When the game is waiting for you to enter a command it will print out
 
         COMMAND:
 
@@ -263,8 +259,10 @@ parameters, with the exception of the manual move command. If
 anything is not clear to you, experiment.  The worst you can do is
 lose a game or two.")
 
-                                    (cons "short-range scan"
-"  Mnemonic:  SRSCAN
+                                    (cons "srscan"
+"Short-range Scan
+
+  Mnemonic:  SRSCAN
   Shortest abbreviation:  S
   Full commands:  SRSCAN
                   SRSCAN NO
@@ -312,8 +310,10 @@ short-range scan anytime you like.
 If your short-range sensors are damaged, this command will only show
 the contents of adjacent sectors.")
 ;; TODO - fix the description of conditions
-                                    (cons "status report"
-"  Mnemonic:  STATUS
+                                    (cons "status"
+"Status Report
+
+  Mnemonic:  STATUS
   Shortest abbreviation: ST
 
 This command gives you information about the current state of your
@@ -363,8 +363,10 @@ See the SRSCAN command for details.
 Each item of information can be obtained singly by requesting it.
 See REQUEST command for details.")
 ;; TODO - update the description of a supernova
-                                    (cons "long-range scan"
-"  Mnemonic:  LRSCAN
+                                    (cons "lrscan"
+"Long-range Scan
+
+  Mnemonic:  LRSCAN
   Shortest abbreviation:  L
 
 A long-range scan gives you general information about where you are
@@ -408,8 +410,10 @@ galaxy, which you are not permitted to cross.
 Long-range scans are free.  They use up no energy or time, and can be
 done safely regardless of battle conditions.")
 
-                                    (cons "star chart"
-"  Mnemonic:  CHART
+                                    (cons "chart"
+"Star Chart
+
+  Mnemonic:  CHART
   Shortest abbreviation:  C
 
 As you proceed in the game, you learn more and more about what things
@@ -430,8 +434,10 @@ and stars.
 Looking at the star chart is a free operation.  It costs neither time
 nor energy, and can be done safely whether in or out of battle.")
 
-                                    (cons "damage report"
-"  Mnemonic:  DAMAGES
+                                    (cons "damages"
+"Damage Report
+
+  Mnemonic:  DAMAGES
   Shortest abbreviation:  DA
 
 At any time you may ask for a damage report to find out what devices
@@ -446,8 +452,10 @@ damaged devices were fixed en route.
 Damage reports are free.  They use no energy or time, and can be done
 safely even in the midst of battle.")
 
-                                    (cons "move under warp drive"
-"  Mnemonic:  MOVE
+                                    (cons "move"
+"Move Under Warp Drive
+
+  Mnemonic:  MOVE
   Shortest abbreviation:  M
   Full command:  MOVE MANUAL <displacement>
                  MOVE AUTOMATIC <destination>
@@ -519,8 +527,10 @@ entered the quadrant or have been attacked since your last move
 command.  This enables you to move and hit them before they
 retaliate.")
 
-                                    (cons "warp factor"
-"  Mnemonic:  WARP
+                                    (cons "warp"
+"Set Warp Factor
+
+  Mnemonic:  WARP
   Shortest abbreviation:  W
   Full command:  WARP <number>
 
@@ -538,8 +548,10 @@ At exactly warp 10 there is some probability of entering a so-called
 you go at warp 10, the greater is the probability of entering the
 time warp.")
 
-                                    (cons "impulse engines"
-"  Mnemonic:  IMPULSE
+                                    (cons "impulse"
+"Move Using Impulse Engines
+
+  Mnemonic:  IMPULSE
   Shortest abbreviation:  I
   Full command:  IMPULSE MANUAL <displacement>
                  IMPULSE AUTOMATIC <destination>
@@ -555,8 +567,10 @@ The impulse engines require 20 units of energy to engage, plus 10
 units per sector (100 units per quadrant) traveled. It does not cost
 extra to move with the shields up.")
 
-                                    (cons "deflector shields"
-"  Mnemonic:  SHIELDS
+                                    (cons "shields"
+"Deflector Shields
+
+  Mnemonic:  SHIELDS
   Shortest abbreviation:  SH
   Full commands:  SHIELDS UP
                   SHIELDS DOWN
@@ -600,8 +614,10 @@ they will be at the new energy level when you are next hit.
 Enemy torpedoes hitting your ship explode on your shields (if they
 are up) and have essentially the same effect as phaser hits.")
 
-                                    (cons "PHASERS"
-"  Mnemonic:  PHASERS
+                                    (cons "phasers"
+"Fire Phasers
+
+  Mnemonic:  PHASERS
   Shortest abbreviation:  P
   Full commands:  PHASERS AUTOMATIC <AMOUNT TO FIRE> <NO>
                   PHASERS <AMOUNT TO FIRE> <NO>
@@ -698,8 +714,10 @@ play a frozen game.")
 This command allows using the ship's computer (if functional) to
 calculate travel times and energy usage.")
 
-                                    (cons "photon torpedoes"
-"  Mnemonic:  PHOTONS
+                                    (cons "photons"
+"Fire Photon Torpedoes
+
+  Mnemonic:  PHOTONS
   Shortest abbreviation:  PHO
   Full commands:  PHOTONS <NUMBER> <TARG1> <TARG2> <TARG3>
 
@@ -746,8 +764,10 @@ you can enter
 to aim between two sectors.  However, sector numbers must be 1 to 10
 inclusive.")
 
-                                    (cons "dock at starbase"
-"  Mnemonic:  DOCK
+                                    (cons "dock"
+"Dock At Starbase
+
+  Mnemonic:  DOCK
   Shortest abbreviation:  D
 
 You may dock your starship whenever you are in one of the eight
@@ -782,8 +802,10 @@ until repairs are made before you go back into battle.
 It is not generally advisable to rest while you are under attack by
 Klingons.")
 
-                                    (cons "call starbase for help"
-"  Mnemonic:  CALL
+                                    (cons "mayday"
+"Call Starbase For Help
+
+  Mnemonic:  MAYDAY
   (No abbreviation)
 
 [Originally, this command was called \"HELP\", but these days it might
@@ -809,8 +831,10 @@ same quadrant as a starbase, you have a good chance (about 90%) of
 re-materializing successfully.  Your chances drop to roughly 50-50 at
 just over 3 quadrants.")
 
-                                    (cons "abandon ship"
-"  Mnemonic:  ABANDON
+                                    (cons "abandon"
+"Abandon Ship
+
+  Mnemonic:  ABANDON
   (no abbreviation)
 
 You may abandon the Enterprise if necessary.  If there is still a
@@ -819,8 +843,10 @@ weaker ship, the Faerie Queene.
 
 The Faerie Queene cannot be abandoned.")
 
-                                    (cons "self-destruct"
-"  Mnemonic:  DESTRUCT
+                                    (cons "destruct"
+"Self-destruct
+
+  Mnemonic:  DESTRUCT
   (no abbreviation)
 
 You may self-destruct, thus killing yourself and ending the game.  If
@@ -830,16 +856,20 @@ more energy you have left, the bigger the bang).
 In order to self-destruct you must remember the password you typed in
 at the beginning of the game.")
 
-                                    (cons "terminate the current game"
-"  Mnemonic:  QUIT
+                                    (cons "quit"
+"Terminate The Current Game
+
+  Mnemonic:  QUIT
   (no abbreviation)
 
 Immediately cancel the current game; no conclusion is reached.  You
 will be given an opportunity to start a new game or to leave the Star
 Trek program.")
 
-                                    (cons "sensor-scan"
-"  Mnemonic:  SENSORS
+                                    (cons "sensors"
+"Sensor Scan
+
+  Mnemonic:  SENSORS
   Shortest abbreviation:  SE
 
 Utilizing the short-range sensors, science officer Spock gives you a
@@ -848,8 +878,10 @@ classes: M, N, and O.  Only class M planets have earth-like
 conditions.  Spock informs you if the planet has any dilithium
 crystals.  Sensor scans are free.")
 
-                                    (cons "enter standard orbit"
-"  Mnemonic:  ORBIT
+                                    (cons "orbit"
+"Enter Standard Orbit
+
+  Mnemonic:  ORBIT
   Shortest abbreviation:  O
 
 To land on a planet you must first be in standard orbit.  You achieve
@@ -860,8 +892,10 @@ the planet.  Since this is a maneuver, a small amount of time is
 used; negligible energy is required.  If enemies are present, they
 will attack.")
 
-                                    (cons "transporter-travel"
-"  Mnemonic:  TRANSPORT
+                                    (cons "transport"
+"Transporter Travel
+
+  Mnemonic:  TRANSPORT
   Shortest abbreviation:  T
 
 The transporter is a device which can convert any physical object
@@ -882,8 +916,10 @@ devices, the transporter will sometimes malfunction.
 The transporter consumes negligible time and energy.  Its use does
 not constitute a \"turn\".")
 
-                                    (cons "shuttle craft"
-"  Mnemonic:  SHUTTLE
+                                    (cons "shuttle"
+"Use Shuttle Craft
+
+  Mnemonic:  SHUTTLE
   Shortest abbreviation:  SHU
 
 An alternate way to travel to and from planets.  Because of limited
@@ -901,8 +937,10 @@ possible to transport to the planet and have the Galileo crew come
 and pick your landing party up, or to take the Galileo to the planet
 and then transport back, leaving the shuttle craft on the planet.")
 
-                                    (cons "mine dilithium crystals"
-"  Mnemonic:  MINE
+                                    (cons "mine"
+"Mine Dilithium Crystals
+
+  Mnemonic:  MINE
   Shortest abbreviation:  MI
 
 Once you and your mining party are on the surface of a planet which
@@ -919,8 +957,10 @@ them whenever possible, for use in emergencies.  You keep the
 crystals until the game is over or you abandon ship when not at a
 starbase.")
 
-                                    (cons "load dilithium crystals"
-"  Mnemonic:  CRYSTALS
+                                    (cons "crystals"
+"Load Dilithium Crystals
+
+  Mnemonic:  CRYSTALS
   Shortest abbreviation:  CR
 
 This is a very powerful command which should be used with caution.
@@ -939,16 +979,20 @@ Since using raw dilithium crystals for this purpose entails
 considerable risk, Starfleet Regulations allow its use only during
 \"condition yellow\".  No time or energy is used.")
 
-                                    (cons "planet report"
-"  Mnemonic:  PLANETS
+                                    (cons "planets"
+"Planet Report
+
+  Mnemonic:  PLANETS
   Shortest abbreviation:  PL
 
 Mr. Spock presents you a list of the available information on planets
 in the galaxy.  Since planets do not show up on long-range scans, the
 only way to obtain this information is with the \"SENSORS\" command.")
-;; TODO - edit the explanation, freeze is a no-op but tournament info is useful
-                                    (cons "freeze"
-"  Mnemonic:  FREEZE
+;; TODO - edit the explanation, save is a no-op but tournament info is useful
+                                    (cons "save"
+"Save The Game
+
+  Mnemonic:  FREEZE
   (no abbreviation)
   Full command:  FREEZE <FILE NAME>
 
@@ -979,7 +1023,9 @@ identical actions after starting a given tournament game always lead
 to the same results.")
 
                                     (cons "request"
-"  Mnemonic:  REQUEST
+"Request Information
+
+  Mnemonic:  REQUEST
   Shortest abbreviation:  REQ
   Full command:  REQUEST <ITEM>
 
@@ -999,8 +1045,10 @@ the <STATUS> command.  <ITEM> specifies which information as follows:
  KLINGONS LEFT         KLINGONS                            K
  TIME LEFT             TIME                                TI")
 
-                                    (cons "experimental death ray"
-"  Mnemonic:  DEATHRAY
+                                    (cons "deathray"
+"Use Experimental Death Ray
+
+  Mnemonic:  DEATHRAY
   (No abbreviation)
 
 This command should be used only in those desperate cases where you
@@ -1025,8 +1073,10 @@ This can only be done at starbase.  Because it is a very complex
 device, it takes 9.99 stardates at base to replace the death ray.
 The death ray cannot be repaired in flight.")
 
-                                    (cons "launch deep space probe"
-"  Mnemonic:  PROBE
+                                    (cons "probe"
+"Launch Deep Space Probe
+
+  Mnemonic:  PROBE
   Shortest abbreviation:  PR
   Full command:  PROBE <ARMED> MANUAL <displacement>
                  PROBE <ARMED> AUTOMATIC <destination>
@@ -1055,8 +1105,10 @@ the sector in the current quadrant!
 
 The Faerie Queene has no probes.")
 ;; TODO - update the description to include current game save behaviour
-                                    (cons "emergency exit"
-"  Mnemonic:  EMEXIT
+                                    (cons "emexit"
+"Emergency Exit
+
+  Mnemonic:  EMEXIT
   Shortest abbreviation:  E
 
 This command provides a quick way to exit from the game when you
@@ -1066,16 +1118,20 @@ directory, erase the screen, and exit.
 
 Of course, you do loose the chance to get a plaque when you use this
 maneuver.")
+;; TODO - edit the decription of what this command does
+                                    (cons "help"
+"Ask For Help
 
-                                    (cons "ask for help"
-"  Mnemonic:  HELP
+  Mnemonic:  HELP
   Full command:  HELP <command>
 
 This command reads the appropriate section from the SST.DOC file,
 providing the file is in the current directory.")
 
-                                    (cons "cloaking device"
-"  Mnemonic:  CLOAK
+                                    (cons "cloak"
+"Use Cloaking Device
+
+  Mnemonic:  CLOAK
   Shortest abbreviation:  CLOAK
   Full commands:  CLOAK ON
                   CLOAK OFF
@@ -1093,8 +1149,10 @@ will hurt your final score.
 
 The Faerie Queene does not have a cloaking device.")
 
-                                    (cons "capture klingons"
-"  Mnemonic:  CAPTURE
+                                    (cons "capture"
+"Capture Klingons
+
+  Mnemonic:  CAPTURE
   Shortest abbreviation: CA
 
 The capture command provides a more humane way to end a battle than
@@ -1109,8 +1167,10 @@ other enemy ships if the surrender occurs.
 When you dock, any captured Klingons will be transferred to the base
 and you will be credited with the lives you save.")
 
-                                    (cons "get the score"
-"  Mnemonic:  SCORE
+                                    (cons "score"
+"Get The Score
+
+  Mnemonic:  SCORE
   Shortest abbreviation: SC
 
 Shows what the score would be if the game were to end naturally at
@@ -1118,8 +1178,10 @@ this point. Since the game hasn't really ended and you lose points if
 you quit, this is perhaps a meaningless command, but it gives you a
 general idea of how well you are performing.")
 
-                                    (cons "miscellaneous notes"
-"Starbases can be attacked by either commanders or by the
+                                    (cons "misc"
+"Miscellaneous Notes
+
+Starbases can be attacked by either commanders or by the
 \"Super-Commander\".  When this happens, you will be notified by
 subspace radio, provided it is working.  The message will inform you
 how long the base under attack can last.  Since the \"Super-Commander\"
@@ -1217,8 +1279,10 @@ game--but, of course, the level of game you play is up to you.  If
 you want to start at the Expert level, go ahead.  It's your funeral.
 The emeritus game is strictly for masochists.")
 
-                                    (cons "handy reference page"
-" ABBREV    FULL COMMAND                           DEVICE USED
+                                    (cons "quickref"
+"Handy Reference Page
+
+ ABBREV    FULL COMMAND                           DEVICE USED
  ------    ------------                           -----------
  ABANDON   ABANDON                                shuttle craft
  C         CHART                                  (none)
@@ -1335,8 +1399,10 @@ derived from a still earlier version in use at Penn State University.")
  9.  Model kits of the Enterprise and a \"Klingon Battle-Cruiser\"
      by AMT Corporation are available at most hobby shops.")
 
-                                    (cons "tom almy modifications"
-"Back in (about) 1977 I got a copy of this Super Star Trek game for
+                                    (cons "tomalmy"
+"Tom Almy Modifications
+
+Back in (about) 1977 I got a copy of this Super Star Trek game for
 the CDC 6600 mainframe computer. Someone had converted it to PDP-11
 Fortran but couldn't get it to run because of its size. I modified
 the program to use overlays and managed to shoehorn it in on the 58k
@@ -1404,8 +1470,10 @@ Modifications I made:
   have more than one Klingon aboard! The CLOAK command and some other
   bug fixes and correction of typos are thanks to Erik Olofsen.")
 
-                                    (cons "stas sergeev modifications"
-"The Space Thingy can be shoved, if you ram it, and can fire back if
+                                    (cons "stassergeev"
+"Stas Sergeev Modifications
+
+The Space Thingy can be shoved, if you ram it, and can fire back if
 fired upon.
 
 When you are docked, base covers you with an almost invincible shield.
@@ -1442,8 +1510,10 @@ better anyway.
 
 Screen-oriented interface, with sensor scans always up.")
 
-                                    (cons "eric raymond modifications"
-"Mainly, I translated this C code out of FORTRAN into C -- created #defines
+                                    (cons "ericraymond"
+"Eric Raymond Modifications
+
+Mainly, I translated this C code out of FORTRAN into C -- created #defines
 for a lot of magic numbers and refactored the heck out of it.
 
 \"sos\" and \"call\" becomes \"mayday\", \"freeze\" and \"save\" are both good.
@@ -1475,8 +1545,10 @@ Also, the nav subsystem (enabling automatic course
 setting) can be damaged separately from the main computer (which
 handles weapons targeting, ETA calculation, and self-destruct).")
 
-                                    (cons "tim holliefield modifications"
-"This implementation is a port/rewrite in Common Lisp of the Eric Raymond
+                                    (cons "timholliefield"
+"Tim Holliefield Modifications
+
+This implementation is a port/rewrite in Common Lisp of the Eric Raymond
 version of Super Star Trek, with additional changes from Tom Almy (CLOAK and
 CAPTURE) that were made after Eric Raymond released his version. Most of the
 initial port simply implemented the C code in Lisp but a few functions that
@@ -1485,22 +1557,29 @@ rewritten. Additional revisions take advantage of Lisp data structures
 (e.g. lists) not available in C but the player-visible game is substantially
 the same as the C version.
 
-All gameplay options are turned on.
+All gameplay options are enabled.
 
 The secret password must be entered by the player.
 
+Command aliases have been removed.
+
 The game now saves automatically every turn. That makes the EXIT and EMEXIT
-commands functionally identical, and the FREEZE, SAVE, and THAW commands don't
-do anything. When you run Super Star Trek the game previously in progress is
+commands nearly identical, and the SAVE, and LOAD commands don't do
+anything. When you run Super Star Trek the game previously in progress is
 loaded, including Tournament games, and including the random state. Plaques are
 provided to all players who win an \"expert\" or \"emeritus\" game.
 
 The plaque is written to a text file for the player to print or otherwise
- manipulate as they wish.
+manipulate as they wish.
 
 This HELP information has been pulled into the program code and the external
-documentation file removed (obviously, you can find the file - sst.doc - on the
-Internet if you want it.)")
+documentation file removed (you can find the file - sst.doc - on the Internet
+if you want it.)")
+
+                                    (cons "visual scan"
+"A visual scan is made of three sectors in the general direction specified.
+This takes time, and enemies can attack you, so it should be done only when
+the short-range sensors are out.")
                                     )
   "An alist of help keywords and information. The keywords should be lowercase. Keywords are taken from the
 user command by the same parser as regular game commands so the same restrictions apply. That is, input items

@@ -28,6 +28,7 @@
 (define-constant +deathray-failure-chance+ 0.30)
 (define-constant +max-safe-phaser-power+ 1500.0 "Amount phasers can fire without overheating.")
 (define-constant +checkpoint-file-name+ "sstchkpt.trk" "The name of the file used for checkpointing game state.")
+(define-constant +algeron-date+ 2311 "Date of the Treaty of Algeron") ; C: #define ALGERON
 
 ;; TODO - create a terminalio package?
 ;; TODO - change the interface selector to be a symbol, there is no bitfield here
@@ -537,8 +538,9 @@ empty string if the planet class can't be determined."
 (define-constant +shield-control+ 13) ; C: DSHCTRL
 (define-constant +death-ray+ 14) ; C: DDRAY
 (define-constant +deep-space-probe-launcher+ 15) ; C: DDSP
+(define-constant +cloaking-device+ 16) ; C: DCLOAK
 
-(define-constant +number-of-devices+ 16) ; C: NDEVICES
+(define-constant +number-of-devices+ 17) ; C: NDEVICES
 
 ;; The following global state doesn't need to be saved
 ;; TODO should devices be a structure instead of an array? Or perhaps each device should be a
@@ -551,19 +553,19 @@ empty string if the planet class can't be determined."
                                                         "Shuttle Craft" "Computer"
                                                         "Navigation System" "Transporter"
                                                         "Shield Control" "Death Ray"
-                                                        "D. S. Probe")))
+                                                        "D. S. Probe" "Cloaking Device")))
 
 
 ;; Define future events - these are event types.
 ;; TODO - These are indexes into the future-events array, what is an appropriate Common Lisp data
 ;; structure? The values are also used in a case statement.
-(define-constant +spy+ 0) ; C: FSPY, Spy event happens always (no future[] entry), can cause SC to tractor beam Enterprise
+(define-constant +spy+ 0 "Spy event happens always (no future[] entry), can cause SC to tractor beam Enterprise") ; C: FSPY
 (define-constant +supernova+ 1) ; C: FSNOVA
 (define-constant +tractor-beam+ 2 "Commander tractor beams Enterprise.") ; C: FTBEAM
 (define-constant +snapshot-for-time-warp+ 3) ; C: FSNAP
 (define-constant +commander-attacks-base+ 4) ; C: FBATTAK
 (define-constant +commander-destroys-base+ 5) ; C: FCDBAS
-(define-constant +move-super-commander+ 6) ; C: FSCMOVE, might attack base
+(define-constant +move-super-commander+ 6 "The Super-commander moves, and might attack a base.") ; C: FSCMOVE
 (define-constant +super-commander-destroys-base+ 7) ; C: FSCDBAS
 (define-constant +move-deep-space-probe+ 8) ; C: FDSPROB
 (define-constant +distress-call-from-inhabited-world+ 9) ; C: FDISTR
@@ -604,6 +606,8 @@ empty string if the planet class can't be determined."
 (defparameter *shield-energy* 2500.0) ; C: shield
 (defparameter *shields-are-changing-p* nil) ; C: shldchg, affects efficiency
 (defparameter *shields-are-up-p* nil) ; C: shldup
+(defparameter *cloakedp* nil "Cloaking is enabled") ; C: iscloaked
+(defparameter *cloakingp* nil "In the process of cloaking and can be attacked") ; C: iscloaking
 (defparameter *initial-life-support-reserves* 4.0) ; C: inlsr
 (defparameter *life-support-reserves* 4.0) ; C: lsupres
 (defparameter *initial-torpedos* 10 "Initial and max torpedoes") ; C: intorps
@@ -650,6 +654,9 @@ empty string if the planet class can't be determined."
 
 (defparameter *initial-romulans* 0) ; C: inrom
 (defparameter *remaining-romulans* 0) ; C: nromrem
+
+(defparameter *cloaking-violations* 0 "Number of treaty violations") ; C: ncviol
+(defparameter *cloaking-violation-reported-p* nil "Violation reported by Romulan in quadrant") ; C: isviolreported
 
 (defparameter *initial-resources* 0.0) ; C: inresor
 (defparameter *remaining-resources* 0.0) ; C: remres
@@ -773,6 +780,7 @@ empty string if the planet class can't be determined."
 (define-constant +tribbles+ 19) ; C: FTRIBBLE
 (define-constant +destroyed-by-black-hole+ 20) ; C: FHOLE
 (define-constant +all-crew-killed+ 21) ; C: FCREW
+(define-constant +cloak+ 22) ; C: FCLOAK
 
 ;; C: enum COLORS
 (define-constant +default-color+ 0)
@@ -901,6 +909,8 @@ shuttlecraft landed on it."
        (setf ship-name "Ship???")))
     (return-from format-ship-name ship-name)))
 
+;; TODO - every check for subspace radio damage needs to also check if the ship is cloaked because
+;;        the radio doesn't work while cloaked
 (defun damagedp (device) ; C: #define damaged(dev) (game.damage[dev] != 0.0)
   "Evaluate whether or not a device is damaged."
 
@@ -1720,6 +1730,11 @@ tractor-beamed the ship then the other will not."
         (setf event-code l)
         (setf smallest-next-date (aref *future-events* l))))
     (setf execution-time (- smallest-next-date *stardate*))
+    (when *cloakedp*
+      (setf *ship-energy* (- *ship-energy* (* execution-time 500.0))) ; cloaking uses energy!
+      (when (<= *ship-energy* 0)
+        (finish +out-of-energy+)
+        (return-from process-events nil)))
     (setf *stardate* smallest-next-date) ; Advance game time
     ;; Decrement Federation resources and recompute remaining time
     (setf *remaining-resources* (- *remaining-resources*
@@ -1821,9 +1836,11 @@ tractor-beamed the ship then the other will not."
               commander-used-tractor-beam-p
               super-commander-used-tractor-beam-p
               *dockedp*
+              *cloakedp* ; Cannot tractor beam if we can't be seen!
               (= *super-commander-attacking-base* 1)
               *super-commander-attack-enterprise-p*)
           (setf allow-player-input t))
+
          ((or *attempted-escape-from-super-commander-p*
               (and (< *ship-energy* 2000)
                    (< *torpedoes* 4)
@@ -1842,6 +1859,7 @@ tractor-beamed the ship then the other will not."
           (unless *all-done-p*
             ;; Adjust finish time to time of tractor beaming
             (setf finish-time (+ *stardate* *time-taken-by-current-operation*))))
+
          (t
           (setf allow-player-input t))))
       ;; Tractor beam
@@ -1860,6 +1878,7 @@ tractor-beamed the ship then the other will not."
                  (setf commander-index (random (1- (length *commander-quadrants*)))))
              (if (or super-commander-used-tractor-beam-p
                      *dockedp*
+                     *cloakedp* ; Cannot tractor beam if we can't be seen!
                      (coord-equal (nth commander-index *commander-quadrants*) *ship-quadrant*))
                  ;; Drats! Have to reschedule
                  (schedule-event +tractor-beam+ (+ *time-taken-by-current-operation*
@@ -2226,6 +2245,8 @@ Also available are
        (print-out "GREEN"))
       ((= *condition* +dead+)
        (print-out "DEAD")))
+    (when *cloakedp* ; TODO - verify there is enough space for [YELLOW, CLOAKED, 10 DAMAGES]
+      (print-out ", CLOAKED"))
     (when (> (damaged-device-count) 0)
       (print-out (format nil ", ~A DAMAGES" (damaged-device-count))))
     (skip-line))
@@ -2553,6 +2574,10 @@ Long-range sensors can scan all adjacent quadrants."
                *shields-are-up-p*)
       (print-message "***Shields knocked down.")
       (setf *shields-are-up-p* nil))
+  (when (and (damagedp +cloaking-device+)
+             *cloakedp*)
+    (print-message "***Cloaking device rendered inoperative.")
+    (setf *cloakedp* nil))
   (skip-line))
 
 (defun check-for-phasers-overheating (requested-energy) ; C: void overheat(double rpow)
@@ -3577,9 +3602,13 @@ there was an error (including -1 entered by the player to exit the command)."
                 (setf misfire t))
               (progn
                 ;; Fire a photon torpedo
-                (when (or *shields-are-up-p*
-                          *dockedp*)
-                  (setf random-variation (* random-variation (+ 1.0 (* 0.0001 *shield-energy*)))))
+                (cond ; Torpedoes are less accurate in several cicrcumstances
+                  (*cloakedp*
+                   (setf random-variation (* random-variation 1.2)))
+
+                  ((or *shields-are-up-p*
+                       *dockedp*)
+                   (setf random-variation (* random-variation (+ 1.0 (* 0.0001 *shield-energy*))))))
                 (move-torpedo-within-quadrant (aref courses i) random-variation *ship-sector* i number-of-torpedoes-to-fire)
                 (when (or *all-done-p*
                           (quadrant-supernovap
@@ -3588,6 +3617,11 @@ there was an error (including -1 entered by the player to exit the command)."
       ;; TODO - is this a common idiom suitable for a function? Yes - (enemies-remaining)
       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
         (finish +won+)))))
+
+(defun cloak () ; C: void cloak(void)
+
+  ;; resume here
+  )
 
 (defun shield-actions (&key (raise-shields nil)) ; C: doshield(bool raise)
   "Change shield status. The optional parameter is used to raise the shields without player
@@ -3776,6 +3810,8 @@ We don't have a cloaking device.  The shuttle got the allocation
 for the cloaking device, then we shaved a half-percent off
 everything to have some weight to give DSHCTRL/DDRAY/DDSP."
 
+  ;; TODO - add cloaking device!
+  ;; TODO - the Faerie Queene has fewer devices than the Enterprise, should this table still apply?
   (do ((weights (list
                  105  ; DSRSENS: short range scanners	      10.5%
                  105  ; DLRSENS: long range scanners	      10.5%
@@ -3906,6 +3942,8 @@ is a string suitable for use with the format function."
        (setf ships-destroyed 2)))
     (score-multiple "~6@A ship(s) lost or destroyed                 ~5@A"
                     ships-destroyed (* -100 ships-destroyed)))
+  (score-multiple "~6@A Treaty of Algeron violations                 ~5@A"
+                    *cloaking-violations* (* -100 *cloaking-violations*))
   (when (not *alivep*)
     (score-single "Penalty for getting yourself killed              ~5@A" -200))
   (when *game-won-p*
@@ -4189,9 +4227,20 @@ is a string suitable for use with the format function."
     ;; FCREW
     ((= finish-reason +all-crew-killed+)
      (print-message "Your last crew member has died."))
+    ;; FCLOAK
+    ((= finish-reason +cloak+)
+     (setf *cloaking-violations* (1+ *cloaking-violations*))
+     (print-message "You have violated the Treaty of Algeron.")
+     (print-message "The Romulan Empire can never trust you again."))
     ;; should never reach this, but here we are
     (t
      (print-message "Game over, man!")))
+  (when (and (/= finish-reason +won+)
+             (/= finish-reason +cloak+)
+             *cloakedp*)
+    (print-message "Your ship was cloaked so your subspace radio did not receive anything.")
+    (print-message "You may have missed some warning messages.")
+    (skip-line))
   ;; Win or lose, by this point the player did not survive.
   (setf *alivep* nil)
   ;; Downgrade the ship for score calculation purposes. TODO - this can probably just be based on *alivep*
@@ -4387,6 +4436,7 @@ player has reached a base by abandoning ship or using the SOS command."
   (setf *things-here* 0)
   (setf *thing-is-angry-p* nil)
   (setf *base-attack-report-seen-p* nil)
+  (setf *cloaking-violation-reported-p* nil)
   (when *super-commander-attack-enterprise-p*
     ;; Attempt to escape Super-commander, so tractor beam back!
     (setf *super-commander-attack-enterprise-p* nil)
@@ -4648,6 +4698,8 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (setf *landing-craft-location* "offship") ; Galileo disappears
   (setf *brig-capacity* 300) ; Less capacity now
   (setf *brig-free* *brig-capacity*)
+  (setf *cloakedp* nil)
+  (setf *cloakingp* nil)
   ;; Resupply ship
   (setf *dockedp* t)
   (do ((device-index 0 (1+ device-index)))
@@ -4672,12 +4724,18 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (cond
     (*dockedp*
      (print-message "Already docked."))
+
     (*in-orbit-p*
      (print-message "You must first leave standard orbit."))
+
     ((or (not *base-sector*)
          (> (abs (- (coordinate-x *ship-sector*) (coordinate-x *base-sector*))) 1)
          (> (abs (- (coordinate-y *ship-sector*) (coordinate-y *ship-sector*))) 1))
      (print-message (format nil "~A not adjacent to base." (format-ship-name))))
+
+    (*cloakedp*
+     (print-message "You cannot dock while cloaked."))
+
     (t
      (setf *dockedp* t)
      (print-message "Docked.")
@@ -5207,6 +5265,10 @@ the player completes their turn."
   ;; Message verbosity: if the skill level is Fair or lower then print the word Sector
   ;; when displaying coordinates, otherwise print only the bare coordinates.
 
+  (when (and *cloakedp*
+             (not *cloakingp*))
+    (return-from attack-player nil)) ; Nothing happens if we are cloaked
+
   (unless *all-done-p* ; The game could be over at this point, check
     (when (> *tholians-here* 0) ; Tholian gets to move before attacking
       (move-tholian))
@@ -5404,6 +5466,13 @@ can occur."
         n
         (s-coord (make-coordinate :x 0 :y 0))) ; C: w
 
+    (when (and *cloakedp*
+               (is-scheduled-p +tractor-beam+)
+               (>= (+ *stardate* *time-taken-by-current-operation*) (scheduled-for +tractor-beam+)))
+      ;; We can't be tractor beamed if cloaked, so move the event into the future
+      (schedule-event +tractor-beam+ (+ *time-taken-by-current-operation*
+                                        (expran (* 1.5 (/ *initial-stardate* (length *commander-quadrants*)))))))
+
     ;; If tractor beam is to occur, don't move full distance
     (when (and (is-scheduled-p +tractor-beam+)
                (>= (+ *stardate* *time-taken-by-current-operation*) (scheduled-for +tractor-beam+)))
@@ -5444,7 +5513,8 @@ can occur."
       (when (not (valid-sector-p (coordinate-x s-coord) (coordinate-y s-coord)))
         ;; Allow a final enemy attack unless being pushed by a nova.
         (when (and (not nova-push-p)
-                   (/= *enemies-here* 0))
+                   (/= *enemies-here* 0)
+                   (not *cloakedp*))
           (update-condition)
           ;; *enemies-here* is a count, start at zero to use as an array reference
           (do ((m 0 (1+ m))) ; TODO - can compute average distance be a function? Needs a sector coord input
@@ -5923,6 +5993,12 @@ quadrant experiencing a supernova)."
 
 (defun move-under-warp-drive () ;  C: warp(bool timewarp)
 
+  (when *cloakedp*
+    (clear-type-ahead-buffer)
+    (skip-line)
+    (print-message "Engineer Scott- \"The warp engines cannot be used while cloaked, Sir.\"")
+    (return-from move-under-warp-drive nil))
+
   (when (> (aref *device-damage* +warp-engines+) 10.0)
     (clear-type-ahead-buffer)
     (skip-line)
@@ -5938,7 +6014,7 @@ quadrant experiencing a supernova)."
     (return-from move-under-warp-drive nil))
 
   ;; Read in course and distance
-  (multiple-value-bind (course distance) (get-ship-course-and-distance) ; TODO this could probably be a multiple-value-bind
+  (multiple-value-bind (course distance) (get-ship-course-and-distance)
     (when (= course -1.0) ; TODO test this
       (return-from move-under-warp-drive nil))
 
@@ -7441,6 +7517,10 @@ it's your problem."
     (setf *captured-klingons* (read s))
     (setf *brig-capacity* (read s))
     (setf *brig-free* (read s))
+    (setf *cloakedp* (read s))
+    (setf *cloakingp* (read s))
+    (setf *cloaking-violations* (read s))
+    (setf *cloaking-violation-reported-p* (read s))
     (setf *remaining-klingons* (read s))
     (setf *remaining-super-commanders* (read s))
     (setf *remaining-resources* (read s))
@@ -7565,6 +7645,10 @@ loop, in effect continuously saving the current state of the game."
     (print *captured-klingons* s)
     (print *brig-capacity* s)
     (print *brig-free* s)
+    (print *cloakedp* s)
+    (print *cloakingp* s)
+    (print *cloaking-violations* s)
+    (print *cloaking-violation-reported-p* s)
     (print *remaining-klingons* s)
     (print *remaining-super-commanders* s)
     (print *remaining-resources* s)
@@ -7761,6 +7845,7 @@ There are a lot of magic numbers in these settings."
                                +habitable-planets+))
     (setf *initial-romulans* (* (+ (random 1) 2) (skill-level-value *skill-level*)))
     (setf *remaining-romulans* *initial-romulans*)
+    (setf *cloaking-violations* 0)
     (setf *initial-time* (* 7.0 (game-length-value *game-length*)))
     (setf *remaining-time* *initial-time*)
     (setf *initial-klingons*  (truncate (+ (* 2.0 *initial-time*
@@ -7809,6 +7894,8 @@ There are a lot of magic numbers in these settings."
       (setf (aref *device-damage* i) 0.0))
     (setf *brig-capacity* 400)
     (setf *brig-free* *brig-capacity*)
+    (setf *cloakedp* nil)
+    (setf *cloakingp* nil)
 
     ;; Set up assorted game parameters
     (setf *initial-stardate* (* 100.0 (+ (* 31.0 (random 1.0)) 20.0))) ; C: 100.0*(int)(31.0*Rand()+20.0)
@@ -8060,6 +8147,18 @@ There are a lot of magic numbers in these settings."
     (when *romulan-neutral-zone-p*
       (attack-player))))
 
+(defun check-treaty-of-algeron ()
+  "Check if the player has violated the treaty of Algeron, and if so update the player on the
+consequences."
+
+  (when (and (> *romulans-here* 0)
+             (> *stardate* +algeron-date+)
+             (not *cloaking-violation-reported-p*)
+             *cloakedp*)
+    (print-message "The Romulan ship discovers you are breaking the Treaty of Algeron!")
+    (setf *cloaking-violations* (1+ *cloaking-violations*))
+    (setf *cloaking-violation-reported-p* t)))
+
 (defun print-help-topics (help-topics)
   "Print a list of help topics."
 
@@ -8100,8 +8199,6 @@ There are a lot of magic numbers in these settings."
       (when (> (length contents) 0)
         (print-message "Spock- \"Captain, I've found the following information:\"")
         (skip-line)
-        (print-message (string-capitalize topic))
-        (skip-line)
         (print-message contents))
       (when (and (= (length contents) 0)
                  (> (length topic) 0))
@@ -8128,13 +8225,13 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
   ;; Commands that should match the shortest possible string come first in the list.
   ;; TODO? - put commands that are not direct gameplay commands into a sub-mode, like the
   ;; <esc> or <tilde> menus in some graphical games. The idea is to not "break the 4th wall"
-  ;; during gameplay. These commands are commands, emexit, freeze, quit, save, debug, help
+  ;; during gameplay. These commands are commands, emexit, quit, save, help
   (do ((exit-game-p nil)
-       (commands (list "abandon" "chart" "capture" "commands" "computer" "crystals" "dock"
+       (commands (list "abandon" "chart" "capture" "cloak" "commands" "computer" "crystals" "dock"
                        "damages" "deathray" "destruct" "emexit" "exit" "help" "impulse" "lrscan"
                        "move" "mayday" "mine" "orbit" "phasers" "photons" "planets" "probe" "quit"
                        "rest" "report" "request" "srscan" "status" "score" "sensors" "shields"
-                       "shuttle" "sos" "transport" "torpedoes" "visual" "warp"))
+                       "shuttle" "transport" "torpedoes" "visual" "warp"))
        command
        hit-me-p) ;; When true, player has taken an action which consumes game time or a turn,
                  ;; after which enemies take their action turn, usually an attack.
@@ -8153,16 +8250,24 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (clear-type-ahead-buffer)
     (scan-input)
     (setf command (match-token *input-item* commands)) ; TODO - fix match-token to ignore all previous input on -1
-    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray
+    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak
     (cond
       ((string= command "abandon")
        (abandon-ship))
-      ((string= command "chart")
-       (chart))
       ((string= command "capture") ; Attempt to get Klingon ship to surrender
        (capture)
        (when *action-taken-p*
          (setf hit-me-p t)))
+      ((string= command "chart")
+       (chart))
+      ((string= command "cloak") ; Turn on/off cloaking
+       (cloak)
+       ;; TODO - can this when form be moved to the cloak function?
+       (when *cloakingp*
+         (attack-player :torpedoes-ok-p t) ; We will be seen while we cloak
+         (setf *cloakingp* nil)
+         (when (not (damagedp +cloaking-device+)) ; Don't cloak if we got damaged while cloaking!
+           (setf *cloakedp* t))))
       ((string= command "commands")
        (display-commands commands))
       ((string= command "computer")
@@ -8192,10 +8297,10 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (display-online-help))
       ((string= command "impulse")
        (move-under-impulse-power))
+      ;; TODO - add load command
       ((string= command "lrscan")
        (long-range-scan))
-      ((or (string= command "mayday") ; Call for help
-           (string= command "sos"))
+      ((string= command "mayday") ; Call for help
        (mayday)
        (when *action-taken-p*
          (setf hit-me-p t)))
@@ -8212,6 +8317,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ((string= command "phasers")
        (fire-phasers)
        (when *action-taken-p*
+         (check-treaty-of-algeron) ; TODO - can this be done in fire-phasers
          (setf hit-me-p t)))
       ((string= command "planets")
        (survey))
@@ -8229,6 +8335,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (wait)
        (when *action-taken-p*
          (setf hit-me-p t)))
+      ;; TODO - add save command
       ((string= command "score")
        (score))
       ((string= command "sensors")
@@ -8246,10 +8353,10 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (short-range-scan))
       ((string= command "status")
        (all-statuses))
-      ((or (string= command "torpedoes")
-           (string= command "photons"))
+      ((string= command "photons")
        (fire-photon-torpedoes)
        (when *action-taken-p*
+         (check-treaty-of-algeron) ; TODO - can this be done in fire-photon-torpedoes?
          (setf hit-me-p t)))
       ((string= command "transport")
        (beam))
