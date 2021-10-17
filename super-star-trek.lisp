@@ -3614,14 +3614,88 @@ there was an error (including -1 entered by the player to exit the command)."
                           (quadrant-supernovap
                            (coord-ref *galaxy* *ship-quadrant*)))
                   (return-from fire-photon-torpedoes nil))))))
-      ;; TODO - is this a common idiom suitable for a function? Yes - (enemies-remaining)
+      ;; TODO - is this a common idiom suitable for a function? Yes - (enemies-remaining-p)
       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
         (finish +won+)))))
 
 (defun cloak () ; C: void cloak(void)
 
-  ;; resume here
-  )
+  (when (string= *ship* +faerie-queene+)
+    (print-message "Ye Faerie Queene has no cloaking device.")
+    (return-from cloak nil))
+
+  (let ((action 'none))
+    (when (> (length *line-tokens*) 0)
+      (scan-input))
+    (when (numberp *input-item*)
+      (return-from cloak nil))
+    (if *input-item* ; is not nil
+        (let ((token (match-token *input-item* (list "on" "off"))))
+          (cond
+            ((string= token "on")
+             (when *cloakedp*
+               (print-message "The cloaking device has already been switched on.")
+               (return-from cloak nil))
+             (setf action 'turn-cloaking-on))
+
+            ((string= token "off")
+             (when (not *cloakedp*)
+               (print-message "The cloaking device has already been switched off.")
+               (return-from cloak nil))
+             (setf action 'turn-cloaking-off))
+
+            (t
+             (huh)
+             (return-from cloak nil))))
+        (progn
+          (when (not *cloakedp*)
+            (print-prompt "Switch cloaking device on? ")
+            (unless (get-y-or-n-p)
+              (return-from cloak nil))
+            (setf action 'turn-cloaking-on))
+          (when *cloakedp*
+            (print-prompt "Switch cloaking device off? ")
+            (unless (get-y-or-n-p)
+              (return-from cloak nil))
+            (setf action 'turn-cloaking-off))
+          (when (eql action 'none)
+            (return-from cloak nil))))
+    (when (eql action 'turn-cloaking-off)
+      (when (and (> *romulans-here* 0)
+                 (>= *stardate* +algeron-date+)
+                 (not *cloaking-violation-reported-p*))
+        (print-prompt (format nil "Spock- \"Captain, the Treaty of Algeron is in effect.~%   Are you sure this is wise?\""))
+        (unless (get-y-or-n-p)
+          (return-from cloak nil)))
+      (print-message "Engineer Scott- \"Aye, Sir.\"")
+      (setf *cloakedp* nil)
+      ;; The Romulans detect you uncloaking
+      (when (and (> *romulans-here* 0)
+                 (>= *stardate* +algeron-date+)
+                 (not *cloaking-violation-reported-p*))
+        (print-message "The Romulan ship discovers you are breaking the Treaty of Algeron!")
+        (setf *cloaking-violations* (1+ *cloaking-violations*))
+        (setf *cloaking-violation-reported-p* t))
+      (return-from cloak nil))
+    ;; turn cloaking on
+    (when (damagedp +cloaking-device+)
+      (print-message "Engineer Scott- \"The cloaking device is damaged, Sir.\"")
+      (return-from cloak nil))
+    (when *dockedp*
+      (print-message "You cannot cloak while docked.")
+      (return-from cloak nil))
+    (when (and (>= *stardate* +algeron-date+)
+               (not *cloaking-violation-reported-p*))
+      (print-message "Spock- \"Captain, using the cloaking device is a violation")
+      (print-message "  of the Treaty of Algeron. Considering the alternatives,")
+      (print-prompt "  are you sure this is wise?")
+      (unless (get-y-or-n-p)
+        (return-from cloak nil)))
+    (print-message "Engineer Scott- \"The cloaking device has been engaged, Sir.\"")
+    (setf *cloakedp* t)
+    (check-treaty-of-algeron)
+    ;; resume here
+    ))
 
 (defun shield-actions (&key (raise-shields nil)) ; C: doshield(bool raise)
   "Change shield status. The optional parameter is used to raise the shields without player
