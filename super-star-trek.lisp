@@ -154,7 +154,11 @@ characters."
   "Like print-out but with a delay between each character to build dramatic tension. Slow printing
 was not optional on early paper-based terminals."
 
-  (print-out string-to-print))
+  ;; resume here
+  ;;(print-out string-to-print)
+  ;; TODO - the following seems to be buffered in cooked mode, make slow printing a feature of curses.
+  (map 'string #'(lambda (c) (sleep 0.030)(princ c)) string-to-print)
+  (sleep 0.300))
 
 (defun skip-line (&optional (lines-to-skip 1))
   "Add blank lines at the bottom of the screen or window, pausing the display if the window is full."
@@ -169,7 +173,7 @@ was not optional on early paper-based terminals."
       (progn
         (dotimes (x lines-to-skip)
           (wprintw *current-window* (format nil "~%")))
-        (wrefresh *current-window*) ; this is for debugging? Or needed permanently?
+        (wrefresh *current-window*) ; TODO - this is for debugging? Or needed permanently?
       )
                                         ;    )
       (progn
@@ -1710,8 +1714,8 @@ tractor-beamed the ship then the other will not."
 
   ;; TODO - can/should player input be handled as an event?
 
-  ;; finish-time is the stardate at the time this invocation of process-events is complete
-  (do ((finish-time (+ *stardate* *time-taken-by-current-operation*))
+  ;; finish-date is the stardate at the time this invocation of process-events is complete
+  (do ((finish-date (+ *stardate* *time-taken-by-current-operation*))
        smallest-next-date ; C: datemin, the next stardate at which an event will occur
        execution-time ; C: xtime, time take by an event within the current operation time
        event-code ; C: evcode
@@ -1722,7 +1726,7 @@ tractor-beamed the ship then the other will not."
            *all-done-p*)) ; events in a previous iteration may have ended the game
     ;; Select earliest extraneous event, evcode==0 if no events
     (setf event-code +spy+)
-    (setf smallest-next-date finish-time)
+    (setf smallest-next-date finish-date)
     (do ((l 0 (1+ l)))
         ((>= l (length *future-events*)))
       (when (and (aref *future-events* l) ; The event must be non-nil for the < comparison
@@ -1857,8 +1861,8 @@ tractor-beamed the ship then the other will not."
           (setf super-commander-used-tractor-beam-p t)
           (execute-tractor-beam :t-quadrant *super-commander-quadrant*)
           (unless *all-done-p*
-            ;; Adjust finish time to time of tractor beaming
-            (setf finish-time (+ *stardate* *time-taken-by-current-operation*))))
+            ;; Adjust finish date to date of tractor beaming
+            (setf finish-date (+ *stardate* *time-taken-by-current-operation*))))
 
          (t
           (setf allow-player-input t))))
@@ -1890,7 +1894,7 @@ tractor-beamed the ship then the other will not."
                    (execute-tractor-beam :t-quadrant (nth commander-index *commander-quadrants*))
                    (unless *all-done-p*
                      ;; Adjust finish time to time of tractor beaming
-                     (setf finish-time (+ *stardate* *time-taken-by-current-operation*)))
+                     (setf finish-date (+ *stardate* *time-taken-by-current-operation*)))
                    (if (= (length *commander-quadrants*) 0)
                        (progn
                          (unschedule +tractor-beam+)
@@ -3693,9 +3697,7 @@ there was an error (including -1 entered by the player to exit the command)."
         (return-from cloak nil)))
     (print-message "Engineer Scott- \"The cloaking device has been engaged, Sir.\"")
     (setf *cloakedp* t)
-    (check-treaty-of-algeron)
-    ;; resume here
-    ))
+    (check-treaty-of-algeron)))
 
 (defun shield-actions (&key (raise-shields nil)) ; C: doshield(bool raise)
   "Change shield status. The optional parameter is used to raise the shields without player
@@ -4836,19 +4838,13 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
        (attack-report)
        (setf *base-attack-report-seen-p* t)))))
 
-(defun delay (ms) ; C: #define delay(x) usleep(x*1000)
-  "Pause for ms milliseconds."
-
-  ;; TODO - write this
-  (setf ms ms)
-  )
-
 (defun put-short-range-scan-symbol (symbol-coord symbol) ; C: void put_srscan_sym(coord w, char sym)
   "In curses mode, place the symbol at symbol-coord in the short range scan."
 
   ;; TODO - write this
   (setf symbol-coord symbol-coord)
   (setf symbol symbol)
+  (print-message "Debug: displaying a short range scan symbol")
   )
 
 (defun sound (frequency) ; C: not user-defined...
@@ -4861,7 +4857,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
 (defun warble () ; C: void warble(void)
   "Sound and visual effects for teleportation"
 
-  ;; TODO - write this
+  ;; TODO - this function is a placeholder, implement it in a portable way
 )
 
 (defun boom (c) ; C: void boom(coord w)
@@ -4869,6 +4865,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
 
   ;; TODO - write this
   (setf c c)
+  (print-message "Debug: going boom")
   )
 
 (defun time-warp () ; C: timwrp(), /* let's do the time warp again */
@@ -6254,7 +6251,7 @@ quadrant experiencing a supernova)."
   "Wait on events."
 
   (let (original-time
-        delay)
+        time-to-wait)
     (setf *action-taken-p* nil)
     (unless (> (length *line-tokens*) 0)
       (print-prompt "How long? "))
@@ -6266,7 +6263,7 @@ quadrant experiencing a supernova)."
     (when (<= *input-item* 0.0)
       (return-from wait nil))
     (setf original-time *input-item*)
-    (setf delay *input-item*)
+    (setf time-to-wait *input-item*)
     (when (or (>= *input-item* *remaining-time*)
               (> *enemies-here* 0))
       ;; TODO - have Spock calculate remaining time and ask "Are you sure this is wise?"
@@ -6280,19 +6277,19 @@ quadrant experiencing a supernova)."
          random-time)
         ;; leave if quadrant supernovas
         ((quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*)))
-      (when (<= delay 0)
+      (when (<= time-to-wait 0)
         (setf *restingp* nil))
       (when (not *restingp*)
         (print-message (format nil "~A stardates left." (truncate *remaining-time*)))
         (return-from wait nil))
-      (setf temp delay)
-      (setf *time-taken-by-current-operation* delay)
+      (setf temp time-to-wait)
+      (setf *time-taken-by-current-operation* time-to-wait)
       (when (> *enemies-here* 0)
         (setf random-time (+ 1.0 (random 1.0)))
         (when (< random-time temp)
           (setf temp random-time))
         (setf *time-taken-by-current-operation* temp))
-      (when (< *time-taken-by-current-operation* delay)
+      (when (< *time-taken-by-current-operation* time-to-wait)
         (attack-player))
       (when *all-done-p*
         (return-from wait nil))
@@ -6300,9 +6297,9 @@ quadrant experiencing a supernova)."
       (setf *action-taken-p* t)
       (when *all-done-p*
         (return-from wait nil))
-      (setf delay (- delay temp))
+      (setf time-to-wait (- time-to-wait temp))
       ;; Repair Deathray if long rest at starbase
-      (when (and (>= (- original-time delay) 9.99)
+      (when (and (>= (- original-time time-to-wait) 9.99)
                  *dockedp*)
         (setf (aref *device-damage* +death-ray+) 0.0))))
   (setf *restingp* nil)
@@ -7453,7 +7450,7 @@ it's your problem."
                (textcolor +red+)
                (print-message "fails.")
                (textcolor +default-color+)))
-         (delay 500)) ; half of a second?
+         (sleep 0.500)) ; half of a second?
        (setf (coord-ref *quadrant-contents* *ship-sector*) *ship*)
        (textcolor +green+)
        (print-message "succeeds.")
@@ -7972,6 +7969,7 @@ There are a lot of magic numbers in these settings."
     (setf *cloakingp* nil)
 
     ;; Set up assorted game parameters
+    ;; TODO - should this be before or after the algeron date?
     (setf *initial-stardate* (* 100.0 (+ (* 31.0 (random 1.0)) 20.0))) ; C: 100.0*(int)(31.0*Rand()+20.0)
     (setf *stardate* *initial-stardate*)
     (setf *abandoned-crew* 0)
@@ -8067,9 +8065,13 @@ There are a lot of magic numbers in these settings."
         (when (> i 0) ; The first base always succeeds
           (if (= (quadrant-starbases (coord-ref *galaxy* candidate-quadrant)) 0)
               (dolist (bq *base-quadrants*)
-                ;; the random factor seems unnecessary
+                ;; The original C did the following, which seems pointless:
                 ;; (and (< (distance candidate-quadrant bq) threshold) (<= 0.75 (random 1.0)))
-                (when (< (distance candidate-quadrant bq) threshold)
+                ;; This algorithm can loop for a long time, possibly forever, if the first few
+                ;; bases are in the "wrong" place. Add a random factor to accept a base even if
+                ;; the distance isn't optimal so the player can get on with the game.
+                (when (or (< (distance candidate-quadrant bq) threshold)
+                          (> (random 1.0) 0.95))
                   (setf candidate-ok-p nil)))
               (setf candidate-ok-p nil)))))
 
