@@ -30,7 +30,8 @@
 
 ;; TODO - create a terminalio package?
 (defparameter *curses-interface-p* t
-  "Control whether to display a full screen using (n)curses or the classic line-by-line output.")
+  "Control whether to display a full screen using (n)curses or the classic line-by-line output.
+This variable is not saved and restored because the terminal used could change between sessions.")
 (defparameter *current-window* nil) ; C: curwnd
 (defparameter *short-range-scan-window* nil) ; C: srscan_window
 (defparameter *report-window* nil)
@@ -7573,7 +7574,6 @@ it's your problem."
   (with-open-file (s file-name :direction :input :if-does-not-exist nil)
     (setf events::*future-events* (read s))
     (setf *random-state* (read s))
-    (setf *curses-interface-p* (read s))
     (setf *line-tokens* (read s))
     (setf *input-item* (read s))
     (setf *ship-quadrant* (read s))
@@ -7699,7 +7699,6 @@ loop, in effect continuously saving the current state of the game."
   (with-open-file (s file-name :direction :output :if-exists :supersede)
     (print events::*future-events* s)
     (print *random-state* s)
-    (print *curses-interface-p* s)
     (print *line-tokens* s)
     (print *input-item* s)
     (print *ship-quadrant* s)
