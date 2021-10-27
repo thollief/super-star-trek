@@ -6,8 +6,6 @@
 
 (in-package super-star-trek)
 
-;;; sst.h
-
 (define-constant +galaxy-size+ 8) ; C: GALSIZE
 (define-constant +quadrant-size+ 10) ; C: QUADSIZE
 (define-constant +habitable-planets+ (/ (* +galaxy-size+ +galaxy-size+) 2)) ; C: NINHAB
@@ -31,10 +29,8 @@
 (define-constant +algeron-date+ 2311 "Date of the Treaty of Algeron") ; C: #define ALGERON
 
 ;; TODO - create a terminalio package?
-;; TODO - change the interface selector to be a symbol, there is no bitfield here
-(defparameter *tty-interface-p* t) ; C: OPTION_TTY 0x00000001	/* old interface */
-(defparameter *curses-interface-p* t) ; C: OPTION_CURSES 0x00000002 /* new interface */
-(defparameter *tty-rows* 24) ; Assume 24 line TTY, TODO - if it's really necessary in TTY mode
+(defparameter *curses-interface-p* t
+  "Control whether to display a full screen using (n)curses or the classic line-by-line output.")
 (defparameter *current-window* nil) ; C: curwnd
 (defparameter *short-range-scan-window* nil) ; C: srscan_window
 (defparameter *report-window* nil)
@@ -47,7 +43,7 @@
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
 
 (defun set-window (window)
-  "Change window. Do nothing in TTY mode."
+  "Change window. Do nothing in line-by-line mode."
   (when *curses-interface-p*
     (setf *current-window* window)
     (when (or (equal *message-window* window) ; make cursor visible if selecting one of these windows
@@ -59,30 +55,31 @@
   "Get a line of input from the keyboard as a string. Remove leading and trailing spaces, and
 lowercase everything."
   (let (line)
-    (when *curses-interface-p*
-      ;; wgetstr and related ncurses functions from charms/ll don't seem to work. Simulate with wgetch.
-      (do ((input-char 0 (wgetch *prompt-window*)))
-          ((= input-char 13)) ; ASCII carriage return. This seems like the wrong way to do it...
-        ;; wgetch returns numeric character codes, accept the usual printable ASCII characters
-        (when (and (>= input-char 32)
-                   (<= input-char 126))
-          (setf line (concatenate 'string line (string (code-char input-char))))
-          (when (= input-char 92) ; escape backslashes with a backslash because (read) is used to parse numbers
-            (setf line (concatenate 'string line "\\"))))
-        (when (= input-char 127) ; Handle backspace so errors can be corrected
-          (let (y x)
-            (getyx *prompt-window* y x)
-            (setf x (- x 2))
-            (mvwaddstr *prompt-window* y x "  ") ; DEL is a ctrl char so "^j" is echoed
-            (wmove *prompt-window* y x)
-            (when (> (length line) 0)
-              (setf x (- x 1))
-              (mvwaddstr *prompt-window* y x " ")
-              (wmove *prompt-window* y x)
-              (setf line (subseq line 0 (- (length line) 1))))))
-        (wrefresh *prompt-window*)))
-    (when (not *curses-interface-p*) ; assume tty
-      (setf line (read-line))) ; C: fgets(line, max, stdin) - input length isn't limited here, use read-char if needed
+    (if *curses-interface-p*
+        (progn
+          ;; wgetstr and related ncurses functions from charms/ll don't seem to work. Simulate with wgetch.
+          (do ((input-char 0 (wgetch *prompt-window*)))
+              ((= input-char 13))
+            ;; wgetch returns numeric character codes, accept the usual printable ASCII characters
+            (when (and (>= input-char 32)
+                       (<= input-char 126))
+              (setf line (concatenate 'string line (string (code-char input-char))))
+              (when (= input-char 92) ; escape backslashes with a backslash because (read) is used to parse numbers
+                (setf line (concatenate 'string line "\\"))))
+            (when (= input-char 127) ; Handle backspace so errors can be corrected
+              (let (y x)
+                (getyx *prompt-window* y x)
+                (setf x (- x 2))
+                (mvwaddstr *prompt-window* y x "  ") ; DEL is a ctrl char so "^j" is echoed
+                (wmove *prompt-window* y x)
+                (when (> (length line) 0)
+                  (setf x (- x 1))
+                  (mvwaddstr *prompt-window* y x " ")
+                  (wmove *prompt-window* y x)
+                  (setf line (subseq line 0 (- (length line) 1))))))
+            (wrefresh *prompt-window*)))
+        (progn ; assume line-by-line
+          (setf line (read-line)))) ; C: fgets(line, max, stdin) - input length isn't limited here, use read-char if needed
     (setf line (string-downcase (string-trim " " line)))))
 
 ;; TODO - scan should return the value scanned, not set a global, and unscan should accept a parameter
@@ -155,10 +152,19 @@ characters."
 was not optional on early paper-based terminals."
 
   ;; resume here
+  (map nil #'(lambda (c)
+               (sleep 0.030)
+               (if *curses-interface-p*
+                   (progn
+                     (wprintw *current-window* (string c))
+                     (wrefresh *current-window*))
+                   (progn
+                     (princ c)
+                     (finish-output))))
+       string-to-print)
+  (sleep 0.300)
   ;;(print-out string-to-print)
-  ;; TODO - the following seems to be buffered in cooked mode, make slow printing a feature of curses.
-  (map 'string #'(lambda (c) (sleep 0.030)(princ c)) string-to-print)
-  (sleep 0.300))
+  )
 
 (defun skip-line (&optional (lines-to-skip 1))
   "Add blank lines at the bottom of the screen or window, pausing the display if the window is full."
@@ -172,14 +178,15 @@ was not optional on early paper-based terminals."
       ;      (clear-window))
       (progn
         (dotimes (x lines-to-skip)
-          (wprintw *current-window* (format nil "~%")))
+          ;;(format nil "~%")
+          (wprintw *current-window* (concatenate 'string (string #\Linefeed) (string #\Return))))
         (wrefresh *current-window*) ; TODO - this is for debugging? Or needed permanently?
       )
                                         ;    )
       (progn
         (dotimes (x lines-to-skip)
           (print-out (format nil "~%")))
-        (finish-output)))) ; assume *tty-interface-p* is true
+        (finish-output))))
 
 (defun print-message (message-to-print)
   "Print a string with end of line character. In curses mode print it in the message window, otherwise just print it."
@@ -213,7 +220,7 @@ was not optional on early paper-based terminals."
 (defun get-y-or-n-p () ; C: ja()
   "When a player choice may negatively affect successful completion of the game then require a yes
 or no answer. If other answers are given then prompt again. Use this function instead of y-or-n-p
-to allow for curses or TTY output when the player is reminded of the input options."
+to allow for curses or line-by-line output when the player is reminded of the input options."
 
   (clear-type-ahead-buffer)
   (do ((char nil))
@@ -921,7 +928,7 @@ shuttlecraft landed on it."
   (/= (aref *device-damage* device) 0.0))
 
 (defun clear-window ()
-  "Clear the current window. Do nothing in TTY mode."
+  "Clear the current window. Do nothing in line-by-line mode."
 
   (when *curses-interface-p*
     ;;(wclrtoeol *current-window*)
@@ -2255,7 +2262,7 @@ Also available are
       (print-out (format nil ", ~A DAMAGES" (damaged-device-count))))
     (skip-line))
   (when (= line-to-print 3)
-    (print-out (format nil "Postion ~A , ~A" (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
+    (print-out (format nil "Position ~A , ~A" (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
     ;; Print flight status with position
     (cond
       (*dockedp*
@@ -6809,12 +6816,16 @@ sectors on the short-range scan even when short-range sensors are out."
   ;; Seed the random number generator
   (setf *random-state* (make-random-state t))
 
-  ;; IF a TERM environment variable is defined then assume we can use CURSES calls
-  (unless (sb-ext:posix-getenv "TERM")
-    (setf *curses-interface-p* nil))
+  ;; IF a TERM environment variable is defined or the curses .dll file exists
+  ;; then assume we can use CURSES calls
+  (if (or (sb-ext:posix-getenv "TERM")
+          (probe-file "pdcurses.dll")
+          (probe-file "libdurses.dll"))
+      (setf *curses-interface-p* t)
+      (setf *curses-interface-p* nil))
 
-  ;; debug: run without curses
-  (setf *curses-interface-p* nil)
+  ;; DEBUG
+  ;;(setf *curses-interface-p* nil)
 
   (when *curses-interface-p*
      (initscr)
@@ -6832,16 +6843,23 @@ sectors on the short-range scan even when short-range sensors are out."
        (init-pair color_blue color_blue color_black)
        (init-pair color_yellow color_yellow color_black))
      (setf *current-window* *stdscr*)
+     ;; DEBUG start
+     (let (y x)
+       (getmaxyx *stdscr* y x)
+       )
+     ;; DEBUG end
      (clear-window) ; After this point use curses window functions, not *stdscr* functions.
 
+     ;; TODO - define a chart window
+     ;; TODO - define a "crew feedback" window? Print all speech from crew there.
      (setf *short-range-scan-window* (newwin 12 24 0 0))
      (setf *status-window* (newwin 10 33 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
      (setf *long-range-scan-window* (newwin 5 19 0 57))
      (setf *report-window* (newwin 7 23 5 57))
      (setf *message-window* (newwin 0 0 12 0)) ; Game narrative and general output
-     (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
      (scrollok *message-window* true)
+     (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
      ;; debug start - TODO remove these when the curses interface is stable
      ;;box *short-range-scan-window* 0 0)
      ;box *report-window* 0 0)
@@ -6857,9 +6875,8 @@ sectors on the short-range scan even when short-range sensors are out."
      ;wrefresh *prompt-window*)
      ;wgetch *prompt-window*)
      ;; debug end
-     (set-text-color +default-color+))
-
-  )
+     (set-text-color +default-color+)
+     (set-window *message-window*)))
 
 ;; TODO - every operation that uses time should call this, e.g. visual-scan.
 ;; TODO - can this function be merged into the process-events function?
@@ -7556,9 +7573,7 @@ it's your problem."
   (with-open-file (s file-name :direction :input :if-does-not-exist nil)
     (setf events::*future-events* (read s))
     (setf *random-state* (read s))
-    (setf *tty-interface-p* (read s))
     (setf *curses-interface-p* (read s))
-    (setf *tty-rows* (read s))
     (setf *line-tokens* (read s))
     (setf *input-item* (read s))
     (setf *ship-quadrant* (read s))
@@ -7684,9 +7699,7 @@ loop, in effect continuously saving the current state of the game."
   (with-open-file (s file-name :direction :output :if-exists :supersede)
     (print events::*future-events* s)
     (print *random-state* s)
-    (print *tty-interface-p* s)
     (print *curses-interface-p* s)
-    (print *tty-rows* s)
     (print *line-tokens* s)
     (print *input-item* s)
     (print *ship-quadrant* s)
@@ -8055,12 +8068,18 @@ There are a lot of magic numbers in these settings."
          (threshold (- 8 *initial-bases*)))
         ((>= i *initial-bases*))
       (do (candidate-quadrant
+           (count-attempts 0) ; debugging
            (candidate-ok-p nil))
           (candidate-ok-p
            (setf *base-quadrants* (append *base-quadrants* (list candidate-quadrant)))
            (setf (quadrant-starbases (coord-ref *galaxy* candidate-quadrant)) 1)
            (setf (starchart-page-starbases (coord-ref *starchart* candidate-quadrant)) 1))
         (setf candidate-quadrant (get-random-quadrant))
+        ;; DEBUG start
+        (setf count-attempts (1+ count-attempts))
+        (when (> count-attempts 5000)
+          (print-message "Couldn't place a base after 5000 tries."))
+        ;; DEBUG end
         (setf candidate-ok-p t) ; Assume ok, then try to falsify the assumption
         (when (> i 0) ; The first base always succeeds
           (if (= (quadrant-starbases (coord-ref *galaxy* candidate-quadrant)) 0)
@@ -8071,7 +8090,7 @@ There are a lot of magic numbers in these settings."
                 ;; bases are in the "wrong" place. Add a random factor to accept a base even if
                 ;; the distance isn't optimal so the player can get on with the game.
                 (when (or (< (distance candidate-quadrant bq) threshold)
-                          (> (random 1.0) 0.95))
+                          (> (random 1.0) 0.80))
                   (setf candidate-ok-p nil)))
               (setf candidate-ok-p nil)))))
 
@@ -8304,10 +8323,10 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
   ;; during gameplay. These commands are commands, emexit, quit, save, help
   (do ((exit-game-p nil)
        (commands (list "abandon" "chart" "capture" "cloak" "commands" "computer" "crystals" "dock"
-                       "damages" "deathray" "destruct" "emexit" "exit" "help" "impulse" "lrscan"
-                       "move" "mayday" "mine" "orbit" "phasers" "photons" "planets" "probe" "quit"
-                       "rest" "report" "request" "srscan" "status" "score" "sensors" "shields"
-                       "shuttle" "transport" "torpedoes" "visual" "warp"))
+                       "damages" "deathray" "destruct" "emexit" "exit" "help"
+                       "impulse" "lrscan" "move" "mayday" "mine" "orbit" "phasers" "photons"
+                       "planets" "probe" "quit" "rest" "report" "request" "srscan" "status" "score"
+                       "sensors" "shields" "shuttle" "transport" "torpedoes" "visual" "warp"))
        command
        hit-me-p) ;; When true, player has taken an action which consumes game time or a turn,
                  ;; after which enemies take their action turn, usually an attack.
