@@ -1,7 +1,5 @@
 ;;;; Super Star Trek package definitions
 
-;;; TODO - Add the license from the original sources and any other licenses mentioned
-
 ;;;; Possible enhancements
 ;;;; 1. Offer a randomized password instead of requiring user input. The C source for this port
 ;;;;    required a password if a "plain" game was selected and generated a random password if a
@@ -31,13 +29,10 @@
 ;;;; 5. Black holes can warp you to another location in the galaxy
 ;;;; 5. S-lang instead of ncurses?
 
-;;;; TODO - embed the help text in this source code. Possibly a package and a "help mode".
-;;;; TODO - add credits for all developers
 ;;;; TODO - add quadrants to events - every event occurs in a quadrant
 ;;;; TODO - bsdtrek mentioned boarding parties to capture a klingon, klingons could try it too
 ;;;; TODO - cloaking device. Capture/board a Romulan to acquire one?
 ;;;; TODO - can the player have a tractor beam too? Long-range variant? Capture a long-range variant?
-;;;; TODO - Get Tom Almy's 2019 code and port whatever is new
 
 ;;;; Comments reference names in the C source with "C:"
 ;;;; TODO remove the original C names from the C source if/when they are no longer needed
@@ -92,9 +87,9 @@
                 color_red color_white color_yellow key_eol key_backspace
                 *lines* *stdscr* true false err ok
                 box ; TODO not sure if this is only debug or permanent
-                color-pair cbreak curs-set endwin getcury getmaxy getyx has-colors init-pair initscr
-                keypad mvwaddstr newwin nocbreak nonl scrollok start-color waddch waddstr wattron
-                wattrset wclear wclrtoeol wgetch wmove wprintw wrefresh)
+                color-pair cbreak curs-set endwin getcury getmaxy getmaxyx getyx has-colors
+                init-pair initscr keypad mvwaddstr newwin nocbreak nonl scrollok start-color
+                waddch waddstr wattron wattrset wclear wclrtoeol wgetch wmove wprintw wrefresh)
   (:import-from cl-utilities
                 split-sequence)
   (:import-from events
