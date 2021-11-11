@@ -85,8 +85,10 @@
                 ;; Having difficulty getting getstr, getnstr, wgetstr, wgetnstr to work on FreeBSD
                 a_bold a_reverse color_black color_blue color_cyan color_green color_magenta
                 color_red color_white color_yellow key_eol key_backspace
-                *lines* *stdscr* true false err ok
-                box ; TODO not sure if this is only debug or permanent
+                *lines* *cols* *stdscr* true false err ok
+                wborder box ; TODO not sure if this is only debug or permanent
+                ;; line/box drawing characters
+                acs_hline acs_vline acs_llcorner acs_lrcorner acs_ulcorner acs_urcorner
                 color-pair cbreak curs-set endwin getcury getmaxy getmaxyx getyx has-colors
                 init-pair initscr keypad mvwaddstr newwin nocbreak nonl scrollok start-color
                 waddch waddstr wattron wattrset wclear wclrtoeol wgetch wmove wprintw wrefresh)
