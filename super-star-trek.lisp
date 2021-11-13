@@ -8128,7 +8128,6 @@ values, expecially number of entities in the game."
          (distance-threshold (- 8 *initial-bases*)))
         ((>= i *initial-bases*))
       (do (candidate-quadrant
-           (count-attempts 0) ; debugging
            (candidate-ok-p nil)
            random-threshold)
           (candidate-ok-p
@@ -8137,11 +8136,6 @@ values, expecially number of entities in the game."
            (setf (starchart-page-starbases (coord-ref *starchart* candidate-quadrant)) 1))
         (setf candidate-quadrant (get-random-quadrant))
         (setf random-threshold 0.80)
-        ;; DEBUG start
-        (setf count-attempts (1+ count-attempts))
-        (when (> count-attempts 5000)
-          (print-message (format nil "Debug: Couldn't place a base after 5000 tries.~%")))
-        ;; DEBUG end
         (setf candidate-ok-p t) ; Assume ok, then try to falsify the assumption
         (when (> i 0) ; The first base always succeeds
           (if (= (quadrant-starbases (coord-ref *galaxy* candidate-quadrant)) 0)
