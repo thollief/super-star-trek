@@ -37,7 +37,12 @@ This variable is not saved and restored because the terminal used could change b
 (defparameter *status-window* nil)
 (defparameter *long-range-scan-window* nil) ; C: lrscan_window
 (defparameter *message-window* nil)
-(defparameter *message-window-lines* 0 "Number of lines in the message window.")
+(defparameter *message-window-lines* 23 "Total number of lines in the message window. The default
+should be suitable for a classic 80x24 terminal.")
+(defparameter *message-window-paging-p* nil
+  "Whether or not to pause message window output when one window full of text has been displayed.")
+(defparameter *message-window-line-count* 0
+  "Number of lines that have been output in the message window.")
 (defparameter *prompt-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
@@ -166,40 +171,31 @@ was not optional on early paper-based terminals."
        string-to-print)
   (sleep 0.300))
 
-;; TODO - pausing not yet implemented
 (defun skip-line (&optional (lines-to-skip 1))
-  "Add blank lines at the bottom of the screen or window, pausing the display if the window is full."
+  "A convenience function to add blank lines at the current cursor position of the screen or
+current window, normally the last line. Since this is just a newline it can also end strings
+that did not print their own newline."
 
-  (if *window-interface-p*
-      ;(if (and (equal *current-window* *message-window*)
-      ;         (>= (getcury *current-window*)
-      ;             (- (getmaxy *current-window*) 3)))
-      ;    (progn
-      ;      (pause-display)
-      ;      (clear-window))
-      (progn
-        (dotimes (x lines-to-skip)
+  (dotimes (x lines-to-skip)
+    (if *window-interface-p*
+        (progn
           ;;(format nil "~%")
-          (wprintw *current-window* (concatenate 'string (string #\Linefeed) (string #\Return))))
-        (wrefresh *current-window*) ; TODO - this is for debugging? Or needed permanently?
-        )
-                                        ;    )
-      (progn
-        (dotimes (x lines-to-skip)
-          (print-out (format nil "~%")))
-        (finish-output))))
+          (wprintw *current-window* (concatenate 'string (string #\Linefeed) (string #\Return)))
+          (wrefresh *current-window*))
+        (progn
+          (print-out (format nil "~%"))
+          (finish-output)))
+    (when (or (not *window-interface-p*)
+              (equal *current-window* *message-window*))
+      (page-message-window))))
 
-;; TODO - reset the line counter at the start of functions that print to the message window.
-;;        function starts are the beginning of new action or event output and there is no
-;;        need to pause for old output that is no longer relevant.
 (defun print-message (message-to-print)
-  "Print a string in the message window and add an end of line character. If not using the window
-interfact just print it. If using the window interface then pause output when the message window
-fills up."
+  "Print a string in the message window. If not using the window interfact just print it."
 
   (when *window-interface-p*
     (select-window *message-window*))
-  (print-out message-to-print))
+  (print-out message-to-print)
+  (page-message-window))
 
 (defun print-message-slowly (message-to-print) ; C: prouts()
   "Print a message in the message window, like print-message, but with a delay between each
@@ -207,7 +203,28 @@ character to build dramatic tension."
 
   (when *window-interface-p*
     (select-window *message-window*))
-  (print-out-slowly message-to-print))
+  (print-out-slowly message-to-print)
+  (page-message-window))
+
+(defun page-message-window ()
+  "Page the message window if paging is turned on."
+
+    (when *message-window-paging-p*
+      (setf *message-window-line-count* (1+ *message-window-line-count*))
+      (when (= *message-window-line-count* *message-window-lines*)
+        (clear-type-ahead-buffer)
+        (print-prompt "Press ENTER to continue")
+        (scan-input)
+        (clear-type-ahead-buffer)
+        (setf *message-window-line-count* 0))))
+
+(defun message-window-paging (paging-on-p)
+  "Turn message window paging on or off."
+
+  (if paging-on-p
+      (setf *message-window-paging-p* t)
+      (setf *message-window-paging-p* nil))
+  (setf *message-window-line-count* 0))
 
 (defun print-stars ()
   "Print a line of stars."
@@ -8101,21 +8118,25 @@ values, expecially number of entities in the game."
     ;;   The distance between the candidate quadrant and all other quadrants containing bases
     ;;   is below a calculated threshold. The threshold goes lower as the total number of bases
     ;;   goes higher.
+    ;;   Randomly accept a base location even if it doesn't meet the distance threshold, and
+    ;;   progressivly lower the random threshold for base acceptance if nothing suitable is found.
     ;; Also update the starchart - base locations are known at the start of a game.
     (setf *base-quadrants* ())
     (do ((i 0 (1+ i))
-         ;; Original threshold formula seems to produce values that are too large
-         ;;(threshold (* 6.0 (- (1+ +max-bases+) *initial-bases*)))
-         (threshold (- 8 *initial-bases*)))
+         ;; Original distance-threshold formula seems to produce values that are too large
+         ;;(distance-threshold (* 6.0 (- (1+ +max-bases+) *initial-bases*)))
+         (distance-threshold (- 8 *initial-bases*)))
         ((>= i *initial-bases*))
       (do (candidate-quadrant
            (count-attempts 0) ; debugging
-           (candidate-ok-p nil))
+           (candidate-ok-p nil)
+           random-threshold)
           (candidate-ok-p
            (setf *base-quadrants* (append *base-quadrants* (list candidate-quadrant)))
            (setf (quadrant-starbases (coord-ref *galaxy* candidate-quadrant)) 1)
            (setf (starchart-page-starbases (coord-ref *starchart* candidate-quadrant)) 1))
         (setf candidate-quadrant (get-random-quadrant))
+        (setf random-threshold 0.80)
         ;; DEBUG start
         (setf count-attempts (1+ count-attempts))
         (when (> count-attempts 5000)
@@ -8126,13 +8147,11 @@ values, expecially number of entities in the game."
           (if (= (quadrant-starbases (coord-ref *galaxy* candidate-quadrant)) 0)
               (dolist (bq *base-quadrants*)
                 ;; The original C did the following, which seems pointless:
-                ;; (and (< (distance candidate-quadrant bq) threshold) (<= 0.75 (random 1.0)))
-                ;; This algorithm can loop for a long time, possibly forever, if the first few
-                ;; bases are in the "wrong" place. Add a random factor to accept a base even if
-                ;; the distance isn't optimal so the player can get on with the game.
-                (when (or (< (distance candidate-quadrant bq) threshold)
-                          (> (random 1.0) 0.80))
-                  (setf candidate-ok-p nil)))
+                ;; (and (< (distance candidate-quadrant bq) distance-threshold) (<= 0.75 (random 1.0)))
+                (when (or (< (distance candidate-quadrant bq) distance-threshold)
+                          (> (random 1.0) random-threshold))
+                  (setf candidate-ok-p nil)
+                  (setf random-threshold (- random-threshold 0.01))))
               (setf candidate-ok-p nil)))))
 
     ;; Put ordinary Klingon Battle Cruisers in the galaxy
@@ -8331,12 +8350,18 @@ consequences."
       (setf topic (match-token *input-item* help-topics)))
     (let (contents)
       (setf contents (rest (assoc topic *help-database* :test #'string=)))
+      ;; resume here - split the contents into a list of line on the newline
       (skip-line)
       (when (> (length contents) 0)
+        (message-window-paging t)
         (print-message (format nil "Spock- \"Captain, I've found the following information:\"~%"))
         (skip-line)
-        (print-message contents)
-        (skip-line))
+        ;;(print-message contents)
+        ;; #\Linefeed
+        ;; (format nil "~%")
+        (dolist (content-line (split-sequence #\newline contents))
+          (print-message (format nil "~A~%" content-line)))
+        (message-window-paging nil))
       (when (and (= (length contents) 0)
                  (> (length topic) 0))
         (print-message (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
