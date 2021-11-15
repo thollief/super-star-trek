@@ -34,7 +34,8 @@ This variable is not saved and restored because the terminal used could change b
 (defparameter *current-window* nil) ; C: curwnd
 (defparameter *short-range-scan-window* nil) ; C: srscan_window
 (defparameter *report-window* nil)
-(defparameter *status-window* nil)
+(defparameter *ship-status-window* nil)
+(defparameter *game-status-window* nil)
 (defparameter *long-range-scan-window* nil) ; C: lrscan_window
 (defparameter *message-window* nil)
 (defparameter *message-window-lines* 23 "Total number of lines in the message window. The default
@@ -144,8 +145,7 @@ shortest string, are the same."
         (return-from match-token candidate)))))
 
 (defun print-out (string-to-print)
-  "Print a string. In curses mode use the current window. Output strings without adding end of line
-characters."
+  "Print a string. In curses mode use the current window."
 
   (if *window-interface-p*
       (progn
@@ -180,7 +180,8 @@ that did not print their own newline."
     (if *window-interface-p*
         (progn
           ;;(format nil "~%")
-          (wprintw *current-window* (concatenate 'string (string #\Linefeed) (string #\Return)))
+          ;;(wprintw *current-window* (concatenate 'string (string #\Linefeed) (string #\Return)))
+          (wprintw *current-window* (string #\newline))
           (wrefresh *current-window*))
         (progn
           (print-out (format nil "~%"))
@@ -211,7 +212,8 @@ character to build dramatic tension."
 
     (when *message-window-paging-p*
       (setf *message-window-line-count* (1+ *message-window-line-count*))
-      (when (= *message-window-line-count* *message-window-lines*)
+      ;; Pause at one line less than the total number of lines to account for newlines.
+      (when (>= *message-window-line-count* (1- *message-window-lines*))
         (clear-type-ahead-buffer)
         (print-prompt "Press ENTER to continue")
         (scan-input)
@@ -970,7 +972,7 @@ shuttlecraft landed on it."
   (clear-window)
   (setf *current-window* *report-window*)
   (clear-window)
-  (setf *current-window* *status-window*)
+  (setf *current-window* *ship-status-window*)
   (clear-window)
   (setf *current-window* *long-range-scan-window*)
   (clear-window)
@@ -2246,9 +2248,17 @@ tractor-beamed the ship then the other will not."
       (when (> (aref *device-damage* c) 0)
         (setf damage-count (1+ damage-count)))))
 
-;; TODO - change items to request to symbols instead of line numbers. Probably need a symbol to
-;;        line number map function.
-(defun status (&optional (line-to-print nil)) ; C: void status(int req)
+;;(defun game-status (&optional (line-to-print nil))
+;;  "Print game status lines. The line to print is one of
+;;
+;;   1 - Stardate
+;;   2 - Klingons left
+;;   3 - Time left
+;;"
+;;
+;;  )
+
+(defun ship-status (&optional (line-to-print nil)) ; C: void status(int req)
   "Print status report lines next to short range scan lines. The classic line to print is one of
 
    1 - Stardate
@@ -2265,7 +2275,19 @@ tractor-beamed the ship then the other will not."
 Also available are
 
    11 - Planets
-   12 - Attack report"
+   12 - Attack report
+
+With the addition of probes and other ship information the new status lines are
+
+   1 - Condition
+   2 - Position
+   3 - Life Support
+   4 - Warp Factor
+   5 - Energy
+   6 - Torpedoes
+   7 - Shields
+   8 - Probes left
+"
 
   ;; TODO - remove stardate, klingons left, time left from classic
   ;; TODO - add probe status to standard
@@ -2363,21 +2385,21 @@ Also available are
 
   (if *window-interface-p*
       (progn
-        (select-window *status-window*)
+        (select-window *ship-status-window*)
         (clear-window)
-        (wmove *status-window* 0 0))
+        (wmove *ship-status-window* 0 0))
       (skip-line))
 
-  (status 1)
-  (status 2)
-  (status 3)
-  (status 4)
-  (status 5)
-  (status 6)
-  (status 7)
-  (status 8)
-  (status 9)
-  (status 10))
+  (ship-status 1)
+  (ship-status 2)
+  (ship-status 3)
+  (ship-status 4)
+  (ship-status 5)
+  (ship-status 6)
+  (ship-status 7)
+  (ship-status 8)
+  (ship-status 9)
+  (ship-status 10))
 
 (defun short-range-scan ()
 
@@ -2413,7 +2435,7 @@ Also available are
           (skip-line)
           (progn
             (print-out " ")
-            (status (1+ i)))))))
+            (ship-status (1+ i)))))))
 
 (defun long-range-scan ()
   "Scan the galaxy using long-range sensors and update the star chart. Display the results of the scan.
@@ -2454,9 +2476,9 @@ Long-range sensors can scan all adjacent quadrants."
 
   (when *window-interface-p*
     (short-range-scan)
-    (select-window *status-window*)
-    (wclear *status-window*)
-    (wmove *status-window* 0 0)
+    (select-window *ship-status-window*)
+    (wclear *ship-status-window*)
+    (wmove *ship-status-window* 0 0)
     (select-window *report-window*)
     (wclear *report-window*)
     (wmove *report-window* 0 0)
@@ -6679,7 +6701,7 @@ quadrant experiencing a supernova)."
             ((< *crystal-work-probability* ai)
              (print-message (format nil "Dilithium crystals have been used ~A time~A.~%" i (if (= i 1) "" "s"))))))))
 
-;; TODO - see the status function, there are two additional requests possible
+;; TODO - see the ship-status function, there are two additional requests possible
 (defun request () ; C: request()
   "Request a single item of status information."
 
@@ -6696,25 +6718,25 @@ quadrant experiencing a supernova)."
       (select-window *message-window*))
     (cond
       ((string= req-item "date")
-       (status 1))
+       (ship-status 1))
       ((string= req-item "condition")
-       (status 2))
+       (ship-status 2))
       ((string= req-item "position")
-       (status 3))
+       (ship-status 3))
       ((string= req-item "lsupport")
-       (status 4))
+       (ship-status 4))
       ((string= req-item "warpfactor")
-       (status 5))
+       (ship-status 5))
       ((string= req-item "energy")
-       (status 6))
+       (ship-status 6))
       ((string= req-item "torpedoes")
-       (status 7))
+       (ship-status 7))
       ((string= req-item "shields")
-       (status 8))
+       (ship-status 8))
       ((string= req-item "klingons")
-       (status 9))
+       (ship-status 9))
       ((string= req-item "time")
-       (status 10))
+       (ship-status 10))
       (t
        (skip-line)
        (print-message (format nil "UNRECOGNIZED REQUEST. Valid requests are:~%"))
@@ -6886,7 +6908,6 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; - Message window has a minimum size, otherwise use line-by-line mode.
      ;; - The message window receives all extra lines available after permanent
      ;;   windows have been placed.
-     ;; - Add pause when message text fills message window.
      ;; TODO - define a chart window
      ;; TODO - define a damages window
      ;; TODO - define a planet report window
@@ -6894,7 +6915,7 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; TODO - define a "computer interaction" window, to handle computer calculations?
      ;; TODO - name all these constants that define window position and size
      (setf *short-range-scan-window* (newwin 12 24 0 0))
-     (setf *status-window* (newwin 10 33 2 24))
+     (setf *ship-status-window* (newwin 10 33 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
      ;; TODO - use no more width than needed for a normal long range scan and manually wrap error message
      (setf *long-range-scan-window* (newwin 5 19 0 57))
@@ -6902,7 +6923,7 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; The message window is allocated all space between the short range scan window and the
      ;; prompt window. Leave a blank line at the top between the message window and the short
      ;; range scan window, and at the bottom between the message window and the prompt window.
-     (setf *message-window-lines* (- *lines* 2 13))
+     (setf *message-window-lines* (- *lines* 1 13))
      (setf *message-window* (newwin *message-window-lines* 0 13 0)) ; Game narrative and general output
      (scrollok *message-window* true)
      (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
@@ -6913,8 +6934,8 @@ sectors on the short-range scan even when short-range sensors are out."
      ;;         acs_vline acs_vline acs_hline acs_hline
      ;;         acs_ulcorner acs_urcorner acs_llcorner acs_lrcorner)
      ;box *report-window* 0 0)
-     ;box *status-window* 0 0)
-     ;wrefresh *status-window*)
+     ;box *ship-status-window* 0 0)
+     ;wrefresh *ship-status-window*)
      ;box *long-range-scan-window* 0 0)
      ;box *message-window* 0 0)
      ;box *prompt-window* 0 0)
@@ -8344,7 +8365,6 @@ consequences."
       (setf topic (match-token *input-item* help-topics)))
     (let (contents)
       (setf contents (rest (assoc topic *help-database* :test #'string=)))
-      ;; resume here - split the contents into a list of line on the newline
       (skip-line)
       (when (> (length contents) 0)
         (message-window-paging t)
