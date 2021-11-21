@@ -2248,18 +2248,25 @@ tractor-beamed the ship then the other will not."
       (when (> (aref *device-damage* c) 0)
         (setf damage-count (1+ damage-count)))))
 
-;;(defun game-status (&optional (line-to-print nil))
-;;  "Print game status lines. The line to print is one of
-;;
-;;   1 - Stardate
-;;   2 - Klingons left
-;;   3 - Time left
-;;"
-;;
-;;  )
+(defun game-status (&optional (line-to-print nil))
+  "Print game statuses next to ship status. The line to print is one of
+
+   1 - Stardate
+   2 - Klingons left
+   3 - Time left
+"
+
+  (when (= line-to-print 1)
+    (print-out (format nil "Stardate ~A~%" (format-stardate *stardate*))))
+  (when (= line-to-print 2)
+    (print-out (format nil "Klingons Left ~A~%" (+ *remaining-klingons*
+                                                   (length *commander-quadrants*)
+                                                   *remaining-super-commanders*))))
+  (when (= line-to-print 3)
+    (print-out (format nil "Time Left ~,2,,,F~%" *remaining-time*))))
 
 (defun ship-status (&optional (line-to-print nil)) ; C: void status(int req)
-  "Print status report lines next to short range scan lines. The classic line to print is one of
+  "Print status reports next to short range scan lines. The classic line to print is one of
 
    1 - Stardate
    2 - Condition
@@ -2281,24 +2288,19 @@ With the addition of probes and other ship information the new status lines are
 
    1 - Condition
    2 - Position
-   3 - Life Support
-   4 - Warp Factor
-   5 - Energy
-   6 - Torpedoes
-   7 - Shields
-   8 - Probes left
+   3 - (Un)Cloaked
+   4 - Life Support
+   5 - Warp Factor
+   6 - Energy
+   7 - Torpedoes
+   8 - Shields
+   9 - Probes
+
+There is no line 10.
 "
-
-  ;; TODO - remove stardate, klingons left, time left from classic
-  ;; TODO - add probe status to standard
-
-  ;; Revised and enhanced display from the C source: 1 - Time left, 2 - Condition, 3 - Position,
-  ;; 4 - Life Support, 5 - Warp Factor, 6 - Energy, 7 - Torpedoes, 8 - Shields, 9 - Kilingons left,
-  ;; 10 - Planets 11 - Attack report
+  ;; TODO - add game status lines next to the ship status lines
 
   (when (= line-to-print 1)
-    (print-out (format nil "Stardate ~A~%" (format-stardate *stardate*))))
-  (when (= line-to-print 2)
     (print-out "Condition ")
     (when *dockedp*
       ;; TODO - update the player condition every turn, not only when checking status
@@ -2312,12 +2314,10 @@ With the addition of probes and other ship information the new status lines are
        (print-out "GREEN"))
       ((= *condition* +dead+)
        (print-out "DEAD")))
-    (when *cloakedp* ; TODO - verify there is enough space for [YELLOW, CLOAKED, 10 DAMAGES]
-      (print-out ", CLOAKED"))
     (when (> (damaged-device-count) 0)
       (print-out (format nil ", ~A DAMAGES" (damaged-device-count))))
     (skip-line))
-  (when (= line-to-print 3)
+  (when (= line-to-print 2)
     (print-out (format nil "Position ~A , ~A" (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
     ;; Print flight status with position
     (cond
@@ -2326,6 +2326,12 @@ With the addition of probes and other ship information the new status lines are
       (*in-orbit-p*
        (print-out ", In Orbit")))
     (skip-line))
+  (when (= line-to-print 3)
+    (if (damagedp +cloaking-device+)
+        (print-out (format nil "Cloaking Device DAMAGED~%"))
+        (if *cloakedp*
+            (print-out (format nil "Cloaked~%"))
+            (print-out (format nil "Not cloaked~%")))))
   (when (= line-to-print 4)
     (print-out "Life Support ")
     (if (damagedp +life-support+)
@@ -2343,23 +2349,30 @@ With the addition of probes and other ship information the new status lines are
       (print-out " (have crystals)"))
     (skip-line))
   (when (= line-to-print 7)
-    (print-out (format nil "Torpedoes ~A~%" *torpedoes*)))
+    ;; TODO - can the line width be specified without nested format statements?
+    (print-out (format nil "~34A" (format nil "Torpedoes ~A" *torpedoes*)))
+    (if *window-interface-p*
+        (skip-line)
+        (game-status 1)))
   (when (= line-to-print 8)
-    (print-out "Shields ")
-    (cond
-      ((damagedp +shields+)
-       (print-out "DAMAGED, "))
-      (*shields-are-up-p*
-       (print-out "UP, "))
-      ((not *shields-are-up-p*)
-       (print-out "DOWN, ")))
-    (print-out (format nil "~A% ~,1F units~%" (truncate (+ (/ (* 100.0 *shield-energy*) *initial-shield-energy*) 0.5)) *shield-energy*)))
+    (print-out (format nil "~34A" (format nil "Shields ~A ~A% ~,1F units"
+                                          (cond
+                                            ((damagedp +shields+)
+                                             "DAMAGED,")
+                                            (*shields-are-up-p*
+                                             "UP,")
+                                            ((not *shields-are-up-p*)
+                                             "DOWN,"))
+                                          (truncate (+ (/ (* 100.0 *shield-energy*) *initial-shield-energy*) 0.5))
+                                          *shield-energy*)))
+    (if *window-interface-p*
+        (skip-line)
+        (game-status 2)))
   (when (= line-to-print 9)
-    (print-out (format nil "Klingons Left ~A~%" (+ *remaining-klingons*
-                                                   (length *commander-quadrants*)
-                                                   *remaining-super-commanders*))))
-  (when (= line-to-print 10)
-    (print-out (format nil "Time Left ~,2,,,F~%" *remaining-time*)))
+    (print-out (format nil "~34A" (format nil "Probes ~A" *probes-available*)))
+    (if *window-interface-p*
+        (skip-line)
+        (game-status 3)))
   (when (= line-to-print 11)
     ;; TODO - delete commented out code after alist is tested
     (let (
@@ -2381,7 +2394,9 @@ With the addition of probes and other ship information the new status lines are
                          (format-stardate (find-event +super-commander-destroys-base+)))))))
 
 (defun all-statuses ()
-  "Call the statuses to be displayed next to the short range scan."
+  "Display all the ship statuses that are displayed next to the short range scan. In
+line-by-line mode also display the game statuses that are displayed next to the short
+range scan."
 
   (if *window-interface-p*
       (progn
@@ -2399,7 +2414,15 @@ With the addition of probes and other ship information the new status lines are
   (ship-status 7)
   (ship-status 8)
   (ship-status 9)
-  (ship-status 10))
+
+  ;; In line-by-line mode game statuses are printed by the ship status function
+  (when *window-interface-p*
+    (select-window *game-status-window*)
+    (clear-window)
+    (wmove *game-status-window* 0 0)
+    (game-status 1)
+    (game-status 2)
+    (game-status 3)))
 
 (defun short-range-scan ()
 
@@ -3685,6 +3708,7 @@ there was an error (including -1 entered by the player to exit the command)."
       (scan-input))
     (when (numberp *input-item*)
       (return-from cloak nil))
+    ;; TODO - what is *input-item* at this point?
     (if *input-item* ; is not nil
         (let ((token (match-token *input-item* (list "on" "off"))))
           (cond
@@ -6213,8 +6237,7 @@ quadrant experiencing a supernova)."
     (t
      (when (= (length *line-tokens*) 0)
        ;; Slow mode, so let Kirk know how many probes there are left
-       (print-message (format nil "~A probe~A left.~%" *probes-available* (if (= *probes-available* 1) "" "s")))
-       (print-prompt "Are you sure you want to fire a probe? ")
+       (print-message (format nil "~A probe~A left.~%" *probes-available* (if (= *probes-available* 1) "" "s")))       (print-prompt "Are you sure you want to fire a probe? ")
        (unless (get-y-or-n-p)
          (return-from launch-probe nil)))
      (setf *probe-is-armed-p* nil)
@@ -6614,8 +6637,8 @@ quadrant experiencing a supernova)."
          (print-message (format nil "All devices functional.~%"))))
     (when (damagedp i)
       (when (not header-printed-p)
-        (print-message (format nil "~12@A~24@A" "DEVICE" "-REPAIR TIMES-~%"))
-        (print-message (format nil "~21A~8@A~8@A" " " "IN FLIGHT" "DOCKED~%"))
+        (print-message (format nil "~12@A~24@A~%" "DEVICE" "-REPAIR TIMES-"))
+        (print-message (format nil "~21A~8@A~8@A~%" " " "IN FLIGHT" "DOCKED"))
         (setf header-printed-p t))
       (print-message (format nil "  ~17A~9,2F~9,2F~%"
                              (aref *devices* i)
@@ -6873,6 +6896,7 @@ sectors on the short-range scan even when short-range sensors are out."
   (initscr)
 
   ;; Ensure screen is large enough (24x80) for windows, otherwise use line-by-line mode.
+  ;; TODO - does pdcurses.dll provide number of lines and columns?
   (unless (and (>= *lines* 24)
                (>= *cols* 80))
     (endwin)
@@ -6915,11 +6939,12 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; TODO - define a "computer interaction" window, to handle computer calculations?
      ;; TODO - name all these constants that define window position and size
      (setf *short-range-scan-window* (newwin 12 24 0 0))
-     (setf *ship-status-window* (newwin 10 33 2 24))
+     (setf *ship-status-window* (newwin 10 35 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
      ;; TODO - use no more width than needed for a normal long range scan and manually wrap error message
-     (setf *long-range-scan-window* (newwin 5 19 0 57))
-     (setf *report-window* (newwin 7 23 5 57))
+     (setf *long-range-scan-window* (newwin 5 19 0 59))
+     (setf *game-status-window* (newwin 3 19 8 59))
+     (setf *report-window* (newwin 7 23 5 59))
      ;; The message window is allocated all space between the short range scan window and the
      ;; prompt window. Leave a blank line at the top between the message window and the short
      ;; range scan window, and at the bottom between the message window and the prompt window.
