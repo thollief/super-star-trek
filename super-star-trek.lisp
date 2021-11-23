@@ -6892,15 +6892,17 @@ sectors on the short-range scan even when short-range sensors are out."
 
   (setf *random-state* (make-random-state t)) ; Seed the random number generator
 
-  (setf *window-interface-p* t)
-  (initscr)
-
-  ;; Ensure screen is large enough (24x80) for windows, otherwise use line-by-line mode.
-  ;; TODO - does pdcurses.dll provide number of lines and columns?
-  (unless (and (>= *lines* 24)
-               (>= *cols* 80))
-    (endwin)
-    (setf *window-interface-p* nil))
+  ;; Win32 environments get line-by-line mode until I have the patience for making pdcurses work
+  (if (string= (software-type) "Win32")
+      (setf *window-interface-p* nil)
+      (progn
+        (setf *window-interface-p* t)
+        (initscr)
+        ;; Ensure screen is large enough (24x80) for windows, otherwise use line-by-line mode.
+        (unless (and (>= *lines* 24)
+                     (>= *cols* 80))
+          (endwin)
+          (setf *window-interface-p* nil))))
 
   ;; DEBUG - force line-by-line mode
   ;;(endwin)
