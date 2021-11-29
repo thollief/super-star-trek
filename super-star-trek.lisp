@@ -211,16 +211,17 @@ character to build dramatic tension."
 
 (defun page-message-window ()
   "Pause message window output if the window has been filled with the maximum number of lines it
-can hold."
+can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
 
-  (setf *message-window-line-count* (1+ *message-window-line-count*))
-  ;; Pause at one line less than the total number of lines to account for newlines.
-  (when (>= *message-window-line-count* (1- *message-window-lines*))
-    (clear-type-ahead-buffer)
-    (print-prompt "Press ENTER to continue")
-    (scan-input)
-    (clear-type-ahead-buffer)
-    (restart-message-window-paging)))
+  (when *window-interface-p*
+    (setf *message-window-line-count* (1+ *message-window-line-count*))
+    ;; Pause at one line less than the total number of lines to account for newlines.
+    (when (>= *message-window-line-count* (1- *message-window-lines*))
+      (clear-type-ahead-buffer)
+      (print-prompt "Press ENTER to continue")
+      (scan-input)
+      (clear-type-ahead-buffer)
+      (restart-message-window-paging))))
 
 (defun restart-message-window-paging ()
   "Assume all previous message window output has been seen by the player."
@@ -1920,10 +1921,10 @@ tractor-beamed the ship then the other will not."
              (unschedule +tractor-beam+)
              (unschedule +commander-attacks-base+)
              (unschedule +commander-destroys-base+))
-           (let (commander-index)
-             (if (= (length *commander-quadrants*) 1)
-                 (setf commander-index 0)
-                 (setf commander-index (random (1- (length *commander-quadrants*)))))
+           (let ((commander-index 0)) ; default to the first commander in the list
+             ;; Select a random commander if there is a choice of more than one
+             (when (> (length *commander-quadrants*) 1)
+               (setf commander-index (random (1- (length *commander-quadrants*)))))
              (if (or super-commander-used-tractor-beam-p
                      *dockedp*
                      *cloakedp* ; Cannot tractor beam if we can't be seen!
@@ -4113,7 +4114,7 @@ is a string suitable for use with the format function."
                            (* 100 (skill-level-value *skill-level*))))
     (setf *score* (+ *score* (* 100 (skill-level-value *skill-level*)))))
   (skip-line)
-  (print-message (format nil "TOTAL SCORE                                      ~5@A!%" (round *score*))))
+  (print-message (format nil "TOTAL SCORE                                      ~5@A~%" (round *score*))))
 
 (define-constant +day-names+
     (list "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
@@ -5013,6 +5014,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (new-quadrant)
   (process-events)) ; Stas Sergeev added this -- do pending events
 
+;; TODO - Tholian didn't move
 (defun move-tholian () ; C: void movetholian(void)
   "Move the Tholian. Tholians always start in a corner and move along the edge of the quadrant. At
 each turn the Tholian moves counterclockwise, building the Tholian Web along the next edge. On the
@@ -6301,41 +6303,42 @@ quadrant experiencing a supernova)."
   (if (> (length *line-tokens*) 0)
       (scan-input)
       (setf *input-item* nil))
-  (do (whatever)
+  (do ()
       (*input-item*)
-    (setf whatever whatever)
     (print-prompt "Warp factor: ")
     (scan-input))
   (if (numberp *input-item*)
-      (cond
-        ((> (aref *device-damage* +warp-engines+) 10.0)
-         (print-message (format nil "Warp engines inoperative.~%")))
+      (progn
+        (skip-line)
+        (cond
+          ((> (aref *device-damage* +warp-engines+) 10.0)
+           (print-message (format nil "Warp engines inoperative.~%")))
 
-        ((and (damagedp +warp-engines+) (> *input-item* 4.0))
-         (print-message (format nil "Engineer Scott- \"I'm doing my best, Captain,~%"))
-         (print-message (format nil "  but right now we can only go warp 4.\"~%")))
+          ((and (damagedp +warp-engines+) (> *input-item* 4.0))
+           (print-message (format nil "Engineer Scott- \"I'm doing my best, Captain,~%"))
+           (print-message (format nil "  but right now we can only go warp 4.\"~%")))
 
-        ((> *input-item* 10.0)
-         (print-message (format nil "Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
+          ((> *input-item* 10.0)
+           (print-message (format nil "Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
 
-        ((< *input-item* 1.0)
-         (print-message (format nil "Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
+          ((< *input-item* 1.0)
+           (print-message (format nil "Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
 
-        (t
-         (cond
-           ((or (<= *input-item* *warp-factor*)
-                (<= *input-item* 6.0))
-            (print-message (format nil "Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate *input-item*))))
+          (t
+           (cond
+             ((or (<= *input-item* *warp-factor*)
+                  (<= *input-item* 6.0))
+              (print-message (format nil "Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate *input-item*))))
 
-           ((< *input-item* 8.00)
-            (print-message (format nil "Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
+             ((< *input-item* 8.00)
+              (print-message (format nil "Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
 
-           ((= *input-item* 10.0)
-            (print-message (format nil "Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
+             ((= *input-item* 10.0)
+              (print-message (format nil "Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
 
-           (t
-            (print-message (format nil "Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
-         (setf *warp-factor* *input-item*)))
+             (t
+              (print-message (format nil "Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
+           (setf *warp-factor* *input-item*))))
       (huh)))
 
 (defun wait () ; C: wait(void)
@@ -6900,14 +6903,13 @@ sectors on the short-range scan even when short-range sensors are out."
 
   (setf *random-state* (make-random-state t)) ; Seed the random number generator
 
+  (setf *print-right-margin* 80) ; should be good for both windowed and line-by-line
+
   ;; Win32 environments get line-by-line mode until I have the patience for making pdcurses work
   (if (string= (software-type) "Win32")
-      (progn
-	(setf *print-right-margin* 80) ; guess
-	(setf *window-interface-p* nil))
+      (setf *window-interface-p* nil)
       (progn
         (initscr)
-	(setf *print-right-margin* *cols*)
 	(setf *window-interface-p* t)
         ;; Ensure screen is large enough (24x80) for windows, otherwise use line-by-line mode.
         (unless (and (>= *lines* 24)
@@ -6916,9 +6918,8 @@ sectors on the short-range scan even when short-range sensors are out."
           (setf *window-interface-p* nil))))
 
   ;; DEBUG - force line-by-line mode
-  ;;(endwin)
-  ;;(setf *print-right-margin* 80)
-  ;;(setf *window-interface-p* nil)
+  (endwin)
+  (setf *window-interface-p* nil)
 
   (when *window-interface-p*
      (keypad *stdscr* true) ; Assume the terminal has a keypad and function keys
@@ -6939,6 +6940,18 @@ sectors on the short-range scan even when short-range sensors are out."
 
      ;; Window handling in curses mode:
      ;; - Define which windows are permanent for 24x80 and which are pop-ups.
+     ;; In curses/window mode following windows always exist:
+     ;;   short range scan
+     ;;   status
+     ;;   long range scan
+     ;;   game status
+     ;;   message
+     ;;   prompt
+     ;;
+     ;; All output that doesn't go to some other defined window is displayed in the message window.
+     ;; In line-by-line mode the full screen is effectively the message window.
+     ;;
+     ;;
      ;; - If more rows/columns are available then make more windows permanent. Define
      ;;   a priority for which windows are made permanent first, player does not get
      ;;   to specify.
@@ -6946,24 +6959,27 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; - Message window has a minimum size, otherwise use line-by-line mode.
      ;; - The message window receives all extra lines available after permanent
      ;;   windows have been placed.
-     ;; TODO - define a chart window
-     ;; TODO - define a damages window
-     ;; TODO - define a planet report window
-     ;; TODO - define a probe status window. Probe status can be reported by the "request" command
-     ;; TODO - define a "computer interaction" window, to handle computer calculations?
+     ;; TODO - define a chart window - 44 cols x 10 lines
+     ;; TODO - define a damages window - 37 cols x 15 lines
+     ;; TODO - define a planet report window - 56 cols, potentially many lines
+     ;; TOTO - define a probe status command
+     ;; TODO - define a probe status window
      ;; TODO - name all these constants that define window position and size
      (setf *short-range-scan-window* (newwin 12 24 0 0))
-     (setf *ship-status-window* (newwin 10 35 2 24))
+     (setf *ship-status-window* (newwin 10 36 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
      ;; TODO - use no more width than needed for a normal long range scan and manually wrap error message
-     (setf *long-range-scan-window* (newwin 5 19 0 59))
-     (setf *game-status-window* (newwin 3 19 8 59))
-     (setf *report-window* (newwin 7 23 5 59))
+     (setf *long-range-scan-window* (newwin 5 19 0 60))
+     (setf *game-status-window* (newwin 3 19 8 60))
+     ;; TODO - display report window at bottom-right of available space
+     (setf *report-window* (newwin 7 23 5 60))
      ;; The message window is allocated all space between the short range scan window and the
      ;; prompt window. Leave a blank line at the top between the message window and the short
      ;; range scan window, and at the bottom between the message window and the prompt window.
-     (setf *message-window-lines* (- *lines* 1 12))
-     (setf *message-window* (newwin *message-window-lines* 0 13 0)) ; Game narrative and general output
+     ;; The message window needs to be at least 12 lines long to display a star chart
+     (setf *message-window-lines* (- *lines* 1 11))
+     ;; Game narrative and general output
+     (setf *message-window* (newwin *message-window-lines* 80 12 0))
      (scrollok *message-window* true)
      (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
      ;; debug start - TODO remove these when the curses interface is stable
@@ -7528,6 +7544,7 @@ it's your problem."
            (let (dest-quadrant)
              ;; Find the distance to the first base in the list of bases
              (setf dest-dist (* +quadrant-size+ (distance (first *base-quadrants*) *ship-quadrant*)))
+             (setf dest-quadrant (first *base-quadrants*))
              ;; Then try to find a base that's closer
              (dolist (bq *base-quadrants*)
                (when (< (* +quadrant-size+ (distance bq *ship-quadrant*)) dest-dist)
@@ -8441,10 +8458,6 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
                  ;; after which enemies take their action turn, usually an attack.
       ((or *all-done-p*
            exit-game-p))
-    (setf hit-me-p nil)
-    (setf *just-in-p* nil)
-    (setf *time-taken-by-current-operation* 0.0)
-    (setf *action-taken-p* nil)
     (when *window-interface-p*
       ;; In curses mode sensors work automatically. Call before updating the display, but only once
       ;; per entry into the quadrant.
@@ -8454,6 +8467,10 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       (select-window *message-window*))
     (skip-line)
     (restart-message-window-paging)
+    (setf hit-me-p nil)
+    (setf *just-in-p* nil)
+    (setf *time-taken-by-current-operation* 0.0)
+    (setf *action-taken-p* nil)
     (print-prompt "COMMAND: ")
     (clear-type-ahead-buffer)
     (scan-input)
