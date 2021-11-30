@@ -1,5 +1,7 @@
 ;;;; Super Star Trek
 
+;; TODO - entering a quadrant containing enemies doesn't result in an attack
+
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -2462,7 +2464,7 @@ range scan."
               (print-out (format nil "  S.R. SENSORS DAMAGED!~%"))
               (setf good-scan-p nil))
             (print-out (format nil "  [Using Base's sensors]~%")))
-        (print-out (format nil "     Short-range scan~%")))
+        (print-out (format nil "     SHORT-RANGE SCAN~%")))
     (when good-scan-p
       (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
       (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
@@ -2485,7 +2487,7 @@ range scan."
   "Scan the galaxy using long-range sensors and update the star chart. Display the results of the scan.
 Long-range sensors can scan all adjacent quadrants."
 
-    (if *window-interface-p*
+  (if *window-interface-p*
       (if *long-range-scan-window*
           (progn
             (select-window *long-range-scan-window*)
@@ -2496,12 +2498,12 @@ Long-range sensors can scan all adjacent quadrants."
             (skip-line)))
       (skip-line))
 
+  (print-out (format nil "LONG-RANGE SCAN~%"))
   (if (or (not (damagedp +long-range-sensors+))
            *dockedp*)
       (progn
-        (if (damagedp +long-range-sensors+)
-            (print-out (format nil "Starbase's long-range scan~%"))
-            (print-out (format nil "Long-range scan~%")))
+        (when (damagedp +long-range-sensors+)
+            (print-out (format nil "Starbase's sensors~%")))
         (do ((x (- (coordinate-x *ship-quadrant*) 1) (+ x 1)))
             ((> x (+ (coordinate-x *ship-quadrant*) 1)))
           (print-out " ")
@@ -2517,7 +2519,7 @@ Long-range sensors can scan all adjacent quadrants."
                                                       (starchart-page-stars (aref *starchart* x y)))))))
                 (print-out (format nil "~4D" -1))))
           (skip-line)))
-      (print-out (format nil "LONG-RANGE SENSORS DAMAGED.~%"))))
+      (print-out (format nil "SENSORS DAMAGED~%"))))
 
 (defun draw-windows () ; C: void drawmaps(void)
   "Perform the automatic display updates available to curses-enabled terminals."
