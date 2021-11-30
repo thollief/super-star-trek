@@ -2362,37 +2362,36 @@ There is no line 10.
       (print-out " (have crystals)"))
     (skip-line))
   (when (= line-to-print 7)
-    ;; TODO - can the line width be specified without nested format statements?
-    (print-out (format nil "~34A" (format nil "Torpedoes ~A" *torpedoes*)))
+    (print-out (format nil "~34@<Torpedoes ~A~>" *torpedoes*))
     (if *window-interface-p*
         (skip-line)
         (game-status 1)))
   (when (= line-to-print 8)
-    (print-out (format nil "~34A" (format nil "Shields ~A ~A% ~,1F units"
-                                          (cond
-                                            ((damagedp +shields+)
-                                             "DAMAGED,")
-                                            (*shields-are-up-p*
-                                             "UP,")
-                                            ((not *shields-are-up-p*)
-                                             "DOWN,"))
-                                          (truncate (+ (/ (* 100.0 *shield-energy*) *initial-shield-energy*) 0.5))
-                                          *shield-energy*)))
+    (print-out (format nil "~34@<Shields ~A ~A% ~,1F units~>"
+                       (cond
+                         ((damagedp +shields+)
+                          "DAMAGED,")
+                         (*shields-are-up-p*
+                          "UP,")
+                         ((not *shields-are-up-p*)
+                          "DOWN,"))
+                       (truncate (+ (/ (* 100.0 *shield-energy*) *initial-shield-energy*) 0.5))
+                       *shield-energy*))
     (if *window-interface-p*
         (skip-line)
         (game-status 2)))
   (when (= line-to-print 9)
-    (print-out (format nil "~34A" (format nil "Probes ~A" *probes-available*)))
+    (print-out (format nil "~34@<Probe ~A~>"
+                       (if (is-scheduled-p +move-deep-space-probe+)
+                           (format nil "in ~A" (format-quadrant-coordinates *probe-reported-quadrant*))
+                           (format nil "s ~A" *probes-available*))))
     (if *window-interface-p*
         (skip-line)
         (game-status 3)))
   (when (= line-to-print 11)
-    ;; TODO - delete commented out code after alist is tested
-    (let (
-          (p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+    (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
       (if (and p ; p is nil when there is no planet in the quadrant
                (/= (planet-inhabited p) +uninhabited+))
-          ;;(print-out (format nil "Major system ~A~%" (aref *system-names* planet-index)))
           (print-out (format nil "Major system ~A~%" (aref *system-names* (planet-inhabited p))))
           (print-out (format nil "Sector is uninhabited~%")))))
   (when (= line-to-print 12)
@@ -6231,7 +6230,6 @@ quadrant experiencing a supernova)."
 
     (execute-warp-move course distance)))
 
-;; TODO - find player documentation for using this command. See the Tom Almy files.
 (defun launch-probe () ; C: probe(void)
   "Launch deep-space probe."
 
@@ -6973,28 +6971,17 @@ sectors on the short-range scan even when short-range sensors are out."
      (setf *current-window* *stdscr*)
      (clear-window) ; After this point use curses window functions, not *stdscr* functions.
 
-     ;; Window handling in curses mode:
-     ;; - Define which windows are permanent for 24x80 and which are pop-ups.
-     ;; In curses/window mode following windows always exist:
-     ;;   short range scan
-     ;;   status
-     ;;   long range scan
-     ;;   game status
-     ;;   message
-     ;;   prompt
-     ;;
-     ;; If more rows/columns are available then create more windows.
+     ;; In curses/window mode these windows are always created because they fit the minimum
+     ;; space required for windowed mode: short range scan, status, long range scan, game status,
+     ;; message, prompt. If more rows/columns are available then more windows are created.
      ;;
      ;; All output that doesn't go to a specific window is displayed in the message window.
      ;; In line-by-line mode the full screen is effectively the message window.
      ;;
      ;; TODO - define a planet report window - 56 cols, potentially many lines
-     ;; TOTO - define a probe status command
-     ;; TODO - define a probe status window
      ;; TODO - name all these constants that define window position and size?
      (setf *short-range-scan-window* (newwin 12 24 0 0))
      (setf *ship-status-window* (newwin 10 36 2 24))
-     ;; Width of long range scan window forces error message wrap at the correct place
      (setf *long-range-scan-window* (newwin 5 19 0 60))
      (setf *game-status-window* (newwin 3 19 8 60))
      ;; TODO - display report window at bottom-right of available space
