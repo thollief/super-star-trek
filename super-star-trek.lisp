@@ -24,7 +24,8 @@
 (define-constant +docked-repair-factor+ 0.25 "Repar factor when docked.") ; C: docfac
 (define-constant +deathray-failure-chance+ 0.30)
 (define-constant +max-safe-phaser-power+ 1500.0 "Amount phasers can fire without overheating.")
-(define-constant +checkpoint-file-name+ "sstchkpt.trk" "The name of the file used for checkpointing game state.")
+(define-constant +checkpoint-file-name+ "sstchkpt.trk"
+  "The name of the file used for checkpointing game state.")
 (define-constant +algeron-date+ 2311 "Date of the Treaty of Algeron") ; C: #define ALGERON
 
 ;; TODO - create a terminalio package?
@@ -40,11 +41,10 @@ This variable is not saved and restored because the terminal used could change b
 (defparameter *message-window* nil)
 (defparameter *message-window-lines* 23 "Total number of lines in the message window. The default
 should be suitable for a classic 80x24 terminal.")
-(defparameter *message-window-paging-p* nil
-  "Whether or not to pause message window output when one window full of text has been displayed.")
 (defparameter *message-window-line-count* 0
   "Number of lines that have been output in the message window.")
 (defparameter *prompt-window* nil)
+(defparameter *starchart-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
@@ -171,6 +171,9 @@ was not optional on early paper-based terminals."
        string-to-print)
   (sleep 0.300))
 
+;; TODO - multi-line skips don't work with message window paging
+;;        message lines with more than one embedded newline don't work either
+
 (defun skip-line (&optional (lines-to-skip 1))
   "A convenience function to add blank lines at the current cursor position of the screen or
 current window, normally the last line. Since this is just a newline it can also end strings
@@ -191,7 +194,7 @@ that did not print their own newline."
       (page-message-window))))
 
 (defun print-message (message-to-print)
-  "Print a string in the message window. If not using the window interfact just print it."
+  "Print a string in the message window. If not using the window interface just print it."
 
   (when *window-interface-p*
     (select-window *message-window*))
@@ -208,24 +211,22 @@ character to build dramatic tension."
   (page-message-window))
 
 (defun page-message-window ()
-  "Page the message window if paging is turned on."
+  "Pause message window output if the window has been filled with the maximum number of lines it
+can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
 
-    (when *message-window-paging-p*
-      (setf *message-window-line-count* (1+ *message-window-line-count*))
-      ;; Pause at one line less than the total number of lines to account for newlines.
-      (when (>= *message-window-line-count* (1- *message-window-lines*))
-        (clear-type-ahead-buffer)
-        (print-prompt "Press ENTER to continue")
-        (scan-input)
-        (clear-type-ahead-buffer)
-        (setf *message-window-line-count* 0))))
+  (when *window-interface-p*
+    (setf *message-window-line-count* (1+ *message-window-line-count*))
+    ;; Pause at one line less than the total number of lines to account for newlines.
+    (when (>= *message-window-line-count* (1- *message-window-lines*))
+      (clear-type-ahead-buffer)
+      (print-prompt "Press ENTER to continue")
+      (scan-input)
+      (clear-type-ahead-buffer)
+      (restart-message-window-paging))))
 
-(defun message-window-paging (paging-on-p)
-  "Turn message window paging on or off."
+(defun restart-message-window-paging ()
+  "Assume all previous message window output has been seen by the player."
 
-  (if paging-on-p
-      (setf *message-window-paging-p* t)
-      (setf *message-window-paging-p* nil))
   (setf *message-window-line-count* 0))
 
 (defun print-stars ()
@@ -455,7 +456,8 @@ empty string if the planet class can't be determined."
 (define-constant +distressed+ 1)
 (define-constant +enslaved+ 2)
 
-(defparameter *planet-information* nil "An alist of planet structs keyed by the quadrant coordinates of the planet")
+(defparameter *planet-information* nil
+  "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; Characters displayed for game entities in short range scans
 ;; TODO - are probes visible in short range scans? Should they be?
@@ -762,7 +764,8 @@ empty string if the planet class can't be determined."
 (defparameter *all-done-p* t "Game is finished. True at the end of a game or if no game is in progress.") ; C: alldone
 
 ;; Information about the current quadrant, set each time the ship enters a new quadrant
-(defparameter *just-in-p* nil) ; C: justin	, just entered quadrant
+(defparameter *just-in-p* nil
+  "True when the player has entered the quadrant but not yet taken any action.") ; C: justin
 (defparameter *klingons-here* nil) ; C: klhere
 (defparameter *commanders-here* nil) ; C: comhere - TODO could this be in the quadrant structure like Klingons and Romulans?
 (defparameter *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
@@ -1831,7 +1834,14 @@ tractor-beamed the ship then the other will not."
       (when (or (aref repaired-devices +subspace-radio+)
                 (aref repaired-devices +long-range-sensors+)
                 (aref repaired-devices +short-range-sensors+))
-        (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*))))
+        (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
+      ;; When in curses mode, if the short range sensors were just repaired and there is a planet
+      ;; in the current quadrant that has not been examined (unknown), automatically examine it.
+      (when (and *window-interface-p*
+                 (aref repaired-devices +short-range-sensors+)
+                 *current-planet*
+                 (= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 0))
+        (sensor)))
     ;; Time was spent so subtract it from the operation time being handled by this invocation
     (setf *time-taken-by-current-operation* (- *time-taken-by-current-operation* execution-time))
     ;; Cause extraneous event event-code to occur (C: EVCODE)
@@ -1912,10 +1922,10 @@ tractor-beamed the ship then the other will not."
              (unschedule +tractor-beam+)
              (unschedule +commander-attacks-base+)
              (unschedule +commander-destroys-base+))
-           (let (commander-index)
-             (if (= (length *commander-quadrants*) 1)
-                 (setf commander-index 0)
-                 (setf commander-index (random (1- (length *commander-quadrants*)))))
+           (let ((commander-index 0)) ; default to the first commander in the list
+             ;; Select a random commander if there is a choice of more than one
+             (when (> (length *commander-quadrants*) 1)
+               (setf commander-index (random (1- (length *commander-quadrants*)))))
              (if (or super-commander-used-tractor-beam-p
                      *dockedp*
                      *cloakedp* ; Cannot tractor beam if we can't be seen!
@@ -2499,17 +2509,20 @@ Long-range sensors can scan all adjacent quadrants."
 
   (when *window-interface-p*
     (short-range-scan)
-    (select-window *ship-status-window*)
-    (wclear *ship-status-window*)
-    (wmove *ship-status-window* 0 0)
-    (select-window *report-window*)
-    (wclear *report-window*)
-    (wmove *report-window* 0 0)
     (all-statuses)
-    (select-window *long-range-scan-window*)
-    (wclear *long-range-scan-window*)
-    (wmove *long-range-scan-window* 0 0)
-    (long-range-scan)))
+    (long-range-scan)
+    ;; In curses mode sensors work automatically. Call before updating the display, but only once
+    ;; per entry into the quadrant.
+    (when *just-in-p*
+      (sensor))
+    (when *starchart-window*
+      (chart))
+    ;; TODO - figure out if and how the report window works
+    ;;(select-window *report-window*)
+    ;;(wclear *report-window*)
+    ;;(wmove *report-window* 0 0)
+    ;;(report)
+    (select-window *message-window*)))
 
 (defun pause-display () ; C: pause_game(void)
   "Display a prompt and pause until the Enter key is pressed. Nothing to pause if not using the
@@ -4105,7 +4118,7 @@ is a string suitable for use with the format function."
                            (* 100 (skill-level-value *skill-level*))))
     (setf *score* (+ *score* (* 100 (skill-level-value *skill-level*)))))
   (skip-line)
-  (print-message (format nil "TOTAL SCORE                                      ~5@A!%" (round *score*))))
+  (print-message (format nil "TOTAL SCORE                                      ~5@A~%" (round *score*))))
 
 (define-constant +day-names+
     (list "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
@@ -4330,7 +4343,7 @@ is a string suitable for use with the format function."
     ;; FLOST
     ((= finish-reason +lost+)
      (print-message (format nil "You and your landing party have been~%"))
-     (print-message (format nil "converted to energy, disipating through space.~%")))
+     (print-message (format nil "converted to energy, dissipating through space.~%")))
     ;; FMINING
     ((= finish-reason +mining+)
      (print-message (format nil "You are left with your landing party on~%"))
@@ -4575,19 +4588,19 @@ player has reached a base by abandoning ship or using the SOS command."
   (setf *commanders-here* 0)
   (setf *super-commanders-here* 0)
   (setf *romulans-here* 0) ; TODO - a convenience variable to avoid referencing the galaxy array, keep it?
-  (setf *enemies-here* 0)
-  (setf *base-sector* nil)
-  (setf *current-planet* nil)
-  (setf *planet-coord* nil)
   (setf *romulan-neutral-zone-p* nil)
-  (setf *in-orbit-p* nil)
-  (setf *landedp* nil)
-  (setf *attempted-escape-from-super-commander-p* nil)
+  (setf *cloaking-violation-reported-p* nil)
+  (setf *enemies-here* 0)
   (setf *tholians-here* 0)
   (setf *things-here* 0)
   (setf *thing-is-angry-p* nil)
+  (setf *base-sector* nil)
   (setf *base-attack-report-seen-p* nil)
-  (setf *cloaking-violation-reported-p* nil)
+  (setf *current-planet* nil)
+  (setf *planet-coord* nil)
+  (setf *in-orbit-p* nil)
+  (setf *landedp* nil)
+  (setf *attempted-escape-from-super-commander-p* nil)
   (when *super-commander-attack-enterprise-p*
     ;; Attempt to escape Super-commander, so tractor beam back!
     (setf *super-commander-attack-enterprise-p* nil)
@@ -5005,6 +5018,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (new-quadrant)
   (process-events)) ; Stas Sergeev added this -- do pending events
 
+;; TODO - Tholian didn't move
 (defun move-tholian () ; C: void movetholian(void)
   "Move the Tholian. Tholians always start in a corner and move along the edge of the quadrant. At
 each turn the Tholian moves counterclockwise, building the Tholian Web along the next edge. On the
@@ -5798,8 +5812,7 @@ can occur."
           ((>= m *enemies-here*))
         (setf (aref *klingon-average-distance* m) (aref *klingon-distance* m))))
     (update-condition)
-    (draw-maps)
-    (select-window *message-window*))) ; TODO - is this really needed?
+    (draw-maps)))
 
 (defun get-probe-course-and-distance () ; C: oid getcd(bool isprobe, int akey), for the probe
   "Get course direction and distance for moving the probe.
@@ -6293,41 +6306,42 @@ quadrant experiencing a supernova)."
   (if (> (length *line-tokens*) 0)
       (scan-input)
       (setf *input-item* nil))
-  (do (whatever)
+  (do ()
       (*input-item*)
-    (setf whatever whatever)
     (print-prompt "Warp factor: ")
     (scan-input))
   (if (numberp *input-item*)
-      (cond
-        ((> (aref *device-damage* +warp-engines+) 10.0)
-         (print-message (format nil "Warp engines inoperative.~%")))
+      (progn
+        (skip-line)
+        (cond
+          ((> (aref *device-damage* +warp-engines+) 10.0)
+           (print-message (format nil "Warp engines inoperative.~%")))
 
-        ((and (damagedp +warp-engines+) (> *input-item* 4.0))
-         (print-message (format nil "Engineer Scott- \"I'm doing my best, Captain,~%"))
-         (print-message (format nil "  but right now we can only go warp 4.\"~%")))
+          ((and (damagedp +warp-engines+) (> *input-item* 4.0))
+           (print-message (format nil "Engineer Scott- \"I'm doing my best, Captain,~%"))
+           (print-message (format nil "  but right now we can only go warp 4.\"~%")))
 
-        ((> *input-item* 10.0)
-         (print-message (format nil "Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
+          ((> *input-item* 10.0)
+           (print-message (format nil "Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
 
-        ((< *input-item* 1.0)
-         (print-message (format nil "Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
+          ((< *input-item* 1.0)
+           (print-message (format nil "Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
 
-        (t
-         (cond
-           ((or (<= *input-item* *warp-factor*)
-                (<= *input-item* 6.0))
-            (print-message (format nil "Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate *input-item*))))
+          (t
+           (cond
+             ((or (<= *input-item* *warp-factor*)
+                  (<= *input-item* 6.0))
+              (print-message (format nil "Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate *input-item*))))
 
-           ((< *input-item* 8.00)
-            (print-message (format nil "Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
+             ((< *input-item* 8.00)
+              (print-message (format nil "Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
 
-           ((= *input-item* 10.0)
-            (print-message (format nil "Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
+             ((= *input-item* 10.0)
+              (print-message (format nil "Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
 
-           (t
-            (print-message (format nil "Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
-         (setf *warp-factor* *input-item*)))
+             (t
+              (print-message (format nil "Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
+           (setf *warp-factor* *input-item*))))
       (huh)))
 
 (defun wait () ; C: wait(void)
@@ -6587,13 +6601,22 @@ quadrant experiencing a supernova)."
 (defun chart () ; C: chart(void), and TODO - bring in the contents of makechart()
   "Display the start chart."
 
-  ;; TODO - select a starchart window, if one exists
+  (if *window-interface-p*
+      (if *starchart-window*
+          (progn
+            (select-window *starchart-window*)
+            (clear-window)
+            (wmove *starchart-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
+      (skip-line))
 
-  (skip-line)
-  (print-message (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
+  (print-out (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
   (when (> *stardate* *last-chart-update*)
-    (print-message (format nil "(Last surveillance update ~A stardates ago).~%" (truncate (- *stardate* *last-chart-update*)))))
-  (print-message (format nil "      1    2    3    4    5    6    7    8~%"))
+    (print-out (format nil "(Last surveillance update ~A stardates ago).~%"
+                       (truncate (- *stardate* *last-chart-update*)))))
+  (print-out (format nil "      1    2    3    4    5    6    7    8~%"))
   (do ((x 0 (+ x 1)))
       ((>= x +galaxy-size+))
     (print-out (format nil "~A |" (+ x 1)))
@@ -6657,7 +6680,7 @@ quadrant experiencing a supernova)."
   (when *tournament-number*
     (print-message (format nil "This is tournament game ~A.~%" *tournament-number*)))
   (print-message (format nil "Your secret password is \"~A\"~%" *self-destruct-password*))
-  (print-out (format nil "~A of ~A Klingons have been killed~%"
+  (print-out (format nil "~A of ~A Klingons have been killed"
                      (- (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)
                         (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*))
                      (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)))
@@ -6892,16 +6915,18 @@ sectors on the short-range scan even when short-range sensors are out."
 
   (setf *random-state* (make-random-state t)) ; Seed the random number generator
 
+  (setf *print-right-margin* 80) ; should be good for both windowed and line-by-line
+
   ;; Win32 environments get line-by-line mode until I have the patience for making pdcurses work
   (if (string= (software-type) "Win32")
       (setf *window-interface-p* nil)
       (progn
-        (setf *window-interface-p* t)
         (initscr)
+	(setf *window-interface-p* t)
         ;; Ensure screen is large enough (24x80) for windows, otherwise use line-by-line mode.
         (unless (and (>= *lines* 24)
                      (>= *cols* 80))
-          (endwin)
+	  (endwin)
           (setf *window-interface-p* nil))))
 
   ;; DEBUG - force line-by-line mode
@@ -6927,6 +6952,18 @@ sectors on the short-range scan even when short-range sensors are out."
 
      ;; Window handling in curses mode:
      ;; - Define which windows are permanent for 24x80 and which are pop-ups.
+     ;; In curses/window mode following windows always exist:
+     ;;   short range scan
+     ;;   status
+     ;;   long range scan
+     ;;   game status
+     ;;   message
+     ;;   prompt
+     ;;
+     ;; All output that doesn't go to some other defined window is displayed in the message window.
+     ;; In line-by-line mode the full screen is effectively the message window.
+     ;;
+     ;;
      ;; - If more rows/columns are available then make more windows permanent. Define
      ;;   a priority for which windows are made permanent first, player does not get
      ;;   to specify.
@@ -6934,26 +6971,29 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; - Message window has a minimum size, otherwise use line-by-line mode.
      ;; - The message window receives all extra lines available after permanent
      ;;   windows have been placed.
-     ;; TODO - define a chart window
-     ;; TODO - define a damages window
-     ;; TODO - define a planet report window
-     ;; TODO - define a probe status window. Probe status can be reported by the "request" command
-     ;; TODO - define a "computer interaction" window, to handle computer calculations?
+     ;; TODO - define a damages window - 37 cols x 15 lines
+     ;; TODO - define a planet report window - 56 cols, potentially many lines
+     ;; TOTO - define a probe status command
+     ;; TODO - define a probe status window
      ;; TODO - name all these constants that define window position and size
      (setf *short-range-scan-window* (newwin 12 24 0 0))
-     (setf *ship-status-window* (newwin 10 35 2 24))
+     (setf *ship-status-window* (newwin 10 36 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
-     ;; TODO - use no more width than needed for a normal long range scan and manually wrap error message
-     (setf *long-range-scan-window* (newwin 5 19 0 59))
-     (setf *game-status-window* (newwin 3 19 8 59))
-     (setf *report-window* (newwin 7 23 5 59))
+     (setf *long-range-scan-window* (newwin 5 19 0 60))
+     (setf *game-status-window* (newwin 3 19 8 60))
+     ;; TODO - display report window at bottom-right of available space
+     (setf *report-window* (newwin 7 23 5 60))
      ;; The message window is allocated all space between the short range scan window and the
      ;; prompt window. Leave a blank line at the top between the message window and the short
      ;; range scan window, and at the bottom between the message window and the prompt window.
-     (setf *message-window-lines* (- *lines* 1 13))
-     (setf *message-window* (newwin *message-window-lines* 0 13 0)) ; Game narrative and general output
+     ;; The message window needs to be at least 12 lines long to display a star chart
+     (setf *message-window-lines* (- *lines* 1 11))
+     ;; Game narrative and general output
+     (setf *message-window* (newwin *message-window-lines* 80 12 0))
      (scrollok *message-window* true)
      (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
+     (when (>= *cols* 124)
+       (setf *starchart-window* (newwin 10 45 0 81)))
      ;; debug start - TODO remove these when the curses interface is stable
      ;;(box *short-range-scan-window* 0 0)
      ;; alternate character set chars aren't working...
@@ -7516,6 +7556,7 @@ it's your problem."
            (let (dest-quadrant)
              ;; Find the distance to the first base in the list of bases
              (setf dest-dist (* +quadrant-size+ (distance (first *base-quadrants*) *ship-quadrant*)))
+             (setf dest-quadrant (first *base-quadrants*))
              ;; Then try to find a base that's closer
              (dolist (bq *base-quadrants*)
                (when (< (* +quadrant-size+ (distance bq *ship-quadrant*)) dest-dist)
@@ -7558,10 +7599,10 @@ it's your problem."
             (when (not succeeds-p)
               (setf (coord-ref *quadrant-contents* *ship-sector*) +thing+) ; question mark
               (setf *alivep* nil)
-              (when *window-interface-p* ; In curses mode sensors work automatically, call before updating display
-                (sensor))
+              ;; Don't call the sensor scan even if in curses mode. The ship has been
+              ;; lost/destroyed and Spock isn't doing anything now. Display the short
+              ;; range scan so the player isn't left with a blank screen.
               (draw-maps)
-              (select-window *message-window*)
               (finish +materialize+)
               (return-from mayday nil)))
          (print-message (format nil "~A attempt to re-materialize ~A "
@@ -8337,7 +8378,6 @@ values, expecially number of entities in the game."
     (when (> *remaining-super-commanders* 0)
       (print-message " YOU'LL NEED IT."))
     (skip-line 2)
-    ;; TODO - Is there a need to wait for the player e.g. press any key to continue?
     (new-quadrant :show-thing nil)
     (when (> (- *enemies-here* *things-here* *tholians-here*) 0)
       (setf *shields-are-up-p* t))
@@ -8359,18 +8399,20 @@ consequences."
 (defun print-help-topics (help-topics)
   "Print a list of help topics."
 
+  (restart-message-window-paging)
   (skip-line)
   (print-message (format nil "Available help topics are:~%"))
-  (let ((counter 0))
+  (skip-line)
+  (let ((longest-topic-title 0))
     (dolist (topic help-topics)
-      ;; TODO - is there a way to use the pretty-printer to make these columns directly from the list?
-      ;; TODO - the columns are mis-aligned
-      (print-message (format nil "~18@A" (string-upcase topic))) ; Field width is large enough for the longest
-                                        ; help topic and some padding, hard-coded instead of calculated.
-      (setf counter (1+ counter))
-      (when (> counter 4) ; Keep number of help-topics per line low to support 80 column terminals.
-        (skip-line)
-        (setf counter 0))))
+      (when (> (length topic) longest-topic-title)
+	(setf longest-topic-title (length topic))))
+    ;; TODO - how to eliminate the hard-coded 17?
+    ;; TODO - limit line length to 80 characters instead of *print-right-margin* characters
+    ;; Arrange the help topics into columns and the columns into lines, then display one line at a
+    ;; time.
+    (dolist (topic-line (split-sequence #\newline (format nil "~{~17@<~%~:;~A ~>~}" help-topics)))
+      (print-message (format nil "~A~%" topic-line))))
   (skip-line))
 
 (defun display-online-help () ; C: helpme(void)
@@ -8394,15 +8436,11 @@ consequences."
       (setf contents (rest (assoc topic *help-database* :test #'string=)))
       (skip-line)
       (when (> (length contents) 0)
-        (message-window-paging t)
+        (restart-message-window-paging)
         (print-message (format nil "Spock- \"Captain, I've found the following information:\"~%"))
         (skip-line)
-        ;;(print-message contents)
-        ;; #\Linefeed
-        ;; (format nil "~%")
         (dolist (content-line (split-sequence #\newline contents))
-          (print-message (format nil "~A~%" content-line)))
-        (message-window-paging nil))
+          (print-message (format nil "~A~%" content-line))))
       (when (and (= (length contents) 0)
                  (> (length topic) 0))
         (print-message (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
@@ -8410,16 +8448,10 @@ consequences."
 (defun display-commands (commands) ; C: listCommands(void)
   "Print a list of valid commands."
 
+  (print-message (format nil "Valid commands are:~%"))
   (skip-line)
-  (print-message (format nil "Valid commands are:~%")) ; Current window is set to message window.
-  (let ((counter 0))
-    (dolist (c commands)
-      (print-message (format nil "~12@A" (string-upcase c))) ; Field width is large enough for the longest
-                                        ; command and some padding, hard-coded instead of calculated.
-      (setf counter (1+ counter))
-      (when (> counter 4) ; Keep number of commands per line low to support 80 column terminals.
-        (skip-line)
-        (setf counter 0)))))
+  (dolist (command-line (split-sequence #\newline (format nil "~{~12@<~%~:;~A ~>~}" commands)))
+    (print-message (format nil "~A~%" command-line))))
 
 (defun make-moves ()
   "Command interpretation loop. This is the heart of the game: read commands and carry them out.
@@ -8437,16 +8469,14 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
                  ;; after which enemies take their action turn, usually an attack.
       ((or *all-done-p*
            exit-game-p))
-    ;; In curses mode sensors work automatically. Call before updating the display.
-    ;; TODO - only report sensor information once per arrival in quadrant, and not at all if planet has already been scanned
     (when *window-interface-p*
-      (sensor)
       (draw-maps))
+    (skip-line)
+    (restart-message-window-paging)
     (setf hit-me-p nil)
     (setf *just-in-p* nil)
     (setf *time-taken-by-current-operation* 0.0)
     (setf *action-taken-p* nil)
-    (skip-line)
     (print-prompt "COMMAND: ")
     (clear-type-ahead-buffer)
     (scan-input)

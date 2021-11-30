@@ -1399,7 +1399,7 @@ derived from a still earlier version in use at Penn State University.")
  9.  Model kits of the Enterprise and a \"Klingon Battle-Cruiser\"
      by AMT Corporation are available at most hobby shops.")
 
-                                    (cons "tomalmy"
+                                    (cons "tom almy"
 "Tom Almy Modifications
 
 Back in (about) 1977 I got a copy of this Super Star Trek game for
@@ -1470,7 +1470,7 @@ Modifications I made:
   have more than one Klingon aboard! The CLOAK command and some other
   bug fixes and correction of typos are thanks to Erik Olofsen.")
 
-                                    (cons "stassergeev"
+                                    (cons "stas sergeev"
 "Stas Sergeev Modifications
 
 The Space Thingy can be shoved, if you ram it, and can fire back if
@@ -1510,7 +1510,7 @@ better anyway.
 
 Screen-oriented interface, with sensor scans always up.")
 
-                                    (cons "ericraymond"
+                                    (cons "eric raymond"
 "Eric Raymond Modifications
 
 Mainly, I translated this C code out of FORTRAN into C -- created #defines
@@ -1545,7 +1545,7 @@ Also, the nav subsystem (enabling automatic course
 setting) can be damaged separately from the main computer (which
 handles weapons targeting, ETA calculation, and self-destruct).")
 
-                                    (cons "timholliefield"
+                                    (cons "tim holliefield"
 "Tim Holliefield Modifications
 
 This implementation is a port/rewrite in Common Lisp of the Eric Raymond
