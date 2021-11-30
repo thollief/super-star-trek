@@ -1,7 +1,5 @@
 ;;;; Super Star Trek
 
-;; Probe movement calculations might be wrong
-
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -49,6 +47,7 @@ should be suitable for a classic 80x24 terminal.")
 (defparameter *starchart-window* nil)
 (defparameter *damage-report-window* nil)
 (defparameter *planet-report-window* nil)
+(defparameter *score-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
@@ -2525,6 +2524,8 @@ Long-range sensors can scan all adjacent quadrants."
       (damage-report))
     (when *planet-report-window*
       (survey))
+    (when *score-window*
+      (score))
     ;; TODO - figure out if and how the report window works
     ;;(select-window *report-window*)
     ;;(wclear *report-window*)
@@ -2804,10 +2805,10 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           (progn
             (when (not (damagedp +short-range-sensors+))
               (boom e-coord))
-            (print-message (format nil "~A unit hit on ~A at ~A" (truncate hit)
+            (print-message (format nil "~A unit hit on ~A at ~A~%" (truncate hit)
                                    (letter-to-name (coord-ref *quadrant-contents* e-coord))
                                    (format-sector-coordinates e-coord))))
-          (print-message (format nil "Very small hit on ~A at ~A"
+          (print-message (format nil "Very small hit on ~A at ~A~%"
                                  (letter-to-name (coord-ref *quadrant-contents* e-coord))
                                  (format-sector-coordinates e-coord))))
       (when (string= (coord-ref *quadrant-contents* e-coord)
@@ -4047,14 +4048,14 @@ damage multiplier to determine how much damage is done by ramming this enemy."
 is a string suitable for use with the format function."
 
   (when (> count 0)
-    (print-message (format nil message count score))
+    (print-out (format nil message count score))
     (setf *score* (+ *score* score))))
 
 (defun score-single (message score) ; C: score_item(const char *str, int num, int score)
   "Helper function to print a score for a single item and update the score. The message parameter
 is a string suitable for use with the format function."
 
-  (print-message (format nil message score))
+  (print-out (format nil message score))
   (setf *score* (+ *score* score)))
 
 ;; TODO - add an option to write the final score to a file, or record it some other way.
@@ -4064,10 +4065,21 @@ is a string suitable for use with the format function."
 (defun score () ; C: score(void)
   "Compute player's score."
 
-  (skip-line)
+  (if *window-interface-p*
+      (if *score-window*
+          (progn
+            (select-window *score-window*)
+            (clear-window)
+            (wmove *score-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
+      (skip-line))
+
   (setf *score* 0)
-  (print-message "Your score --")
-  (skip-line)
+  (if *score-window*
+      (print-out (format nil "~21@A~%" "SCORE"))
+      (print-out (format nil "Your score --~%")))
   (score-multiple "~6@A Romulans destroyed                        ~5@A~%"
                   (- *initial-romulans* *remaining-romulans*)
                   (* 20 (- *initial-romulans* *remaining-romulans*)))
@@ -4116,12 +4128,12 @@ is a string suitable for use with the format function."
   (when (not *alivep*)
     (score-single "Penalty for getting yourself killed              ~5@A~%" -200))
   (when *game-won-p*
-    (print-message (format nil "Bonus for winning ~13A                  ~5@A~%"
-                           (format nil "~A game" (string-capitalize (skill-level-label *skill-level*)))
-                           (* 100 (skill-level-value *skill-level*))))
+    (print-out (format nil "       Bonus for winning ~13A           ~5@A~%"
+                       (format nil "~A game" (string-capitalize (skill-level-label *skill-level*)))
+                       (* 100 (skill-level-value *skill-level*))))
     (setf *score* (+ *score* (* 100 (skill-level-value *skill-level*)))))
   (skip-line)
-  (print-message (format nil "TOTAL SCORE                                      ~5@A~%" (round *score*))))
+  (print-out (format nil "       TOTAL SCORE                               ~5@A~%" (round *score*))))
 
 (define-constant +day-names+
     (list "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
@@ -4198,6 +4210,7 @@ is a string suitable for use with the format function."
 
   (setf *all-done-p* t)
   (skip-line)
+  (print-stars)
   (print-message (format nil "It is stardate ~A.~%" (format-stardate *stardate*)))
   (skip-line)
   (cond
@@ -4694,6 +4707,7 @@ player has reached a base by abandoning ship or using the SOS command."
       (drop-entity-in-sector +star+))
 
     ;; Check for Romulan Neutral Zone: Romulans present and no Klingons.
+    ;; TODO - does it make sense to have RNZ when a base is present?
     (when (and (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0)
                (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0))
       (setf *romulan-neutral-zone-p* t)
@@ -4960,9 +4974,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   "enemy fall down, go boom - display a boom effect and make a boom noise"
 
   ;; TODO - write this
-  (setf c c)
-  (print-message (format nil "Debug: going boom~%"))
-  )
+  (setf c c))
 
 (defun time-warp () ; C: timwrp(), /* let's do the time warp again */
   "Travel forward or backward in time."
@@ -5846,6 +5858,7 @@ displayed y - x, where +y is downward!"
       (scan-input)
       (if (numberp *input-item*) ; No input (<enter> key only) will loop
           (progn
+            ;; TODO - short form of the command doesn't assume quadrant destination
             (print-message (format nil "Manual navigation assumed.~%")) ; Per the original docs
             (setf navigation-mode 'manual))
           (when *input-item*
@@ -6970,8 +6983,6 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; All output that doesn't go to a specific window is displayed in the message window.
      ;; In line-by-line mode the full screen is effectively the message window.
      ;;
-     ;; TODO - define a planet report window - 56 cols, 44 lines max including the window title
-     ;; TODO - define a score window? 54 cols, 20 lines
      ;; TODO - name all these constants that define window position and size?
      (setf *short-range-scan-window* (newwin 12 24 0 0))
      (setf *ship-status-window* (newwin 10 36 2 24))
@@ -6994,13 +7005,9 @@ sectors on the short-range scan even when short-range sensors are out."
      (when (and (>= *cols* 185)
                 (>= *lines* 44))
        (setf *planet-report-window* (newwin 44 59 0 126)))
-     ;; debug start - TODO remove these when the curses interface is stable
-     ;;(box *short-range-scan-window* 0 0)
-     ;; alternate character set chars aren't working...
-     ;;(wborder *short-range-scan-window*
-     ;;         acs_vline acs_vline acs_hline acs_hline
-     ;;         acs_ulcorner acs_urcorner acs_llcorner acs_lrcorner)
-     ;; debug end
+     (when (and (>= *cols* 182)
+                (>= *lines* 65))
+       (setf *score-window* (newwin 20 55 45 126)))
      (set-text-color +default-color+)
      (select-window *message-window*)))
 
@@ -7478,7 +7485,7 @@ the planet."
 (defun sensor () ; C: sensor(void)
   "Examine planets in this quadrant."
 
-  (skip-line)
+  (skip-line 2)
   (cond
     ((and (damagedp +short-range-sensors+)
           (not *dockedp*))
