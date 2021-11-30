@@ -104,9 +104,6 @@ any non-space characters then return nil."
 
   (when (= (length *line-tokens*) 0)
     (setf *line-tokens* (split-sequence #\SPACE (get-input-line) :remove-empty-subseqs t)))
-    ;(when (equal *current-window* *prompt-window*) ; TODO - Why clear both only if the current window is the prompt window?
-    ;  (clear-window)
-    ;  (clear-message-window))
   (let ((test-number nil))
     (setf *input-item* (pop *line-tokens*))
     (when *input-item*
@@ -662,10 +659,9 @@ empty string if the planet class can't be determined."
 (defparameter *dilithium-crystals-on-board-p* nil) ; C: icrystl
 ;; TODO - is the probability crystals will work or that they will fail?
 (defparameter *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
+;; TODO - dead is captured in *alivep*, should it just be red?
 (defparameter *condition* nil "red, yellow, green, dead") ; C: condition,  - TODO - another alist?
-;; TODO - flight conditions are mutually exclusive, only one of docked, in-orbit, or flying are
-;;        possible at the same time. Enforce/check this with code?
-;;        But also note that when cloaking is added then decide if orbital cloaking is possible
+;; TODO - decide if orbital cloaking is possible
 (defparameter *dockedp* nil) ; a possible flight condition
 (defparameter *in-orbit-p* nil) ; C: inorbit, orbiting - a possible flight condition
 (defparameter *height-of-orbit* 0) ; C: height, height of orbit around planet
@@ -951,7 +947,7 @@ shuttlecraft landed on it."
     (return-from format-ship-name ship-name)))
 
 ;; TODO - every check for subspace radio damage needs to also check if the ship is cloaked because
-;;        the radio doesn't work while cloaked
+;;        the radio doesn't work while cloaked (review all calls checking the radio)
 (defun damagedp (device) ; C: #define damaged(dev) (game.damage[dev] != 0.0)
   "Evaluate whether or not a device is damaged."
 
@@ -1142,11 +1138,10 @@ buffeted by a nova and therefore is less precise than when moving intentionaly."
   (nth (+ (* 3 (+ x-offset 1)) y-offset 1) (list 10.5 12.0 1.5 9.0 0.0 3.0 7.5 6.0 4.5)))
 
 (defun nova (nova-sector) ; C: void nova(coord nov)
-  ;; TODO - do probes cause ordinary novas? Update the below comment if they only cause supernovas
-  "A nova occurs. It is the result of having a star hit with a photon torpedo, or possibly of a
-probe warhead going off. Stars that go nova cause stars which surround them to undergo the same
-probabilistic process. Klingons next to them are destroyed. And if the starship is next to it, it
-gets zapped. If the zap is too much, it gets destroyed.
+  "A nova occurs. It is the result of having a star hit with a photon torpedo. Stars that go nova
+cause stars which surround them to undergo the same probabilistic process. Klingons next to them
+are destroyed. And if the starship is next to it, it gets zapped. If the zap is too much, it gets
+destroyed.
 
 Apply the effects of the nova to the object around the star then move the ship if it was also
 affected."
@@ -1401,11 +1396,6 @@ affected."
     (when p ; p should be nil if there is no planet in the quadrant
       (setf (planet-class p) +destroyed+)
       (rplacd (assoc nova-quadrant *planet-information* :test #'coord-equal) p))
-  ;; TODO - delete the commented out code after the alist functionality has been tested
-  ;;(do ((l 0 (1+ l)))
-  ;;    ((>= l *initial-planets*))
-  ;;  (when (coord-equal nova-quadrant (planet-quadrant (aref *planet-information* l)))
-  ;;    (setf (planet-class (aref *planet-information* l)) +destroyed+)))
   ;; Destroy any base in supernovaed quadrant
   (setf *base-quadrants* (remove nova-quadrant *base-quadrants* :test #'coord-equal))
   ;; mark supernova in galaxy and in star chart
@@ -1693,7 +1683,6 @@ Return true on successful move."
                          (not *dockedp*))
                 (return-from move-super-commander nil)) ; No warning
               (setf *base-attack-report-seen-p* t)
-              ;; TODO - implement the announce() function from the C source? It seems excessive.
               (print-message (format nil "Lt. Uhura-  \"Captain, the starbase in ~A~%"
                                      (format-quadrant-coordinates *super-commander-quadrant*)))
               (print-message (format nil "   reports that it is under attack from the Klingon Super-commander.~%"))
@@ -2298,7 +2287,6 @@ With the addition of probes and other ship information the new status lines are
 
 There is no line 10.
 "
-  ;; TODO - add game status lines next to the ship status lines
 
   (when (= line-to-print 1)
     (print-out "Condition ")
@@ -2926,11 +2914,9 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           (when (and (not requested-energy)
                      (> *enemies-here* 0))
             (print-message "Phasers locked on target. "))
-          ;; TODO - this loop doesn't look right to me
-          (do (nonce)
+          (do ()
               ((and requested-energy
                     (< requested-energy available-energy)))
-            (setf nonce nil)
             (print-message (format nil "Energy available= ~,2F~%" available-energy))
             (clear-type-ahead-buffer)
             (setf *input-item* nil)
@@ -3006,7 +2992,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           ;; TODO - write the enhancements to the visual-scan function and then allow firing on
           ;;        Commanders, Super-commanders, and Romulan) that are detected by the visual scan
           ;; TODO - Consider allowing manual fire only on enemies that are visible, either in the
-   ;;        short range scan, adjacent sectors, or visual scan. When an unseen enemy
+          ;;        short range scan, adjacent sectors, or visual scan. When an unseen enemy
           ;;        attacks it's location becomes known (check the attack function to confirm this)
           ;;        and it then can be counter-attacked. Display it in the short-range scan with a
           ;;        generic letter such as "A" for "attacker" but not the specific type of enemy.
@@ -3860,9 +3846,8 @@ input when a tractor beam event occurs."
       ((eql action 'energy-transfer)
        (when *line-tokens*
          (scan-input))
-       (do (x) ; TODO - use a different loop construct
+       (do ()
            ((numberp *input-item*))
-         (setf x x) ; TODO - definitly need a different loop construct
          (clear-type-ahead-buffer)
          (print-prompt "Energy to transfer to shields: ")
          (scan-input))
@@ -4194,10 +4179,6 @@ is a string suitable for use with the format function."
       (format s "~95:@<~A~>~%~%" (format nil "Your score:  ~D" *score*))
       (format s "~95:@<~A~>~%~%" (format nil "Klingons per stardate:  ~,2F" (klingons-per-stardate))))))
 
-;; TODO - there seem to be two cases here: finish the game alive or finish it dead. Can/should
-;;        these be handled in different functions? You can finish it dead and still "win", although
-;;        it's not presented as a win, so maybe the two functions should be finish with a win or
-;;        finish with a loss.
 (defun finish (finish-reason) ; C: finish(FINTYPE ifin)
   "End the game, with appropriate notfications."
 
@@ -5510,7 +5491,6 @@ the player completes their turn."
                          (print-message (format nil "   in that last attack.\"~%"))
                          (setf *casualties* (+ *casualties* casualties))
                          (setf *crew* (- *crew* casualties)))))))
-              ;; TODO - thing does not appear in the *klingon-sectors* array and therefore can never attack
               (setf enemy-sector (aref *klingon-sectors* n))
               (setf enemy (coord-ref *quadrant-contents* enemy-sector))
               (unless (or (< (aref *klingon-energy* n) 0) ; too weak to attack -- TODO should be <= ?
@@ -6058,7 +6038,7 @@ displayed y - x, where +y is downward!"
     (print-message (format nil "Engineer Scott- \"The impulse engines are damaged, Sir.\"~%"))
     (return-from move-under-impulse-power nil))
 
-  (multiple-value-bind (course distance) (get-ship-course-and-distance) ; TODO this could probably be a multiple-value-bind
+  (multiple-value-bind (course distance) (get-ship-course-and-distance)
     (when (= course -1.0) ; TODO test this
       (return-from move-under-impulse-power nil))
 
@@ -6688,7 +6668,6 @@ quadrant experiencing a supernova)."
                          (+ (aref *device-damage* i) 0.05)
                          (+ (* (aref *device-damage* i) +docked-repair-factor+) 0.005))))))
 
-;; TODO - report window output should not use print-message
 (defun report ()
   "Report on general game status."
 
@@ -6766,11 +6745,9 @@ quadrant experiencing a supernova)."
             ((< *crystal-work-probability* ai)
              (print-message (format nil "Dilithium crystals have been used ~A time~A.~%" i (if (= i 1) "" "s"))))))))
 
-;; TODO - see the ship-status function, there are two additional requests possible
 (defun request () ; C: request()
   "Request a single item of status information."
 
-  (skip-line)
   (let (req-item)
     (unless *line-tokens*
       (print-prompt "Information desired? "))
@@ -8613,8 +8590,6 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
   (print-message (format nil "-SUPER- STAR TREK~%")))
 
 ;; TODO - record and play back games.
-;; TODO - implement curses functionality
-
 (defun sst () ; C: main()
   "Super Star Trek starting function."
 
