@@ -1,5 +1,7 @@
 ;;;; Super Star Trek
 
+;; Probe movement calculations might be wrong
+
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -46,6 +48,7 @@ should be suitable for a classic 80x24 terminal.")
 (defparameter *prompt-window* nil)
 (defparameter *starchart-window* nil)
 (defparameter *damage-report-window* nil)
+(defparameter *planet-report-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
@@ -502,6 +505,8 @@ empty string if the planet class can't be determined."
      "Tholian")
     ((string= quadrant-entity +thing+)
      "Thing")
+    ((string= quadrant-entity +black-hole+)
+     "Black hole")
     (t
      "unknown")))
 
@@ -1566,21 +1571,6 @@ Return true on successful move."
     (update-condition)
     (sort-klingons))
   ;; Check for a helpful planet
-  ;; TODO - delete the commented out code after testing the alist version
-  ;;(do ((i 0 (1+ i)))
-  ;;    ((or (>= i *initial-planets*)
-  ;;         (and (coord-equal (planet-quadrant (aref *planet-information* i)) *super-commander-quadrant*)
-  ;;              (= (planet-crystals (aref *planet-information* i)) +present+)))
-  ;;     (when (and (coord-equal (planet-quadrant (aref *planet-information* i)) *super-commander-quadrant*)
-  ;;                (= (planet-crystals (aref *planet-information* i)) +present+))
-  ;;       ;; Destroy the planet
-  ;;       (setf (planet-class (aref *planet-information* i)) +destroyed+)
-  ;;       (when (or *dockedp*
-  ;;                 (not (damagedp +subspace-radio+)))
-  ;;         (print-message "Lt. Uhura-  \"Captain, Starfleet Intelligence reports")
-  ;;         (print-message (format nil "   a planet in ~A has been destroyed"
-  ;;                                (format-quadrant-coordinates *super-commander-quadrant*)))
-  ;;         (print-message "   by the Super-commander.\"")))))
   (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal))))
     (when (and helpful-planet
                (= (planet-crystals helpful-planet) +present+))
@@ -2077,7 +2067,7 @@ tractor-beamed the ship then the other will not."
 
                    (t
                     (print-message (format nil "is now in ~A" (format-quadrant-coordinates
-                                                           *probe-reported-quadrant*)))))
+                                                               *probe-reported-quadrant*)))))
              (print-message (format nil ".\"~%")))))
        (when (is-scheduled-p +move-deep-space-probe+)
          ;; Update star chart if Radio is working or have access to radio.
@@ -2381,9 +2371,9 @@ There is no line 10.
         (skip-line)
         (game-status 2)))
   (when (= line-to-print 9)
-    (print-out (format nil "~34@<Probe ~A~>"
+    (print-out (format nil "~34@<Probe~A~>"
                        (if (is-scheduled-p +move-deep-space-probe+)
-                           (format nil "in ~A" (format-quadrant-coordinates *probe-reported-quadrant*))
+                           (format nil " in ~A" (format-quadrant-coordinates *probe-reported-quadrant*))
                            (format nil "s ~A" *probes-available*))))
     (if *window-interface-p*
         (skip-line)
@@ -2533,6 +2523,8 @@ Long-range sensors can scan all adjacent quadrants."
       (chart))
     (when *damage-report-window*
       (damage-report))
+    (when *planet-report-window*
+      (survey))
     ;; TODO - figure out if and how the report window works
     ;;(select-window *report-window*)
     ;;(wclear *report-window*)
@@ -6978,7 +6970,8 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; All output that doesn't go to a specific window is displayed in the message window.
      ;; In line-by-line mode the full screen is effectively the message window.
      ;;
-     ;; TODO - define a planet report window - 56 cols, potentially many lines
+     ;; TODO - define a planet report window - 56 cols, 44 lines max including the window title
+     ;; TODO - define a score window? 54 cols, 20 lines
      ;; TODO - name all these constants that define window position and size?
      (setf *short-range-scan-window* (newwin 12 24 0 0))
      (setf *ship-status-window* (newwin 10 36 2 24))
@@ -6998,6 +6991,9 @@ sectors on the short-range scan even when short-range sensors are out."
      (when (and (>= *cols* 119)
                 (>= *lines* 25))
        (setf *damage-report-window* (newwin 15 38 11 81)))
+     (when (and (>= *cols* 185)
+                (>= *lines* 44))
+       (setf *planet-report-window* (newwin 44 59 0 126)))
      ;; debug start - TODO remove these when the curses interface is stable
      ;;(box *short-range-scan-window* 0 0)
      ;; alternate character set chars aren't working...
@@ -7626,46 +7622,38 @@ it's your problem."
 (defun survey () ; C: survey(void)
   "Report on (uninhabited) planets in the galaxy."
 
-  ;; TODO - select planet report window
+  (if *window-interface-p*
+      (if *planet-report-window*
+          (progn
+            (select-window *planet-report-window*)
+            (clear-window)
+            (wmove *planet-report-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
+      (skip-line))
 
-  (clear-type-ahead-buffer)
-  (skip-line)
-  (print-message (format nil "Spock-  \"Planet report follows, Captain.\"~%"))
-  (skip-line)
-  ;;(do ((i 0 (1+ i))
-  ;;     (one-planet-known-p nil))
-  ;;    ((>= i *initial-planets*)
-  ;;     (unless one-planet-known-p
-  ;;       (print-message "No information available.")))
-  ;;  (unless (= (planet-class (aref *planet-information* i)) +destroyed+)
-  ;;    (when (and (/= (planet-known (aref *planet-information* i)) +unknown+)
-  ;;               (= (planet-inhabited (aref *planet-information* i)) +uninhabited+))
-  ;;      (setf one-planet-known-p t)
-  ;;      (print-out (format nil "~A   class ~A   "
-  ;;                         (format-quadrant-coordinates (planet-quadrant (aref *planet-information* i)))
-  ;;                         (format-planet-class (planet-class (aref *planet-information* i)))))
-  ;;      (unless (= (planet-crystals (aref *planet-information* i)) +present+)
-  ;;        (print-out "no "))
-  ;;      (print-message "dilithium crystals present.")
-  ;;      (when (= (planet-known (aref *planet-information* i)) +shuttle-down+)
-  ;;        (print-message "    Shuttle Craft Galileo on surface.")))))
+  (if *planet-report-window*
+      (print-out (format nil "~36@A~%" "KNOWN PLANETS"))
+      (progn
+        (print-out (format nil "Spock-  \"Planet report follows, Captain.\"~%"))
+        (skip-line)))
   (let ((one-planet-known-p nil))
     (dolist (p-cons *planet-information*)
       (unless (= (planet-class (rest p-cons)) +destroyed+)
         (when (and (/= (planet-known (rest p-cons)) +unknown+)
                    (= (planet-inhabited (rest p-cons)) +uninhabited+))
           (setf one-planet-known-p t)
-          (print-message (format nil "~A   class ~A   "
-                                 ;;(format-quadrant-coordinates (planet-quadrant (rest p-cons)))
-                                 (format-quadrant-coordinates (first p-cons))
-                                 (format-planet-class (planet-class (rest p-cons)))))
+          (print-out (format nil "~A  class ~A  "
+                             (format-quadrant-coordinates (first p-cons))
+                             (format-planet-class (planet-class (rest p-cons)))))
           (unless (= (planet-crystals (rest p-cons)) +present+)
-            (print-message "no "))
-          (print-message (format nil "dilithium crystals present.~%"))
+            (print-out "no "))
+          (print-out (format nil "dilithium crystals present.~%"))
           (when (= (planet-known (rest p-cons)) +shuttle-down+)
-            (print-message (format nil "    Shuttle Craft Galileo on surface.~%"))))))
+            (print-out (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))
     (unless one-planet-known-p
-      (print-message (format nil "No information available.~%")))))
+      (print-out (format nil "No information available.~%")))))
 
 (defun use-crystals () ; C: usecrystals(void)
   "Use dilithium crystals."
@@ -8226,6 +8214,7 @@ values, expecially number of entities in the game."
                 (when (or (< (distance candidate-quadrant bq) distance-threshold)
                           (> (random 1.0) random-threshold))
                   (setf candidate-ok-p nil)
+                  ;; TODO - this doesn't seem to lower the threshold enough, some loops never finish
                   (setf random-threshold (- random-threshold 0.01))))
               (setf candidate-ok-p nil)))))
 
@@ -8280,7 +8269,6 @@ values, expecially number of entities in the game."
             (+ (quadrant-klingons (coord-ref *galaxy* c-coord)) 1)))
 
     ;; Put planets in the galaxy, one planet per quadrant whether inhabited or uninhabited
-    ;;(setf *planet-information* (make-array *initial-planets*))
     (setf *planet-information* ())
     (do ((i 0 (1+ i))
          p
