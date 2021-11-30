@@ -1,7 +1,5 @@
 ;;;; Super Star Trek
 
-;; TODO - entering a quadrant containing enemies doesn't result in an attack
-
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -2542,20 +2540,6 @@ Long-range sensors can scan all adjacent quadrants."
     ;;(wmove *report-window* 0 0)
     ;;(report)
     (select-window *message-window*)))
-
-;; TODO - is this used?
-(defun pause-display () ; C: pause_game(void)
-  "Display a prompt and pause until the Enter key is pressed. Nothing to pause if not using the
-windowing interface."
-
-  (when *window-interface-p*
-    (let ((saved-window *current-window*))
-      (print-prompt "[Press ENTER to continue] ")
-      (do ((input-char 0 (wgetch *prompt-window*)))
-          ((equal input-char key_eol)))
-      (wclear *prompt-window*)
-      (wrefresh *prompt-window*)
-      (select-window saved-window))))
 
 (defun print-prompt (prompt-to-print)
   "Print a string. In curses mode print it in the prompt window, otherwise just print it."
