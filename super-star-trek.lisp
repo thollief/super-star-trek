@@ -44,6 +44,7 @@ should be suitable for a classic 80x24 terminal.")
 (defparameter *message-window-line-count* 0
   "Number of lines that have been output in the message window.")
 (defparameter *prompt-window* nil)
+(defparameter *starchart-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
@@ -2508,17 +2509,20 @@ Long-range sensors can scan all adjacent quadrants."
 
   (when *window-interface-p*
     (short-range-scan)
-    (select-window *ship-status-window*)
-    (wclear *ship-status-window*)
-    (wmove *ship-status-window* 0 0)
-    (select-window *report-window*)
-    (wclear *report-window*)
-    (wmove *report-window* 0 0)
     (all-statuses)
-    (select-window *long-range-scan-window*)
-    (wclear *long-range-scan-window*)
-    (wmove *long-range-scan-window* 0 0)
-    (long-range-scan)))
+    (long-range-scan)
+    ;; In curses mode sensors work automatically. Call before updating the display, but only once
+    ;; per entry into the quadrant.
+    (when *just-in-p*
+      (sensor))
+    (when *starchart-window*
+      (chart))
+    ;; TODO - figure out if and how the report window works
+    ;;(select-window *report-window*)
+    ;;(wclear *report-window*)
+    ;;(wmove *report-window* 0 0)
+    ;;(report)
+    (select-window *message-window*)))
 
 (defun pause-display () ; C: pause_game(void)
   "Display a prompt and pause until the Enter key is pressed. Nothing to pause if not using the
@@ -4339,7 +4343,7 @@ is a string suitable for use with the format function."
     ;; FLOST
     ((= finish-reason +lost+)
      (print-message (format nil "You and your landing party have been~%"))
-     (print-message (format nil "converted to energy, disipating through space.~%")))
+     (print-message (format nil "converted to energy, dissipating through space.~%")))
     ;; FMINING
     ((= finish-reason +mining+)
      (print-message (format nil "You are left with your landing party on~%"))
@@ -5808,8 +5812,7 @@ can occur."
           ((>= m *enemies-here*))
         (setf (aref *klingon-average-distance* m) (aref *klingon-distance* m))))
     (update-condition)
-    (draw-maps)
-    (select-window *message-window*))) ; TODO - is this really needed?
+    (draw-maps)))
 
 (defun get-probe-course-and-distance () ; C: oid getcd(bool isprobe, int akey), for the probe
   "Get course direction and distance for moving the probe.
@@ -6598,13 +6601,22 @@ quadrant experiencing a supernova)."
 (defun chart () ; C: chart(void), and TODO - bring in the contents of makechart()
   "Display the start chart."
 
-  ;; TODO - select a starchart window, if one exists
+  (if *window-interface-p*
+      (if *starchart-window*
+          (progn
+            (select-window *starchart-window*)
+            (clear-window)
+            (wmove *starchart-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
+      (skip-line))
 
-  (skip-line)
-  (print-message (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
+  (print-out (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
   (when (> *stardate* *last-chart-update*)
-    (print-message (format nil "(Last surveillance update ~A stardates ago).~%" (truncate (- *stardate* *last-chart-update*)))))
-  (print-message (format nil "      1    2    3    4    5    6    7    8~%"))
+    (print-out (format nil "(Last surveillance update ~A stardates ago).~%"
+                       (truncate (- *stardate* *last-chart-update*)))))
+  (print-out (format nil "      1    2    3    4    5    6    7    8~%"))
   (do ((x 0 (+ x 1)))
       ((>= x +galaxy-size+))
     (print-out (format nil "~A |" (+ x 1)))
@@ -6918,8 +6930,8 @@ sectors on the short-range scan even when short-range sensors are out."
           (setf *window-interface-p* nil))))
 
   ;; DEBUG - force line-by-line mode
-  (endwin)
-  (setf *window-interface-p* nil)
+  ;;(endwin)
+  ;;(setf *window-interface-p* nil)
 
   (when *window-interface-p*
      (keypad *stdscr* true) ; Assume the terminal has a keypad and function keys
@@ -6959,7 +6971,6 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; - Message window has a minimum size, otherwise use line-by-line mode.
      ;; - The message window receives all extra lines available after permanent
      ;;   windows have been placed.
-     ;; TODO - define a chart window - 44 cols x 10 lines
      ;; TODO - define a damages window - 37 cols x 15 lines
      ;; TODO - define a planet report window - 56 cols, potentially many lines
      ;; TOTO - define a probe status command
@@ -6968,7 +6979,6 @@ sectors on the short-range scan even when short-range sensors are out."
      (setf *short-range-scan-window* (newwin 12 24 0 0))
      (setf *ship-status-window* (newwin 10 36 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
-     ;; TODO - use no more width than needed for a normal long range scan and manually wrap error message
      (setf *long-range-scan-window* (newwin 5 19 0 60))
      (setf *game-status-window* (newwin 3 19 8 60))
      ;; TODO - display report window at bottom-right of available space
@@ -6982,6 +6992,8 @@ sectors on the short-range scan even when short-range sensors are out."
      (setf *message-window* (newwin *message-window-lines* 80 12 0))
      (scrollok *message-window* true)
      (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
+     (when (>= *cols* 124)
+       (setf *starchart-window* (newwin 10 45 0 81)))
      ;; debug start - TODO remove these when the curses interface is stable
      ;;(box *short-range-scan-window* 0 0)
      ;; alternate character set chars aren't working...
@@ -7591,7 +7603,6 @@ it's your problem."
               ;; lost/destroyed and Spock isn't doing anything now. Display the short
               ;; range scan so the player isn't left with a blank screen.
               (draw-maps)
-              (select-window *message-window*)
               (finish +materialize+)
               (return-from mayday nil)))
          (print-message (format nil "~A attempt to re-materialize ~A "
@@ -8459,12 +8470,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ((or *all-done-p*
            exit-game-p))
     (when *window-interface-p*
-      ;; In curses mode sensors work automatically. Call before updating the display, but only once
-      ;; per entry into the quadrant.
-      (when *just-in-p*
-        (sensor))
-      (draw-maps)
-      (select-window *message-window*))
+      (draw-maps))
     (skip-line)
     (restart-message-window-paging)
     (setf hit-me-p nil)
