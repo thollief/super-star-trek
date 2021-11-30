@@ -45,6 +45,7 @@ should be suitable for a classic 80x24 terminal.")
   "Number of lines that have been output in the message window.")
 (defparameter *prompt-window* nil)
 (defparameter *starchart-window* nil)
+(defparameter *damage-report-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
@@ -1986,7 +1987,9 @@ tractor-beamed the ship then the other will not."
                (dolist (cq *commander-quadrants*)
                  (when (and (coord-equal bq cq)
                             (not (coord-equal bq *ship-quadrant*))
-                            (not (coord-equal bq *super-commander-quadrant*)))
+                            ;; easy games don't have a supercommander
+                            (or (not *super-commander-quadrant*)
+                                (not (coord-equal bq *super-commander-quadrant*))))
                    (setf commander-quad cq))))
              (if commander-quad
                  (progn
@@ -2408,11 +2411,15 @@ There is no line 10.
 line-by-line mode also display the game statuses that are displayed next to the short
 range scan."
 
-  (if *window-interface-p*
-      (progn
-        (select-window *ship-status-window*)
-        (clear-window)
-        (wmove *ship-status-window* 0 0))
+    (if *window-interface-p*
+      (if *ship-status-window*
+          (progn
+            (select-window *ship-status-window*)
+            (clear-window)
+            (wmove *ship-status-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
       (skip-line))
 
   (ship-status 1)
@@ -2436,11 +2443,15 @@ range scan."
 
 (defun short-range-scan ()
 
-  (if *window-interface-p*
-      (progn
-        (select-window *short-range-scan-window*)
-        (clear-window)
-        (wmove *current-window* 0 0))
+    (if *window-interface-p*
+      (if *short-range-scan-window*
+          (progn
+            (select-window *short-range-scan-window*)
+            (clear-window)
+            (wmove *short-range-scan-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
       (skip-line))
 
   (let ((good-scan-p t))
@@ -2474,11 +2485,15 @@ range scan."
   "Scan the galaxy using long-range sensors and update the star chart. Display the results of the scan.
 Long-range sensors can scan all adjacent quadrants."
 
-  (if *window-interface-p*
-      (progn
-        (select-window *long-range-scan-window*)
-        (clear-window)
-        (wmove *long-range-scan-window* 0 0))
+    (if *window-interface-p*
+      (if *long-range-scan-window*
+          (progn
+            (select-window *long-range-scan-window*)
+            (clear-window)
+            (wmove *long-range-scan-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
       (skip-line))
 
   (if (or (not (damagedp +long-range-sensors+))
@@ -2504,7 +2519,7 @@ Long-range sensors can scan all adjacent quadrants."
           (skip-line)))
       (print-out (format nil "LONG-RANGE SENSORS DAMAGED.~%"))))
 
-(defun draw-maps () ; C: void drawmaps(void)
+(defun draw-windows () ; C: void drawmaps(void)
   "Perform the automatic display updates available to curses-enabled terminals."
 
   (when *window-interface-p*
@@ -2517,6 +2532,8 @@ Long-range sensors can scan all adjacent quadrants."
       (sensor))
     (when *starchart-window*
       (chart))
+    (when *damage-report-window*
+      (damage-report))
     ;; TODO - figure out if and how the report window works
     ;;(select-window *report-window*)
     ;;(wclear *report-window*)
@@ -2524,6 +2541,7 @@ Long-range sensors can scan all adjacent quadrants."
     ;;(report)
     (select-window *message-window*)))
 
+;; TODO - is this used?
 (defun pause-display () ; C: pause_game(void)
   "Display a prompt and pause until the Enter key is pressed. Nothing to pause if not using the
 windowing interface."
@@ -2538,11 +2556,19 @@ windowing interface."
       (select-window saved-window))))
 
 (defun print-prompt (prompt-to-print)
-  "Print a string without end of line character. In curses mode print it in the prompt window, otherwise just print it."
+  "Print a string. In curses mode print it in the prompt window, otherwise just print it."
 
-  (when *window-interface-p*
-    (select-window *prompt-window*)
-    (clear-window))
+  (if *window-interface-p*
+      (if *prompt-window*
+          (progn
+            (select-window *prompt-window*)
+            (clear-window)
+            (wmove *prompt-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
+      (skip-line))
+
   (print-out prompt-to-print))
 
 ;; TODO - move-coordinate is effective when the calling function has displaced the enemy just before
@@ -5812,7 +5838,7 @@ can occur."
           ((>= m *enemies-here*))
         (setf (aref *klingon-average-distance* m) (aref *klingon-distance* m))))
     (update-condition)
-    (draw-maps)))
+    (draw-windows)))
 
 (defun get-probe-course-and-distance () ; C: oid getcd(bool isprobe, int akey), for the probe
   "Get course direction and distance for moving the probe.
@@ -6649,25 +6675,36 @@ quadrant experiencing a supernova)."
     (when (< x +galaxy-size+)
       (skip-line))))
 
+;; TODO - make this a device status report. Show repair time of 0 when a device is not damaged.
+;;        The goal is to have a continuously updated console showing device status.
 (defun damage-report () ; C: damagereport(void)
   "List damaged devices and repair times for each."
 
-  (skip-line)
+  (if *window-interface-p*
+      (if *damage-report-window*
+          (progn
+            (select-window *damage-report-window*)
+            (clear-window)
+            (wmove *damage-report-window* 0 0))
+          (progn
+            (select-window *message-window*)
+            (skip-line)))
+      (skip-line))
+
   (do ((i 0 (+ i 1))
        (header-printed-p nil))
       ((>= i +number-of-devices+)
        (when (not header-printed-p)
-         (print-message (format nil "All devices functional.~%"))))
+         (print-out (format nil "All devices functional.~%"))))
     (when (damagedp i)
       (when (not header-printed-p)
-        (print-message (format nil "~12@A~24@A~%" "DEVICE" "-REPAIR TIMES-"))
-        (print-message (format nil "~21A~8@A~8@A~%" " " "IN FLIGHT" "DOCKED"))
+        (print-out (format nil "~12@A~24@A~%" "DEVICE" "-REPAIR TIMES-"))
+        (print-out (format nil "~21A~8@A~8@A~%" " " "IN FLIGHT" "DOCKED"))
         (setf header-printed-p t))
-      (print-message (format nil "  ~17A~9,2F~9,2F~%"
-                             (aref *devices* i)
-                             (+ (aref *device-damage* i) 0.05)
-                             (+ (* (aref *device-damage* i) +docked-repair-factor+) 0.005)))))
-  (skip-line))
+      (print-out (format nil "  ~17A~9,2F~9,2F~%"
+                         (aref *devices* i)
+                         (+ (aref *device-damage* i) 0.05)
+                         (+ (* (aref *device-damage* i) +docked-repair-factor+) 0.005))))))
 
 ;; TODO - report window output should not use print-message
 (defun report ()
@@ -6960,22 +6997,15 @@ sectors on the short-range scan even when short-range sensors are out."
      ;;   message
      ;;   prompt
      ;;
-     ;; All output that doesn't go to some other defined window is displayed in the message window.
+     ;; If more rows/columns are available then create more windows.
+     ;;
+     ;; All output that doesn't go to a specific window is displayed in the message window.
      ;; In line-by-line mode the full screen is effectively the message window.
      ;;
-     ;;
-     ;; - If more rows/columns are available then make more windows permanent. Define
-     ;;   a priority for which windows are made permanent first, player does not get
-     ;;   to specify.
-     ;; TODO - there is ~ 4x as much horzontal space as vertical, how best to use?
-     ;; - Message window has a minimum size, otherwise use line-by-line mode.
-     ;; - The message window receives all extra lines available after permanent
-     ;;   windows have been placed.
-     ;; TODO - define a damages window - 37 cols x 15 lines
      ;; TODO - define a planet report window - 56 cols, potentially many lines
      ;; TOTO - define a probe status command
      ;; TODO - define a probe status window
-     ;; TODO - name all these constants that define window position and size
+     ;; TODO - name all these constants that define window position and size?
      (setf *short-range-scan-window* (newwin 12 24 0 0))
      (setf *ship-status-window* (newwin 10 36 2 24))
      ;; Width of long range scan window forces error message wrap at the correct place
@@ -6984,34 +7014,23 @@ sectors on the short-range scan even when short-range sensors are out."
      ;; TODO - display report window at bottom-right of available space
      (setf *report-window* (newwin 7 23 5 60))
      ;; The message window is allocated all space between the short range scan window and the
-     ;; prompt window. Leave a blank line at the top between the message window and the short
-     ;; range scan window, and at the bottom between the message window and the prompt window.
-     ;; The message window needs to be at least 12 lines long to display a star chart
+     ;; prompt window. The message window must be at least 12 lines long to display a star chart.
      (setf *message-window-lines* (- *lines* 1 11))
      ;; Game narrative and general output
      (setf *message-window* (newwin *message-window-lines* 80 12 0))
      (scrollok *message-window* true)
      (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
-     (when (>= *cols* 124)
+     (when (>= *cols* 125)
        (setf *starchart-window* (newwin 10 45 0 81)))
+     (when (and (>= *cols* 119)
+                (>= *lines* 25))
+       (setf *damage-report-window* (newwin 15 38 11 81)))
      ;; debug start - TODO remove these when the curses interface is stable
      ;;(box *short-range-scan-window* 0 0)
      ;; alternate character set chars aren't working...
      ;;(wborder *short-range-scan-window*
      ;;         acs_vline acs_vline acs_hline acs_hline
      ;;         acs_ulcorner acs_urcorner acs_llcorner acs_lrcorner)
-     ;box *report-window* 0 0)
-     ;box *ship-status-window* 0 0)
-     ;wrefresh *ship-status-window*)
-     ;box *long-range-scan-window* 0 0)
-     ;box *message-window* 0 0)
-     ;box *prompt-window* 0 0)
-     (wrefresh *short-range-scan-window*)
-     ;wrefresh *report-window*)
-     ;wrefresh *long-range-scan-window*)
-     ;wrefresh *message-window*)
-     ;wrefresh *prompt-window*)
-     ;wgetch *prompt-window*)
      ;; debug end
      (set-text-color +default-color+)
      (select-window *message-window*)))
@@ -7600,9 +7619,9 @@ it's your problem."
               (setf (coord-ref *quadrant-contents* *ship-sector*) +thing+) ; question mark
               (setf *alivep* nil)
               ;; Don't call the sensor scan even if in curses mode. The ship has been
-              ;; lost/destroyed and Spock isn't doing anything now. Display the short
-              ;; range scan so the player isn't left with a blank screen.
-              (draw-maps)
+              ;; lost/destroyed and Spock isn't doing anything now. Fill the windows so the player
+              ;; isn't left with a blank screen.
+              (draw-windows)
               (finish +materialize+)
               (return-from mayday nil)))
          (print-message (format nil "~A attempt to re-materialize ~A "
@@ -8087,7 +8106,7 @@ values, expecially number of entities in the game."
     (setf *remaining-klingons* *initial-klingons*)
     (setf *captured-klingons* 0)
     (when (> *initial-klingons* 50) ; That's a lot of klingons, give the player another base
-      (setf *initial-bases* (+ *initial-bases* 1)))
+      (setf *initial-bases* (1+ *initial-bases*)))
     (setf *initial-commanders* (min +max-commanders-per-game+
                                     (+ (skill-level-value *skill-level*)
                                        (truncate (* 0.0626 *initial-klingons* (random 1.0))))))
@@ -8408,7 +8427,6 @@ consequences."
       (when (> (length topic) longest-topic-title)
 	(setf longest-topic-title (length topic))))
     ;; TODO - how to eliminate the hard-coded 17?
-    ;; TODO - limit line length to 80 characters instead of *print-right-margin* characters
     ;; Arrange the help topics into columns and the columns into lines, then display one line at a
     ;; time.
     (dolist (topic-line (split-sequence #\newline (format nil "~{~17@<~%~:;~A ~>~}" help-topics)))
@@ -8470,7 +8488,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ((or *all-done-p*
            exit-game-p))
     (when *window-interface-p*
-      (draw-maps))
+      (draw-windows))
     (skip-line)
     (restart-message-window-paging)
     (setf hit-me-p nil)
