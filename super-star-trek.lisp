@@ -34,7 +34,6 @@
 This variable is not saved and restored because the terminal used could change between sessions.")
 (defparameter *current-window* nil) ; C: curwnd
 (defparameter *short-range-scan-window* nil) ; C: srscan_window
-(defparameter *report-window* nil)
 (defparameter *ship-status-window* nil)
 (defparameter *game-status-window* nil)
 (defparameter *long-range-scan-window* nil) ; C: lrscan_window
@@ -973,12 +972,11 @@ shuttlecraft landed on it."
   (select-window *message-window*)
   (clear-window))
 
+;; TODO - not all windows cleared
 (defun clear-screen ()
   "Clear all windows."
 
   (setf *current-window* *short-range-scan-window*)
-  (clear-window)
-  (setf *current-window* *report-window*)
   (clear-window)
   (setf *current-window* *ship-status-window*)
   (clear-window)
@@ -2526,11 +2524,6 @@ Long-range sensors can scan all adjacent quadrants."
       (survey))
     (when *score-window*
       (score))
-    ;; TODO - figure out if and how the report window works
-    ;;(select-window *report-window*)
-    ;;(wclear *report-window*)
-    ;;(wmove *report-window* 0 0)
-    ;;(report)
     (select-window *message-window*)))
 
 (defun print-prompt (prompt-to-print)
@@ -6988,8 +6981,6 @@ sectors on the short-range scan even when short-range sensors are out."
      (setf *ship-status-window* (newwin 10 36 2 24))
      (setf *long-range-scan-window* (newwin 5 19 0 60))
      (setf *game-status-window* (newwin 3 19 8 60))
-     ;; TODO - display report window at bottom-right of available space
-     (setf *report-window* (newwin 7 23 5 60))
      ;; The message window is allocated all space between the short range scan window and the
      ;; prompt window. The message window must be at least 12 lines long to display a star chart.
      (setf *message-window-lines* (- *lines* 1 11))
