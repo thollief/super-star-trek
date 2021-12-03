@@ -552,6 +552,8 @@ empty string if the planet class can't be determined."
   (destroyed-uninhabited-planets 0) ; C: nplankl
   (planet-information ()) ; C: planets
   (stardate 0.0) ; C: double date
+  shuttle-craft-location
+  shuttle-craft-quadrant
   base-quadrants
   commander-quadrants
   super-commander-quadrant ; C: kscmdr
@@ -633,7 +635,7 @@ empty string if the planet class can't be determined."
 (defparameter *self-destruct-password* nil) ; C: passwd[10]
 
 ;; The Enterprise
-;; TODO - the Faerie Queene has no shuttlecraft or deathray so it should not be
+;; TODO - the Faerie Queene has no shuttle craft or deathray so it should not be
 ;; possible/allowed/necessary to check if those devices are damaged
 (define-constant +full-crew+ 428) ; C: FULLCREW, BSD Trek was 387, that's wrong
 (defparameter *ship* +enterprise+) ; C: ship, 'E' is Enterprise
@@ -706,6 +708,38 @@ empty string if the planet class can't be determined."
 (defparameter *galaxy* nil "The Galaxy, an array of quadrants") ; C: galaxy[GALSIZE+1][GALSIZE+1]
 (defparameter *starchart* nil "The starchart, an array of starchart-pages") ; C: chart[GALSIZE+1][GALSIZE+1]
 
+(defparameter *quadrant-contents* (make-array (list +quadrant-size+ +quadrant-size+))
+  "The contents of the current quadrant.") ; C: feature quad[QUADSIZE+1][QUADSIZE+1];
+;; TODO the next 4 arrays have information for 1 enemy at a given index. Would a single arrary of structs
+;;      do the job as well, perhaps stored in *quadrant-contents*?
+;; The array sizes need to accomodate the deathray case of filling the sector.
+(defparameter *klingon-energy* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kpower[(QUADSIZE+1)*(QUADSIZE+1)], enemy energy levels
+(defparameter *klingon-distance* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kdist[(QUADSIZE+1)*(QUADSIZE+1)], enemy distances
+(defparameter *klingon-average-distance* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kavgd[(QUADSIZE+1)*(QUADSIZE+1)], average distances
+(defparameter *klingon-sectors* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: ks[(QUADSIZE+1)*(QUADSIZE+1)], enemy sector locations - an array of coordinates
+(defparameter *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
+(defparameter *base-sector* nil) ; C: base, coordinate position of base in current quadrant
+
+;; Other game parameters
+;; TODO - should this be in an event structure?
+(defparameter *base-under-attack-quadrant* nil) ; C: battle, Base coordinates being attacked - a coordinate struct, or nil. See also the event +commander-attacks-base+
+(defparameter *calls-for-help* 0) ; C: nhelp
+(defparameter *energy-barrier-crossings* 0 "Count of energy-barrier crossings") ; C: nkinks
+(defparameter *in-shuttle-craft-p* nil "Kirk in Galileo") ; C: icraft
+(defparameter *miningp* nil) ; C: imine
+(defparameter *restingp* nil) ; C: resting, rest time
+(defparameter *super-commander-attack-enterprise-p* nil) ; C: iscate
+;; TODO - define some named constants for the status of the super-commander attacking a base, or use symbols
+(defparameter *super-commander-attacking-base* 0) ; C: isatb, 0 = not attacking, 1 = attacking, = 2  Super-Commander is in the process of destroying a base
+(defparameter *shuttle-craft-location* 'on-ship
+  "Location of the shuttle craft. One of 'on-ship, 'off-ship, or 'removed. 'off-ship is effectively
+the same as being on a planet.") ; C: iscraft
+(defparameter *shuttle-craft-quadrant* nil "The quadrant coordinates of the shuttle craft. They are
+the same as the ship if the shuttle craft location is on-ship.")
+;; TODO - alivep and condition = dead are two ways of saying the same thing....
+(defparameter *alivep* t "The player is alive (not killed)") ; C: alive
+(defparameter *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
+
 (defparameter *snapshot* nil) ; C: snapshot snapsht;
 (defparameter *snapshot-taken-p* nil) ; C:snap
 (defun use-snapshot ()
@@ -725,39 +759,13 @@ empty string if the planet class can't be determined."
   (setf *destroyed-uninhabited-planets* (snapshot-destroyed-uninhabited-planets *snapshot*))
   (setf *planet-information* (snapshot-planet-information *snapshot*))
   (setf *stardate* (snapshot-stardate *snapshot*))
+  (setf *shuttle-craft-location* (snapshot-shuttle-craft-location *snapshot*))
+  (setf *shuttle-craft-quadrant* (snapshot-shuttle-craft-quadrant *snapshot*))
   (setf *base-quadrants* (snapshot-base-quadrants *snapshot*))
   (setf *commander-quadrants* (snapshot-commander-quadrants *snapshot*))
   (setf *super-commander-quadrant* (snapshot-super-commander-quadrant *snapshot*))
   (setf *galaxy* (snapshot-galaxy *snapshot*))
   (setf *starchart* (snapshot-starchart *snapshot*)))
-
-(defparameter *quadrant-contents* (make-array (list +quadrant-size+ +quadrant-size+))
-  "The contents of the current quadrant.") ; C: feature quad[QUADSIZE+1][QUADSIZE+1];
-;; TODO the next 4 arrays have information for 1 enemy at a given index. Would a single arrary of structs
-;;      do the job as well, perhaps stored in *quadrant-contents*?
-;; The array sizes need to accomodate the deathray case of filling the sector.
-(defparameter *klingon-energy* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kpower[(QUADSIZE+1)*(QUADSIZE+1)], enemy energy levels
-(defparameter *klingon-distance* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kdist[(QUADSIZE+1)*(QUADSIZE+1)], enemy distances
-(defparameter *klingon-average-distance* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kavgd[(QUADSIZE+1)*(QUADSIZE+1)], average distances
-(defparameter *klingon-sectors* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: ks[(QUADSIZE+1)*(QUADSIZE+1)], enemy sector locations - an array of coordinates
-(defparameter *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
-(defparameter *base-sector* nil) ; C: base, coordinate position of base in current quadrant
-
-;; Other game parameters
-;; TODO - should this be in an event structure?
-(defparameter *base-under-attack-quadrant* nil) ; C: battle, Base coordinates being attacked - a coordinate struct, or nil. See also the event +commander-attacks-base+
-(defparameter *calls-for-help* 0) ; C: nhelp
-(defparameter *energy-barrier-crossings* 0 "Count of energy-barrier crossings") ; C: nkinks
-(defparameter *in-landing-craft-p* nil "Kirk in Galileo") ; C: icraft
-(defparameter *miningp* nil) ; C: imine
-(defparameter *restingp* nil) ; C: resting, rest time
-(defparameter *super-commander-attack-enterprise-p* nil) ; C: iscate
-;; TODO - define some named constants for the status of the super-commander attacking a base, or use symbols
-(defparameter *super-commander-attacking-base* 0) ; C: isatb, 0 = not attacking, 1 = attacking, = 2  Super-Commander is in the process of destroying a base
-(defparameter *landing-craft-location* "onship") ; C: iscraft, 'onship' if craft on ship, 'offship' in not, 'removed' if out of game, TODO - make this a symbol, not a string
-;; TODO - alivep and condition = dead are two ways of saying the same thing....
-(defparameter *alivep* t "The player is alive (not killed)") ; C: alive
-(defparameter *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
 
 ;; The game
 (defparameter *game-won-p* nil) ; C: gamewon, Finished!
@@ -1425,26 +1433,28 @@ affected."
 
 t-quadrant is the quadrant to which the ship is pulled"
 
-  (setf *time-taken-by-current-operation* (calculate-warp-movement-time :distance (distance t-quadrant *ship-quadrant*)
-                                                                        :warp-factor 7.5)) ; 7.5 is tractor beam yank rate
+  (setf *time-taken-by-current-operation*
+        (calculate-warp-movement-time :distance (distance t-quadrant *ship-quadrant*)
+                                      :warp-factor 7.5)) ; 7.5 is tractor beam yank rate
   (skip-line)
   (print-message (format nil "***~A caught in long range tractor beam--~%" (format-ship-name)))
   ;; If Kirk & Co. screwing around on planet, handle
   (quadrant-exit-while-on-planet +mining+)
   (when *all-done-p*
     (return-from execute-tractor-beam nil))
-  (when *in-landing-craft-p* ; Caught in Galileo?
+  (when *in-shuttle-craft-p* ; Caught in Galileo?
     (finish +shuttle-tractor-beam+)
     (return-from execute-tractor-beam nil))
   ;; Check to see if shuttle is aboard
-  (when (string= *landing-craft-location* "offship")
+  (when (eql *shuttle-craft-location* 'off-ship)
     (skip-line)
     (if (> (random 1.0) 0.5)
         (progn
           (print-message (format nil "Galileo, left on the planet surface, is captured~%"))
           (print-message (format nil "by aliens and made into a flying McDonald's.~%"))
           (setf (aref *device-damage* +shuttle+) -10) ; TODO - stop using special values in the damage array to store device properties
-          (setf *landing-craft-location* "removed"))
+          (setf *shuttle-craft-location* 'removed)
+          (setf *shuttle-craft-quadrant* nil))
         (print-message (format nil "Galileo, left on the planet surface, is well hidden.~%"))))
   (setf *ship-quadrant* t-quadrant)
   (setf *ship-sector* (get-random-sector))
@@ -1817,7 +1827,8 @@ tractor-beamed the ship then the other will not."
       (when (and *window-interface-p*
                  (aref repaired-devices +short-range-sensors+)
                  *current-planet*
-                 (= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 0))
+                 (= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
+                    +unknown+))
         (sensor)))
     ;; Time was spent so subtract it from the operation time being handled by this invocation
     (setf *time-taken-by-current-operation* (- *time-taken-by-current-operation* execution-time))
@@ -1940,6 +1951,8 @@ tractor-beamed the ship then the other will not."
                                        :destroyed-uninhabited-planets *destroyed-uninhabited-planets*
                                        :planet-information *planet-information*
                                        :stardate *stardate*
+                                       :shuttle-craft-location *shuttle-craft-location*
+                                       :shuttle-craft-quadrant *shuttle-craft-quadrant*
                                        :base-quadrants *base-quadrants*
                                        :commander-quadrants *commander-quadrants*
                                        :super-commander-quadrant *super-commander-quadrant*
@@ -2644,7 +2657,7 @@ Long-range sensors can scan all adjacent quadrants."
         ;; Cheat to prevent shuttle damage unless on ship
         (when (or (< (aref *device-damage* device-index) 0.0) ; TODO -10 is a special shuttle damage value used when it is not on the ship
                   (and (= device-index +shuttle+)
-                       (string/= *landing-craft-location* "onship")))
+                       (not (eql *shuttle-craft-location* 'on-ship))))
           (setf device-index nil)))))
     (when (and (damagedp +shields+)
                *shields-are-up-p*)
@@ -4752,8 +4765,8 @@ player has reached a base by abandoning ship or using the SOS command."
         (setf (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))))
 
 (defun abandon-ship () ; C: abandon(void)
-  "The ship is abandoned. If your current ship is the Faire Queene, or if your shuttlecraft is
-dead, you're out of luck. You need the shuttlecraft in order for the captain (that's you!!) to
+  "The ship is abandoned. If your current ship is the Faire Queene, or if your shuttle craft is
+dead, you're out of luck. You need the shuttle craft in order for the captain (that's you!!) to
 escape.
 
 Your crew can beam to an inhabited starsystem in the quadrant, if there is one and if the
@@ -4786,7 +4799,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
          (print-message (format nil "You must be aboard the ship.~%"))
          (return-from abandon-ship nil))
 
-        ((string/= *landing-craft-location* "onship")
+        ((not (eql *shuttle-craft-location* 'on-ship))
          (print-message (format nil "Shuttle craft not currently available.~%"))
          (return-from abandon-ship nil))
 
@@ -4855,7 +4868,8 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (when *dilithium-crystals-on-board-p*
     (print-message (format nil "The dilithium crystals have been moved.~%")))
   (setf *miningp* nil)
-  (setf *landing-craft-location* "offship") ; Galileo disappears
+  (setf *shuttle-craft-location* 'off-ship) ; Galileo disappears
+  (setf *shuttle-craft-quadrant* nil) ; FQ has no shuttle, therefore no location
   (setf *brig-capacity* 300) ; Less capacity now
   (setf *brig-free* *brig-capacity*)
   (setf *cloakedp* nil)
@@ -4960,42 +4974,45 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
         ;; Go back in time
         (print-message (format nil "You are traveling backwards in time ~A stardates.~%"
                                (truncate (- *stardate* (snapshot-stardate *snapshot*)))))
-        (use-snapshot)
-        (setf *snapshot-taken-p* nil)
-        (when (> (length *commanders-here*) 0)
-          (schedule-event +tractor-beam+ (expran (/ *initial-time* (length *commander-quadrants*))))
-          (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*))))
-        (schedule-event +supernova+ (expran (* 0.5 *initial-time*)))
-        ;; Next snapshot will be sooner
-        (schedule-event +snapshot-for-time-warp+ (expran (* 0.25 *remaining-time*)))
-        (when (> *remaining-super-commanders* 0)
-          (schedule-event +move-super-commander+ 0.2777))
-        (setf *super-commander-attacking-base* 0)
-        (unschedule +commander-destroys-base+)
-        (unschedule +super-commander-destroys-base+)
-        (setf *base-under-attack-quadrant* nil)
-        ;; Make sure Galileo is consistant -- Snapshot may have been taken
-        ;; when on planet, which would give us two Galileos!
-        (do ((got-it-p nil)
-             (l 0 (1+ l)))
-            ((< l *initial-planets*)
-             ;; Likewise, if in the original time the Galileo was abandoned, but
-             ;; was on ship earlier, it would have vanished -- let's restore it.
-             (when (and (string= *landing-craft-location* "offship")
-                        (not got-it-p)
-                        (>= (aref *device-damage* +shuttle+) 0.0))
-               (print-message (format nil "Checkov-  \"Security reports the Galileo has reappeared in the dock!\"~%"))
-               (setf *landing-craft-location* "onship")))
-          ;; TODO - should be the symbol 'shuttle_down, not 2
-          (when (= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 2)
-            (setf got-it-p t)
-            (when (and (string= *landing-craft-location* "onship")
-                       (string= *ship* +enterprise+))
-              (print-message (format nil "Checkov-  \"Security reports the Galileo has disappeared, Sir!~%"))
-              (setf *landing-craft-location* "offship"))))
-        ;; There used to be code to do the actual reconstruction here,
-        ;; but the starchart is now part of the snapshotted galaxy state.
-        (print-message (format nil "Spock has reconstructed a correct star chart from memory~%")))
+        ;; Note the current shuttle location, compare it with the previous historical location, and
+        ;; remove or add the shuttle as needed
+        (let ((shuttle-craft-location *shuttle-craft-location*))
+          ;; (shuttle-craft-quadrant *shuttle-craft-quadrant*)
+          (use-snapshot)
+          (setf *snapshot-taken-p* nil)
+          ;; Reschedule events to occur relative to the new current stardate
+          (when (> (length *commander-quadrants*) 0)
+            (schedule-event +tractor-beam+ (expran (/ *initial-time* (length *commander-quadrants*))))
+            (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*))))
+          (schedule-event +supernova+ (expran (* 0.5 *initial-time*)))
+          ;; Next snapshot will be sooner
+          (schedule-event +snapshot-for-time-warp+ (expran (* 0.25 *remaining-time*)))
+          (when (> *remaining-super-commanders* 0)
+            (schedule-event +move-super-commander+ 0.2777))
+          (setf *super-commander-attacking-base* 0)
+          (unschedule +commander-destroys-base+)
+          (unschedule +super-commander-destroys-base+)
+          (setf *base-under-attack-quadrant* nil)
+          (cond
+            ;; Make sure Galileo is consistent -- Snapshot may have been taken when on planet,
+            ;; which would give us two Galileos!
+            ((and (eql *shuttle-craft-location* 'off-ship) ; The shuttle is on the planet
+                  *shuttle-craft-quadrant*                 ; in the indicated quadrant,
+                  (eql shuttle-craft-location 'on-ship)    ; and before the time warp
+                  (string= *ship* +enterprise+))           ; was on the Enterprise
+             (print-message (format nil "Checkov-  \"Security reports the Galileo has disappeared, Sir!~%")))
+            ;; Likewise, if in the original time the Galileo was abandoned but was on ship in the
+            ;; earlier time line, it would have vanished -- let's restore it.
+            ((and (not (eql shuttle-craft-location 'on-ship))
+                  (eql *shuttle-craft-location* 'on-ship))
+             (if (string= *ship* +enterprise+) ; Can't restore to the FQ
+                 (print-message (format nil "Checkov-  \"Security reports the Galileo has reappeared in the dock!\"~%"))
+                 (progn
+                   (setf *shuttle-craft-location* 'off-ship)
+                   (setf *shuttle-craft-quadrant* nil))))))
+          ;; There used to be code to do the actual reconstruction here,
+          ;; but the starchart is now part of the snapshotted galaxy state.
+          (print-message (format nil "Spock has reconstructed a correct star chart from memory~%")))
       (progn
         ;; Go forward in time
         (setf *time-taken-by-current-operation* (* -0.5 *initial-time* (log (random 1.0))))
@@ -6994,7 +7011,7 @@ was an event that requires aborting the operation carried out by the calling fun
   (return-from consume-time nil))
 
 (defun shuttle () ; C: shuttle(void)
-  "Use shuttlecraft for planetary jaunt."
+  "Use shuttle craft for planetary jaunt."
 
   (skip-line)
   (cond
@@ -7017,7 +7034,7 @@ was an event that requires aborting the operation carried out by the calling fun
      (print-message (format nil "~A not in standard orbit.~%" (format-ship-name))))
 
     ((and (not (shuttle-down-p *ship-quadrant*))
-          (string/= *landing-craft-location* "onship"))
+          (not (eql *shuttle-craft-location* 'on-ship)))
      (print-message (format nil "Shuttle craft not currently available.~%")))
 
     ((and (shuttle-down-p *ship-quadrant*)
@@ -7046,7 +7063,7 @@ was an event that requires aborting the operation carried out by the calling fun
          (return-from shuttle nil)))
      (if *landedp*
          ;; Kirk on planet
-         (if (string= *landing-craft-location* "onship")
+         (if (eql *shuttle-craft-location* 'on-ship)
              ;; Galileo on ship!
              (progn
                (if (not (damagedp +transporter+))
@@ -7058,10 +7075,12 @@ was an event that requires aborting the operation carried out by the calling fun
                      (print-message "Shuttle crew"))
                    (print-message "Rescue party"))
                (print-message (format nil " boards Galileo and swoops toward planet surface.~%"))
-               (setf *landing-craft-location* "offship")
+               (setf *shuttle-craft-location* 'off-ship)
+               (setf *shuttle-craft-quadrant* *ship-quadrant*)
                (skip-line)
                (when (consume-time)
                  (return-from shuttle nil))
+               ;; TODO - this let form becomes unnecessary when the +shuttle-down+ constant is removed
                (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
                  (setf (planet-known p) +shuttle-down+)
                  (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
@@ -7076,12 +7095,13 @@ was an event that requires aborting the operation carried out by the calling fun
                (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
                  (setf (planet-known p) +known+)
                  (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
-               (setf *in-landing-craft-p* t)
+               (setf *in-shuttle-craft-p* t)
                (setf *landedp* nil)
                (when (consume-time)
                  (return-from shuttle nil))
-               (setf *in-landing-craft-p* nil)
-               (setf *landing-craft-location* "onship")
+               (setf *in-shuttle-craft-p* nil)
+               (setf *shuttle-craft-location* 'on-ship)
+               (setf *shuttle-craft-quadrant* nil)
                (when *miningp*
                  (setf *dilithium-crystals-on-board-p* t)
                  (setf *crystal-work-probability* 0.05))
@@ -7095,14 +7115,16 @@ was an event that requires aborting the operation carried out by the calling fun
            (skip-line)
            (print-message (format nil "The hangar doors open; the trip begins.~%"))
            (skip-line)
-           (setf *in-landing-craft-p* t)
-           (setf *landing-craft-location* "offship")
+           (setf *in-shuttle-craft-p* t)
+           (setf *shuttle-craft-location* 'off-ship)
+           (setf *shuttle-craft-quadrant* *ship-quadrant*)
            (when (consume-time)
              (return-from shuttle nil))
+           ;; TODO - this let form becomes unnecessary when the +shuttle-down+ constant is removed
            (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
              (setf (planet-known p) +shuttle-down+)
              (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
-           (setf *in-landing-craft-p* nil)
+           (setf *in-shuttle-craft-p* nil)
            (setf *landedp* t)
            (print-message (format nil "Trip complete.~%")))))))
 
@@ -7116,7 +7138,7 @@ was an event that requires aborting the operation carried out by the calling fun
       ;; The shuttle is an option if it is not damaged and on the planet or on the ship
       (when (and (not (damagedp +shuttle+))
                  (or (shuttle-down-p *ship-quadrant*)
-                     (string= *landing-craft-location* "onship")))
+                     (eql *shuttle-craft-location* 'on-ship)))
         (skip-line)
         (print-prompt "Spock-  \"May I suggest the shuttle craft, Sir?\" ")
         (when (get-y-or-n-p)
@@ -7370,9 +7392,9 @@ the planet."
   "Handle emergency exit from the quadrant due to a supernova."
 
   (quadrant-exit-while-on-planet +mining-party-nova+)
-  ;; TODO - is this the correct place for the landing craft check?
+  ;; TODO - is this the correct place for the shuttle craft check?
   ;; Check to see if captain in shuttle craft
-  (when *in-landing-craft-p*
+  (when *in-shuttle-craft-p*
     (finish +shuttle-super-nova+)) ;; C used Shuttle Tractor Beam but that code couldn't be reached
   (unless *all-done-p*
     ;; Inform captain of attempt to reach safety
@@ -7466,16 +7488,19 @@ the planet."
      (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
        (print-message (format nil "Spock-  \"Sensor scan for ~A -~%" (format-quadrant-coordinates *ship-quadrant*)))
        (skip-line)
+       ;; TODO - use pretty print justification
        (print-message (format nil "         Planet at ~A is of class ~A.~%"
                               (format-sector-coordinates *current-planet*)
                               (format-planet-class (planet-class p))))
        (when (planet-shuttle-landed-p p)
+         ;; TODO - use pretty print justification
          (print-message (format nil "         Sensors show Galileo still on surface.~%")))
+       ;; TODO - use pretty print justification
        (print-message "         Readings indicate")
        (when (/= (planet-crystals p) +present+)
          (print-message " no"))
        (print-message (format nil " dilithium crystals present.\"~%"))
-       (setf (planet-known p) 1)
+       (setf (planet-known p) +known+)
        (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p)))))
 
 (defun mayday () ; C: mayday(void)
@@ -7740,13 +7765,14 @@ it's your problem."
     (setf *casualties* (read s))
     (setf *calls-for-help* (read s))
     (setf *energy-barrier-crossings* (read s))
-    (setf *in-landing-craft-p* (read s))
+    (setf *in-shuttle-craft-p* (read s))
     (setf *dilithium-crystals-on-board-p* (read s))
     (setf *miningp* (read s))
     (setf *restingp* (read s))
     (setf *super-commander-attack-enterprise-p* (read s))
     (setf *super-commander-attacking-base* (read s))
-    (setf *landing-craft-location* (read s))
+    (setf *shuttle-craft-location* (read s))
+    (setf *shuttle-craft-quadrant* (read s))
     (setf *alivep* (read s))
     (setf *action-taken-p* (read s))
     (setf *game-won-p* (read s))
@@ -7865,13 +7891,14 @@ loop, in effect continuously saving the current state of the game."
     (print *casualties* s)
     (print *calls-for-help* s)
     (print *energy-barrier-crossings* s)
-    (print *in-landing-craft-p* s)
+    (print *in-shuttle-craft-p* s)
     (print *dilithium-crystals-on-board-p* s)
     (print *miningp* s)
     (print *restingp* s)
     (print *super-commander-attack-enterprise-p* s)
     (print *super-commander-attacking-base* s)
-    (print *landing-craft-location* s)
+    (print *shuttle-craft-location* s)
+    (print *shuttle-craft-quadrant* s)
     (print *alivep* s)
     (print *action-taken-p* s)
     (print *game-won-p* s)
@@ -8091,7 +8118,7 @@ values, expecially number of entities in the game."
     (setf *casualties* 0)
     (setf *calls-for-help* 0)
     (setf *energy-barrier-crossings* 0)
-    (setf *in-landing-craft-p* nil)
+    (setf *in-shuttle-craft-p* nil)
     (setf *dilithium-crystals-on-board-p* nil)
     (setf *crystal-work-probability* 0.0)
     (setf *miningp* nil)
@@ -8102,7 +8129,8 @@ values, expecially number of entities in the game."
     (setf *destroyed-uninhabited-planets* 0)
     (setf *destroyed-bases* 0)
     (setf *destroyed-stars* 0)
-    (setf *landing-craft-location* "onship")
+    (setf *shuttle-craft-location* 'on-ship)
+    (setf *shuttle-craft-quadrant* nil)
     (setf *landedp* nil)
     (setf *alivep* t)
     (setf *galaxy* (make-array (list +galaxy-size+ +galaxy-size+)))
@@ -8258,7 +8286,8 @@ values, expecially number of entities in the game."
           (progn
             (setf (planet-class p) +class-m+) ; All inhabited planets are class M
             (setf (planet-crystals p) +absent+)
-            (setf (planet-known p) 1)
+            ;; ; TODO - "known" should only change when planets are scanned, we don't know them in advance
+            (setf (planet-known p) +known+)
             (setf (planet-inhabited p) i)
             (setf (planet-shuttle-landed-p p) nil))
           (progn
@@ -8268,7 +8297,7 @@ values, expecially number of entities in the game."
             (if (= (random 2) 0) ; 1 in 3 chance of crystals
                 (setf (planet-crystals p) +present+)
                 (setf (planet-crystals p) +absent+))
-            (setf (planet-known p) 0)
+            (setf (planet-known p) +unknown+)
             (setf (planet-inhabited p) +uninhabited+)
             (setf (planet-shuttle-landed-p p) nil)))
       (setf *planet-information* (acons q p *planet-information*)))
@@ -8611,7 +8640,8 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ;; played. Give them a little help.
       (unless (probe-file +checkpoint-file-name+)
         (skip-line)
-        (print-message (format nil "Enter `help' for help, `commands' for commands.~%"))))
+        (print-message (format nil "Enter `help' for help, `commands' for commands.~%"))
+        (skip-line)))
     (make-moves)
     (setf play-again-p nil)
 
