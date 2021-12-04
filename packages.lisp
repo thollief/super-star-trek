@@ -21,13 +21,12 @@
 ;;;;    * Wandering planet-killer as in "The Doomsday Machine";
 ;;;;      see <http://www.ericweisstein.com/fun/startrek/TheDoomsdayMachine.html>.
 ;;;;    BSD-Trek features we haven't swiped yet:
-;;;;    * The cloaking device.
-;;;;    * Summoning Klingons to surrender and taking captives.
 ;;;;    * Smarter computer, with multiple requests.
 ;;;;    * There is a small probility that a nova event will leave a black hole.
 ;;;;    * Multiple laser banks and beam spreading.
 ;;;; 5. Black holes can warp you to another location in the galaxy
 ;;;; 5. S-lang instead of ncurses?
+;;;; 7. Add an undock command?
 
 ;;;; TODO - add quadrants to events - every event occurs in a quadrant
 ;;;; TODO - bsdtrek mentioned boarding parties to capture a klingon, klingons could try it too
