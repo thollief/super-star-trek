@@ -1,5 +1,9 @@
 ;;;; Super Star Trek
 
+;; TODO - review all (skip-line) calls to ensure they are going to the correct window. Consider
+;;        adding a (skip-message-line)
+;; TODO - message window scrolling isn't correct
+
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -404,6 +408,7 @@ coordinates or nil."
 (define-constant +emeritus+ 5) ; C: skill, SKILL_EMERITUS = 5
 (defstruct skill-level
   "Player's selection of game difficulty."
+
   value ; Numeric skill level used to initialize gameplay parameters
   label) ; The textual representaion of the skill level: novice, fair, good, expert, emeritus
 
@@ -411,22 +416,19 @@ coordinates or nil."
 (define-constant +class-m+ 1)
 (define-constant +class-n+ 2)
 (define-constant +class-o+ 3)
-(define-constant +mined+ -1)
-(define-constant +present+ 0)
-(define-constant +absent+ 1)
 
 ;; Value for the 'inhabited' slot in the planet struct
 (define-constant +uninhabited+ -1) ; C: UNINHABITED
 
-;; TODO - location of the shuttle shouldn't be a property of the planet.
 ;; TODO - the element 'inhabited' is overloaded, can name be a separate item?
 ;; TODO - the element 'class' is overloaded, 'destroyed' should be a different property
 (defstruct planet ; C: planet
   "Information about a planet."
+
   quadrant ; C: w, a coordinate
   class ; C: pclass, one of M, N, or O (1, 2, or 3), or -1 for destroyed planets, TODO - use symbols
   inhabited ; C: inhabited, If non-zero then an index into a name array. If -1 then uninhabited
-  crystals ; has crystals, mined=-1, present=0, absent=1, TODO - use symbols
+  crystals ; has crystals: 'absent, 'present, or 'mined
   knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   shuttle-landed-p) ; whether or not the shuttle has landed on the planet
 
@@ -1567,7 +1569,7 @@ Return true on successful move."
   ;; Check for a helpful planet
   (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal))))
     (when (and helpful-planet
-               (= (planet-crystals helpful-planet) +present+))
+               (eql (planet-crystals helpful-planet) 'present))
       ;; Destroy the planet
       (setf (planet-class helpful-planet) +destroyed+)
       (rplacd (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal) helpful-planet)
@@ -7144,7 +7146,8 @@ was an event that requires aborting the operation carried out by the calling fun
       (print-message (format nil "  you may not go down.\"~%"))
       (return-from beam nil))
     (when (and (not *landedp*)
-               (= (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +absent+))
+               (eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
+                    'absent))
       (print-message (format nil "Spock-  \"Captain, I fail to see the logic in~%"))
       (print-message (format nil "  exploring a planet with no dilithium crystals.~%"))
       (print-prompt "  Are you sure this is wise?\" ")
@@ -7316,10 +7319,10 @@ was an event that requires aborting the operation carried out by the calling fun
     ((not *landedp*)
      (print-message (format nil "Mining party not on planet.~%")))
 
-    ((= (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +mined+)
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'mined)
      (print-message (format nil "This planet has already been mined for dilithium.~%")))
 
-    ((= (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +absent+)
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'absent)
      (print-message (format nil "No dilithium crystals on this planet.~%")))
 
     (*miningp*
@@ -7336,10 +7339,11 @@ was an event that requires aborting the operation carried out by the calling fun
            (* (+ 0.1 (* 0.2 (random 1.0)))
               (planet-class (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
      (unless (consume-time)
+       (skip-line)
        (print-message (format nil "Mining operation complete.~%"))
-       (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-         (setf (planet-crystals p) +mined+)
-         (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+       (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+         (setf (planet-crystals pl) 'mined)
+         (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
        (setf *miningp* t)
        (setf *action-taken-p* t)))))
 
@@ -7475,7 +7479,8 @@ the planet."
     (t ; Go ahead and scan even if the planet has been scanned before
      (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
        (skip-line)
-       (print-message (format nil "Spock-  \"Sensor scan for ~A -~%" (format-quadrant-coordinates *ship-quadrant*)))
+       (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
+                              (format-quadrant-coordinates *ship-quadrant*)))
        (skip-line)
        ;; TODO - use pretty print justification
        (print-message (format nil "         Planet at ~A is of class ~A.~%"
@@ -7486,7 +7491,7 @@ the planet."
          (print-message (format nil "         Sensors show Galileo still on surface.~%")))
        ;; TODO - use pretty print justification
        (print-message "         Readings indicate")
-       (when (/= (planet-crystals pl) +present+)
+       (when (not (eql (planet-crystals pl) 'present))
          (print-message " no"))
        (print-message (format nil " dilithium crystals present.\"~%"))
        (setf (planet-knownp pl) t)
@@ -7636,7 +7641,7 @@ it's your problem."
           (print-out (format nil "~A  class ~A  "
                              (format-quadrant-coordinates (first p-cons))
                              (format-planet-class (planet-class (rest p-cons)))))
-          (unless (= (planet-crystals (rest p-cons)) +present+)
+          (unless (eql (planet-crystals (rest p-cons)) 'present)
             (print-out "no "))
           (print-out (format nil "dilithium crystals present.~%"))
           (when (shuttle-down-p (first p-cons))
@@ -8274,18 +8279,18 @@ values, expecially number of entities in the game."
       (if (< i +habitable-planets+)
           (progn
             (setf (planet-class pl) +class-m+) ; All inhabited planets are class M
-            (setf (planet-crystals pl) +absent+)
+            (setf (planet-crystals pl) 'absent)
             ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
             (setf (planet-knownp pl) t)
             (setf (planet-inhabited pl) i)
             (setf (planet-shuttle-landed-p pl) nil))
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
-            ;;(setf (planet-crystals p) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
+            ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
             ;; TODO - examine the planet information to ensure ~ 1/3 of planets have crystals
             (if (= (random 2) 0) ; 1 in 3 chance of crystals
-                (setf (planet-crystals pl) +present+)
-                (setf (planet-crystals pl) +absent+))
+                (setf (planet-crystals pl) 'present)
+                (setf (planet-crystals pl) 'absent))
             (setf (planet-knownp pl) nil)
             (setf (planet-inhabited pl) +uninhabited+)
             (setf (planet-shuttle-landed-p pl) nil)))
