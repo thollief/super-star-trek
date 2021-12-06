@@ -396,6 +396,8 @@ coordinates or nil."
 (define-constant +medium-game+ 2)
 (define-constant +long-game+ 4)
 (defstruct game-length
+  "Player's selection of game length."
+
   value ; Numeric values 1, 2, or 4. Used to initialize gameplay parameters.
   label) ; The textual representation of the game length: short, medium, long
 
@@ -420,16 +422,17 @@ coordinates or nil."
 ;; Value for the 'inhabited' slot in the planet struct
 (define-constant +uninhabited+ -1) ; C: UNINHABITED
 
+;; resume here: add the planet name to the planet struct
 ;; TODO - the element 'inhabited' is overloaded, can name be a separate item?
 ;; TODO - the element 'class' is overloaded, 'destroyed' should be a different property
 (defstruct planet ; C: planet
   "Information about a planet."
 
   quadrant ; C: w, a coordinate
+  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   class ; C: pclass, one of M, N, or O (1, 2, or 3), or -1 for destroyed planets, TODO - use symbols
   inhabited ; C: inhabited, If non-zero then an index into a name array. If -1 then uninhabited
   crystals ; has crystals: 'absent, 'present, or 'mined
-  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   shuttle-landed-p) ; whether or not the shuttle has landed on the planet
 
 ;; TODO - the C source used an array lookup to return the letter belonging to the number.
@@ -511,14 +514,17 @@ empty string if the planet class can't be determined."
 ;; TODO - define a probe structure? It's also an entity that moves around the galaxy, as does the
 ;;        super-commander and sometimes commanders.
 
-;; When a quadrant has had a supernova don't zero out the number of stars, planets, and starbases.
-;; If the player caused the supernova these destroyed objects count against the final score and
-;; need to be tracked.
 (defstruct quadrant ; C: quadrant
+  "Information about a quadrant.
+
+When a quadrant has had a supernova don't zero out the number of stars, planets, and starbases. If
+the player caused the supernova these destroyed objects count against the final score and need to
+be tracked."
+
   (stars 0)
   (starbases 0) ; 0 or 1
-  ;; TODO - track klingons, commanders and super-commanders separately? If yes, then there may be a need for a function
-  ;;        to check if klingons of any type are present. Swings and roundabouts...
+  ;; TODO - track klingons, commanders and super-commanders separately? If yes, then there may be a
+  ;;        need for a function to check if klingons of any type are present. Swings and roundabouts...
   (klingons 0) ; number of klingons of all type: klingons + commanders + super commanders
   (romulans 0)
   (supernovap nil)
@@ -526,7 +532,7 @@ empty string if the planet class can't be determined."
   (status +secure+)) ; C: status, One of 0, 1, 2 for secure, distressed, enslaved - TODO this is a property of the planet
 
 ;; TODO - what's the difference between the star chart and the galaxy?
-;; Planets don't show on the star chart
+;; Planets and Romulans don't show on the star chart
 (defstruct starchart-page ; C: page
   stars
   starbases ; 0 or 1
@@ -2120,7 +2126,6 @@ tractor-beamed the ship then the other will not."
          (setf candidate-planet (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
          (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
                       candidate-planet
-                      ;;(/= (planet-inhabited (aref *planet-information* candidate-planet-index)) +uninhabited+)
                       (/= (planet-inhabited candidate-planet) +uninhabited+)
                       (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
                       (= (quadrant-status (coord-ref *galaxy* candidate-quadrant)) +secure+)
