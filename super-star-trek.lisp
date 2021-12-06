@@ -1,5 +1,9 @@
 ;;;; Super Star Trek
 
+;; TODO - review all (skip-line) calls to ensure they are going to the correct window. Consider
+;;        adding a (skip-message-line)
+;; TODO - message window scrolling isn't correct
+
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -125,6 +129,7 @@ any non-space characters then return nil."
 future prompts. This is normally called after an input error or other condition where the future
 prompts change."
 
+  (setf *input-item* nil)
   (setf *line-tokens* nil))
 
 (defun match-token (token possible-matches) ; C: isit()
@@ -391,6 +396,8 @@ coordinates or nil."
 (define-constant +medium-game+ 2)
 (define-constant +long-game+ 4)
 (defstruct game-length
+  "Player's selection of game length."
+
   value ; Numeric values 1, 2, or 4. Used to initialize gameplay parameters.
   label) ; The textual representation of the game length: short, medium, long
 
@@ -403,36 +410,29 @@ coordinates or nil."
 (define-constant +emeritus+ 5) ; C: skill, SKILL_EMERITUS = 5
 (defstruct skill-level
   "Player's selection of game difficulty."
+
   value ; Numeric skill level used to initialize gameplay parameters
   label) ; The textual representaion of the skill level: novice, fair, good, expert, emeritus
-
 
 (define-constant +destroyed+ -1)
 (define-constant +class-m+ 1)
 (define-constant +class-n+ 2)
 (define-constant +class-o+ 3)
-(define-constant +mined+ -1)
-(define-constant +present+ 0)
-(define-constant +absent+ 1)
-
-;; Values for the 'known' slot in the planet struct
-(define-constant +unknown+ 0)
-(define-constant +known+ 1)
-(define-constant +shuttle-down+ 2)
 
 ;; Value for the 'inhabited' slot in the planet struct
 (define-constant +uninhabited+ -1) ; C: UNINHABITED
 
-;; TODO - location of the shuttle shouldn't be a property of the planet.
+;; resume here: add the planet name to the planet struct
 ;; TODO - the element 'inhabited' is overloaded, can name be a separate item?
 ;; TODO - the element 'class' is overloaded, 'destroyed' should be a different property
 (defstruct planet ; C: planet
   "Information about a planet."
+
   quadrant ; C: w, a coordinate
+  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   class ; C: pclass, one of M, N, or O (1, 2, or 3), or -1 for destroyed planets, TODO - use symbols
   inhabited ; C: inhabited, If non-zero then an index into a name array. If -1 then uninhabited
-  crystals ; has crystals, mined=-1, present=0, absent=1, TODO - use symbols
-  known ; unknown = 0, known = 1, shuttle_down = 2, TODO - use symbols instead of numbers
+  crystals ; has crystals: 'absent, 'present, or 'mined
   shuttle-landed-p) ; whether or not the shuttle has landed on the planet
 
 ;; TODO - the C source used an array lookup to return the letter belonging to the number.
@@ -514,14 +514,17 @@ empty string if the planet class can't be determined."
 ;; TODO - define a probe structure? It's also an entity that moves around the galaxy, as does the
 ;;        super-commander and sometimes commanders.
 
-;; When a quadrant has had a supernova don't zero out the number of stars, planets, and starbases.
-;; If the player caused the supernova these destroyed objects count against the final score and
-;; need to be tracked.
 (defstruct quadrant ; C: quadrant
+  "Information about a quadrant.
+
+When a quadrant has had a supernova don't zero out the number of stars, planets, and starbases. If
+the player caused the supernova these destroyed objects count against the final score and need to
+be tracked."
+
   (stars 0)
   (starbases 0) ; 0 or 1
-  ;; TODO - track klingons, commanders and super-commanders separately? If yes, then there may be a need for a function
-  ;;        to check if klingons of any type are present. Swings and roundabouts...
+  ;; TODO - track klingons, commanders and super-commanders separately? If yes, then there may be a
+  ;;        need for a function to check if klingons of any type are present. Swings and roundabouts...
   (klingons 0) ; number of klingons of all type: klingons + commanders + super commanders
   (romulans 0)
   (supernovap nil)
@@ -529,7 +532,7 @@ empty string if the planet class can't be determined."
   (status +secure+)) ; C: status, One of 0, 1, 2 for secure, distressed, enslaved - TODO this is a property of the planet
 
 ;; TODO - what's the difference between the star chart and the galaxy?
-;; Planets don't show on the star chart
+;; Planets and Romulans don't show on the star chart
 (defstruct starchart-page ; C: page
   stars
   starbases ; 0 or 1
@@ -863,7 +866,7 @@ the same as the ship if the shuttle craft location is on-ship.")
 ;; Colony have been omitted.
 ;;
 ;; Some planets marked Class G and P here will be displayed as class M
-;; because of the way planets are generated. This is a known bug.
+;; because of the way planets are generated. This is a known bug. TODO - fix it!
 ;;
 ;;      Federation Worlds
 ;; "Andoria (Fesoan)"),  several episodes
@@ -937,9 +940,11 @@ the same as the ship if the shuttle craft location is on-ship.")
 
 (defun shuttle-down-p (p-quad)
   "Return true or false depending on whether or not the planet in the specified quadrant has the
-shuttlecraft landed on it."
+shuttle craft landed on it."
 
-  (= (planet-known (rest (assoc p-quad *planet-information* :test #'coord-equal))) +shuttle-down+))
+  (and (eql *shuttle-craft-location* 'off-ship)
+       *shuttle-craft-quadrant* ; coord-equal requires non-nil inputs
+       (coord-equal *shuttle-craft-quadrant* p-quad)))
 
 (defun format-ship-name () ; C: crmshp(void)
   "Return ship name as a string."
@@ -1570,7 +1575,7 @@ Return true on successful move."
   ;; Check for a helpful planet
   (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal))))
     (when (and helpful-planet
-               (= (planet-crystals helpful-planet) +present+))
+               (eql (planet-crystals helpful-planet) 'present))
       ;; Destroy the planet
       (setf (planet-class helpful-planet) +destroyed+)
       (rplacd (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal) helpful-planet)
@@ -1827,8 +1832,7 @@ tractor-beamed the ship then the other will not."
       (when (and *window-interface-p*
                  (aref repaired-devices +short-range-sensors+)
                  *current-planet*
-                 (= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
-                    +unknown+))
+                 (not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
         (sensor)))
     ;; Time was spent so subtract it from the operation time being handled by this invocation
     (setf *time-taken-by-current-operation* (- *time-taken-by-current-operation* execution-time))
@@ -2122,7 +2126,6 @@ tractor-beamed the ship then the other will not."
          (setf candidate-planet (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
          (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
                       candidate-planet
-                      ;;(/= (planet-inhabited (aref *planet-information* candidate-planet-index)) +uninhabited+)
                       (/= (planet-inhabited candidate-planet) +uninhabited+)
                       (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
                       (= (quadrant-status (coord-ref *galaxy* candidate-quadrant)) +secure+)
@@ -4699,6 +4702,7 @@ player has reached a base by abandoning ship or using the SOS command."
                (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0))
       (setf *romulan-neutral-zone-p* t)
       (when (not (damagedp +subspace-radio+))
+        (skip-line)
         (print-message (format nil "LT. Uhura- \"Captain, an urgent message.~%"))
         (print-message (format nil "  I'll put it on audio.\"  CLICK~%"))
         (skip-line)
@@ -7045,8 +7049,7 @@ was an event that requires aborting the operation carried out by the calling fun
          *dockedp*)
      (print-message (format nil "Shuttle craft cannot pass through shields.~%")))
 
-    ((= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
-        +unknown+)
+    ((not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
      (print-message (format nil "Spock-  \"Captain, we have no information on this planet~%"))
      (print-message (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
      (print-message (format nil "  you may not fly down.\"~%")))
@@ -7080,10 +7083,6 @@ was an event that requires aborting the operation carried out by the calling fun
                (skip-line)
                (when (consume-time)
                  (return-from shuttle nil))
-               ;; TODO - this let form becomes unnecessary when the +shuttle-down+ constant is removed
-               (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-                 (setf (planet-known p) +shuttle-down+)
-                 (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
                (print-message (format nil "Trip complete.~%")))
              (progn
                ;; Ready to go back to ship
@@ -7092,9 +7091,9 @@ was an event that requires aborting the operation carried out by the calling fun
                (skip-line)
                (print-message (format nil "The short hop begins . . .~%"))
                (skip-line 2)
-               (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-                 (setf (planet-known p) +known+)
-                 (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+               (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                 (setf (planet-knownp pl) t)
+                 (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
                (setf *in-shuttle-craft-p* t)
                (setf *landedp* nil)
                (when (consume-time)
@@ -7120,10 +7119,6 @@ was an event that requires aborting the operation carried out by the calling fun
            (setf *shuttle-craft-quadrant* *ship-quadrant*)
            (when (consume-time)
              (return-from shuttle nil))
-           ;; TODO - this let form becomes unnecessary when the +shuttle-down+ constant is removed
-           (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-             (setf (planet-known p) +shuttle-down+)
-             (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
            (setf *in-shuttle-craft-p* nil)
            (setf *landedp* t)
            (print-message (format nil "Trip complete.~%")))))))
@@ -7150,13 +7145,14 @@ was an event that requires aborting the operation carried out by the calling fun
     (when *shields-are-up-p*
       (print-message (format nil "Impossible to transport through shields.~%"))
       (return-from beam nil))
-    (when (= (planet-known (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +unknown+)
+    (when (not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
       (print-message (format nil "Spock-  \"Captain, we have no information on this planet~%"))
       (print-message (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
       (print-message (format nil "  you may not go down.\"~%"))
       (return-from beam nil))
     (when (and (not *landedp*)
-               (= (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +absent+))
+               (eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
+                    'absent))
       (print-message (format nil "Spock-  \"Captain, I fail to see the logic in~%"))
       (print-message (format nil "  exploring a planet with no dilithium crystals.~%"))
       (print-prompt "  Are you sure this is wise?\" ")
@@ -7328,10 +7324,10 @@ was an event that requires aborting the operation carried out by the calling fun
     ((not *landedp*)
      (print-message (format nil "Mining party not on planet.~%")))
 
-    ((= (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +mined+)
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'mined)
      (print-message (format nil "This planet has already been mined for dilithium.~%")))
 
-    ((= (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) +absent+)
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'absent)
      (print-message (format nil "No dilithium crystals on this planet.~%")))
 
     (*miningp*
@@ -7348,10 +7344,11 @@ was an event that requires aborting the operation carried out by the calling fun
            (* (+ 0.1 (* 0.2 (random 1.0)))
               (planet-class (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
      (unless (consume-time)
+       (skip-line)
        (print-message (format nil "Mining operation complete.~%"))
-       (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-         (setf (planet-crystals p) +mined+)
-         (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+       (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+         (setf (planet-crystals pl) 'mined)
+         (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
        (setf *miningp* t)
        (setf *action-taken-p* t)))))
 
@@ -7485,23 +7482,25 @@ the planet."
      (print-message (format nil "Spock- \"No planet in this quadrant, Captain.\"~%")))
 
     (t ; Go ahead and scan even if the planet has been scanned before
-     (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-       (print-message (format nil "Spock-  \"Sensor scan for ~A -~%" (format-quadrant-coordinates *ship-quadrant*)))
+     (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+       (skip-line)
+       (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
+                              (format-quadrant-coordinates *ship-quadrant*)))
        (skip-line)
        ;; TODO - use pretty print justification
        (print-message (format nil "         Planet at ~A is of class ~A.~%"
                               (format-sector-coordinates *current-planet*)
-                              (format-planet-class (planet-class p))))
-       (when (planet-shuttle-landed-p p)
+                              (format-planet-class (planet-class pl))))
+       (when (planet-shuttle-landed-p pl)
          ;; TODO - use pretty print justification
          (print-message (format nil "         Sensors show Galileo still on surface.~%")))
        ;; TODO - use pretty print justification
        (print-message "         Readings indicate")
-       (when (/= (planet-crystals p) +present+)
+       (when (not (eql (planet-crystals pl) 'present))
          (print-message " no"))
        (print-message (format nil " dilithium crystals present.\"~%"))
-       (setf (planet-known p) +known+)
-       (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p)))))
+       (setf (planet-knownp pl) t)
+       (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl)))))
 
 (defun mayday () ; C: mayday(void)
   "Yell for help from nearest starbase. There's more than one way to move in this game!
@@ -7638,21 +7637,21 @@ it's your problem."
       (progn
         (print-out (format nil "Spock-  \"Planet report follows, Captain.\"~%"))
         (skip-line)))
-  (let ((one-planet-known-p nil))
+  (let ((one-planet-knownp-p nil))
     (dolist (p-cons *planet-information*)
       (unless (= (planet-class (rest p-cons)) +destroyed+)
-        (when (and (/= (planet-known (rest p-cons)) +unknown+)
+        (when (and (planet-knownp (rest p-cons))
                    (= (planet-inhabited (rest p-cons)) +uninhabited+))
-          (setf one-planet-known-p t)
+          (setf one-planet-knownp-p t)
           (print-out (format nil "~A  class ~A  "
                              (format-quadrant-coordinates (first p-cons))
                              (format-planet-class (planet-class (rest p-cons)))))
-          (unless (= (planet-crystals (rest p-cons)) +present+)
+          (unless (eql (planet-crystals (rest p-cons)) 'present)
             (print-out "no "))
           (print-out (format nil "dilithium crystals present.~%"))
-          (when (= (planet-known (rest p-cons)) +shuttle-down+)
+          (when (shuttle-down-p (first p-cons))
             (print-out (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))
-    (unless one-planet-known-p
+    (unless one-planet-knownp-p
       (print-out (format nil "No information available.~%")))))
 
 (defun use-crystals () ; C: usecrystals(void)
@@ -8274,33 +8273,33 @@ values, expecially number of entities in the game."
     ;; Put planets in the galaxy, one planet per quadrant whether inhabited or uninhabited
     (setf *planet-information* ())
     (do ((i 0 (1+ i))
-         p
+         pl
          q)
         ((>= i *initial-planets*))
-      (setf p (make-planet))
+      (setf pl (make-planet))
       (do ((q-coord (get-random-quadrant) (get-random-quadrant)))
           ((not (assoc q-coord *planet-information* :test #'coord-equal)) ; nil when planet does not exist
-           (setf (planet-quadrant p) q-coord)
+           (setf (planet-quadrant pl) q-coord)
            (setf q q-coord))) ; dumb code alert!
       (if (< i +habitable-planets+)
           (progn
-            (setf (planet-class p) +class-m+) ; All inhabited planets are class M
-            (setf (planet-crystals p) +absent+)
-            ;; ; TODO - "known" should only change when planets are scanned, we don't know them in advance
-            (setf (planet-known p) +known+)
-            (setf (planet-inhabited p) i)
-            (setf (planet-shuttle-landed-p p) nil))
+            (setf (planet-class pl) +class-m+) ; All inhabited planets are class M
+            (setf (planet-crystals pl) 'absent)
+            ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
+            (setf (planet-knownp pl) t)
+            (setf (planet-inhabited pl) i)
+            (setf (planet-shuttle-landed-p pl) nil))
           (progn
-            (setf (planet-class p) (+ (random 2) 1)) ; Planet class M, N, or O
-            ;;(setf (planet-crystals p) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
+            (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
+            ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
             ;; TODO - examine the planet information to ensure ~ 1/3 of planets have crystals
             (if (= (random 2) 0) ; 1 in 3 chance of crystals
-                (setf (planet-crystals p) +present+)
-                (setf (planet-crystals p) +absent+))
-            (setf (planet-known p) +unknown+)
-            (setf (planet-inhabited p) +uninhabited+)
-            (setf (planet-shuttle-landed-p p) nil)))
-      (setf *planet-information* (acons q p *planet-information*)))
+                (setf (planet-crystals pl) 'present)
+                (setf (planet-crystals pl) 'absent))
+            (setf (planet-knownp pl) nil)
+            (setf (planet-inhabited pl) +uninhabited+)
+            (setf (planet-shuttle-landed-p pl) nil)))
+      (setf *planet-information* (acons q pl *planet-information*)))
 
     ;; Put Romulans in the galaxy
     (do ((i 0 (+ i 1))
