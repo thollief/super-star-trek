@@ -401,15 +401,15 @@ coordinates or nil."
   value ; Numeric values 1, 2, or 4. Used to initialize gameplay parameters.
   label) ; The textual representation of the game length: short, medium, long
 
-;; Skill levels are ordered, each higher than the previous, and also used as multipliers when
-;; setting initial game values.
 (define-constant +novice+ 1) ; C: skill, SKILL_NOVICE = 1
 (define-constant +fair+ 2) ; C: skill, SKILL_FAIR = 2
 (define-constant +good+ 3) ; C: skill, SKILL_GOOD = 3
 (define-constant +expert+ 4) ; C: skill, SKILL_EXPERT = 4
 (define-constant +emeritus+ 5) ; C: skill, SKILL_EMERITUS = 5
 (defstruct skill-level
-  "Player's selection of game difficulty."
+  "Player's selection of game difficulty, hopefully commensurate with their skill. Skill levels
+are ordered, each higher than the previous, and also used as multipliers when setting initial
+game values."
 
   value ; Numeric skill level used to initialize gameplay parameters
   label) ; The textual representaion of the skill level: novice, fair, good, expert, emeritus
@@ -419,11 +419,6 @@ coordinates or nil."
 (define-constant +class-n+ 2)
 (define-constant +class-o+ 3)
 
-;; Value for the 'inhabited' slot in the planet struct
-(define-constant +uninhabited+ -1) ; C: UNINHABITED
-
-;; resume here: add the planet name to the planet struct
-;; TODO - the element 'inhabited' is overloaded, can name be a separate item?
 ;; TODO - the element 'class' is overloaded, 'destroyed' should be a different property
 (defstruct planet ; C: planet
   "Information about a planet."
@@ -431,7 +426,8 @@ coordinates or nil."
   quadrant ; C: w, a coordinate
   knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   class ; C: pclass, one of M, N, or O (1, 2, or 3), or -1 for destroyed planets, TODO - use symbols
-  inhabited ; C: inhabited, If non-zero then an index into a name array. If -1 then uninhabited
+  inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
+  name ; Name of the planet. An empty string for uninhabited planets
   crystals ; has crystals: 'absent, 'present, or 'mined
   shuttle-landed-p) ; whether or not the shuttle has landed on the planet
 
@@ -2126,7 +2122,7 @@ tractor-beamed the ship then the other will not."
          (setf candidate-planet (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
          (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
                       candidate-planet
-                      (/= (planet-inhabited candidate-planet) +uninhabited+)
+                      (not (planet-inhabitedp candidate-planet))
                       (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
                       (= (quadrant-status (coord-ref *galaxy* candidate-quadrant)) +secure+)
                       (> (quadrant-klingons (coord-ref *galaxy* candidate-quadrant)) 0))
@@ -2138,12 +2134,10 @@ tractor-beamed the ship then the other will not."
          ;; tell the captain about it if we can
          (when (or (not (damagedp +subspace-radio+))
                    *dockedp*)
-           ;; TODO - clean up the data structures, this is nonsense. put the system name in the planet struct
            (skip-line)
            (print-message (format nil "Lt. Uhura- Captain, ~A in ~A reports it is under attack"
-                                  (aref *system-names* (planet-inhabited
-                                                        (rest (assoc *conquest-quadrant* *planet-information*
-                                                                     :test #'coord-equal))))
+                                  (planet-name (rest (assoc *conquest-quadrant* *planet-information*
+                                                            :test #'coord-equal)))
                                   (format-quadrant-coordinates *conquest-quadrant*)))
            (print-message (format nil "by a Klingon invasion fleet.~%"))
            (when (cancel-rest-p)
@@ -2164,9 +2158,9 @@ tractor-beamed the ship then the other will not."
              (when (or (not (damagedp +subspace-radio+))
                        *dockedp*)
                (print-message (format nil "Lt. Uhura- We've lost contact with starsystem ~A"
-                                  (aref *system-names* (planet-inhabited
-                                                        (rest (assoc *conquest-quadrant* *planet-information*
-                                                                     :test #'coord-equal))))))
+                                      (planet-name (rest (assoc *conquest-quadrant*
+                                                                *planet-information*
+                                                                :test #'coord-equal)))))
                (print-message (format nil "in ~A." (format-quadrant-coordinates *conquest-quadrant*)))))
            (progn
              (setf (quadrant-status (coord-ref *galaxy* *conquest-quadrant*))
@@ -2227,16 +2221,15 @@ tractor-beamed the ship then the other will not."
                       ;;        combine the two statements
                       (print-message (format nil "Spock- sensors indicate the Klingons have"))
                       (print-message (format nil "launched a warship from ~A."
-                                  (aref *system-names* (planet-inhabited
-                                                        (rest (assoc *conquest-quadrant* *planet-information*
-                                                                     :test #'coord-equal)))))))
+                                  (planet-name (rest (assoc *conquest-quadrant* *planet-information*
+                                                            :test #'coord-equal))))))
                      ((or (not (damagedp +subspace-radio+))
                           *dockedp*)
                       (print-message (format nil "Lt. Uhura- Starfleet reports increased Klingon activity"))
                       (print-message (format nil "near ~A in ~A."
-                                             (aref *system-names* (planet-inhabited
-                                                        (rest (assoc *conquest-quadrant* *planet-information*
-                                                                     :test #'coord-equal))))
+                                             (planet-name (rest (assoc *conquest-quadrant*
+                                                                       *planet-information*
+                                                                       :test #'coord-equal)))
                                              (format-quadrant-coordinates build-quadrant)))))))))
            (progn
              (setf (quadrant-status (coord-ref *galaxy* *conquest-quadrant*))
@@ -2382,8 +2375,8 @@ There is no line 10.
   (when (= line-to-print 11)
     (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
       (if (and p ; p is nil when there is no planet in the quadrant
-               (/= (planet-inhabited p) +uninhabited+))
-          (print-out (format nil "Major system ~A~%" (aref *system-names* (planet-inhabited p))))
+               (not (planet-inhabitedp p)))
+          (print-out (format nil "Major system ~A~%" (planet-name p)))
           (print-out (format nil "Sector is uninhabited~%")))))
   (when (= line-to-print 12)
     (when (and (is-scheduled-p +commander-destroys-base+)
@@ -4684,9 +4677,9 @@ player has reached a base by abandoning ship or using the SOS command."
     (when (assoc *ship-quadrant* *planet-information* :test #'coord-equal) ; non-nil when planet exists
       (setf *planet-coord* *ship-quadrant*)
       (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-        (if (= (planet-inhabited p) +uninhabited+)
-            (setf *current-planet* (drop-entity-in-sector +planet+))
-            (setf *current-planet* (drop-entity-in-sector +world+)))))
+        (if (planet-inhabitedp p)
+            (setf *current-planet* (drop-entity-in-sector +world+))
+            (setf *current-planet* (drop-entity-in-sector +planet+)))))
 
     ;; Check for condition
     (update-condition)
@@ -4828,7 +4821,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
            (if (and p
                     (not (damagedp +transporter+)))
                (print-message (format nil "Remainder of ship's complement beam down to ~A.~%"
-                                      (aref *system-names* (planet-inhabited p))))
+                                      (planet-name p)))
                (progn
                  (print-message (format nil "Entire crew of ~A left to die in outer space.~%" *crew*))
                  (setf *casualties* (+ *casualties* *crew*))
@@ -7641,7 +7634,7 @@ it's your problem."
     (dolist (p-cons *planet-information*)
       (unless (= (planet-class (rest p-cons)) +destroyed+)
         (when (and (planet-knownp (rest p-cons))
-                   (= (planet-inhabited (rest p-cons)) +uninhabited+))
+                   (not (planet-inhabitedp (rest p-cons))))
           (setf one-planet-knownp-p t)
           (print-out (format nil "~A  class ~A  "
                              (format-quadrant-coordinates (first p-cons))
@@ -8287,7 +8280,8 @@ values, expecially number of entities in the game."
             (setf (planet-crystals pl) 'absent)
             ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
             (setf (planet-knownp pl) t)
-            (setf (planet-inhabited pl) i)
+            (setf (planet-inhabitedp pl) t)
+            (setf (planet-name pl) (aref *system-names* i))
             (setf (planet-shuttle-landed-p pl) nil))
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
@@ -8297,7 +8291,8 @@ values, expecially number of entities in the game."
                 (setf (planet-crystals pl) 'present)
                 (setf (planet-crystals pl) 'absent))
             (setf (planet-knownp pl) nil)
-            (setf (planet-inhabited pl) +uninhabited+)
+            (setf (planet-inhabitedp pl) nil)
+            (setf (planet-name pl) "")
             (setf (planet-shuttle-landed-p pl) nil)))
       (setf *planet-information* (acons q pl *planet-information*)))
 
