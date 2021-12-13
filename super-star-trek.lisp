@@ -17,8 +17,7 @@
 (define-constant +min-uninhabitable-planets+ 5)
 (define-constant +planet-max+ (+ +habitable-planets+ +max-uninhabitable-planets+)) ; C: PLNETMAX
 (define-constant +max-bases+ (floor (/ (* +galaxy-size+ +galaxy-size+) 12))
-  "12 looks like a made-up number to get the result close to 5.
-   In the C source: (GALSIZE * GALSIZE / 12), and then 1 is added when creating arrays.") ; C: BASEMAX
+  "12 looks like a made-up number to get the result close to 5.") ; C: BASEMAX
 (define-constant +min-bases+ 2)
 (define-constant +max-klingons-per-game+ 127) ; C: MAXKLGAME
 (define-constant +max-klingons-per-quadrant+ 9) ; C: MAXKLQUAD
@@ -407,9 +406,8 @@ coordinates or nil."
 (define-constant +expert+ 4) ; C: skill, SKILL_EXPERT = 4
 (define-constant +emeritus+ 5) ; C: skill, SKILL_EMERITUS = 5
 (defstruct skill-level
-  "Player's selection of game difficulty, hopefully commensurate with their skill. Skill levels
-are ordered, each higher than the previous, and also used as multipliers when setting initial
-game values."
+  "Player's selection of game difficulty. Skill levels are ordered, each higher
+than the previous."
 
   value ; Numeric skill level used to initialize gameplay parameters
   label) ; The textual representaion of the skill level: novice, fair, good, expert, emeritus
@@ -424,12 +422,11 @@ game values."
   "Information about a planet."
 
   quadrant ; C: w, a coordinate
-  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   class ; C: pclass, one of M, N, or O (1, 2, or 3), or -1 for destroyed planets, TODO - use symbols
-  inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
   name ; Name of the planet. An empty string for uninhabited planets
-  crystals ; has crystals: 'absent, 'present, or 'mined
-  shuttle-landed-p) ; whether or not the shuttle has landed on the planet
+  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
+  inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
+  crystals) ; has crystals: 'absent, 'present, or 'mined
 
 ;; TODO - the C source used an array lookup to return the letter belonging to the number.
 ;;        Change the data structure to just store the class letter.
@@ -934,7 +931,7 @@ the same as the ship if the shuttle craft location is on-ship.")
                                                              "Tiburon" "Merak II"
                                                              "Coridan (Desotriana)" "Iotia")))
 
-(defun shuttle-down-p (p-quad)
+(defun shuttle-landed-p (p-quad)
   "Return true or false depending on whether or not the planet in the specified quadrant has the
 shuttle craft landed on it."
 
@@ -7017,7 +7014,7 @@ was an event that requires aborting the operation carried out by the calling fun
      (cond
        ((= (aref *device-damage* +shuttle+) -1.0)
         (if (and *in-orbit-p*
-                 (shuttle-down-p *ship-quadrant*))
+                 (shuttle-landed-p *ship-quadrant*))
             (print-message (format nil "Ye Faerie Queene has no shuttle craft bay to dock it at.~%"))
             (print-message (format nil "Ye Faerie Queene had no shuttle craft.~%"))))
 
@@ -7030,11 +7027,11 @@ was an event that requires aborting the operation carried out by the calling fun
     ((not *in-orbit-p*)
      (print-message (format nil "~A not in standard orbit.~%" (format-ship-name))))
 
-    ((and (not (shuttle-down-p *ship-quadrant*))
+    ((and (not (shuttle-landed-p *ship-quadrant*))
           (not (eql *shuttle-craft-location* 'on-ship)))
      (print-message (format nil "Shuttle craft not currently available.~%")))
 
-    ((and (shuttle-down-p *ship-quadrant*)
+    ((and (shuttle-landed-p *ship-quadrant*)
           (not *landedp*))
      (print-message (format nil "You will have to beam down to retrieve the shuttle craft.~%")))
 
@@ -7125,7 +7122,7 @@ was an event that requires aborting the operation carried out by the calling fun
       (print-message (format nil "Transporter damaged.~%"))
       ;; The shuttle is an option if it is not damaged and on the planet or on the ship
       (when (and (not (damagedp +shuttle+))
-                 (or (shuttle-down-p *ship-quadrant*)
+                 (or (shuttle-landed-p *ship-quadrant*)
                      (eql *shuttle-craft-location* 'on-ship)))
         (skip-line)
         (print-prompt "Spock-  \"May I suggest the shuttle craft, Sir?\" ")
@@ -7160,7 +7157,7 @@ was an event that requires aborting the operation carried out by the calling fun
       (print-message (format nil "Engineering to bridge--~%"))
       (print-message (format nil "  Captain, we have enough energy only to transport you down to~%"))
       (print-message (format nil "  the planet, but there wouldn't be any energy for the trip back.~%"))
-      (when (shuttle-down-p *ship-quadrant*)
+      (when (shuttle-landed-p *ship-quadrant*)
         (print-message (format nil "  Although the Galileo shuttle craft may still be on the surface.~%")))
       (print-prompt "  Are you sure this is wise?\" ")
       (unless (get-y-or-n-p)
@@ -7168,7 +7165,7 @@ was an event that requires aborting the operation carried out by the calling fun
     (if *landedp*
         ;; Coming from planet
         (progn
-          (when (shuttle-down-p *ship-quadrant*)
+          (when (shuttle-landed-p *ship-quadrant*)
             (print-prompt "Spock-  \"Wouldn't you rather take the Galileo?\" ")
             (when (get-y-or-n-p)
               (return-from beam nil))
@@ -7202,7 +7199,7 @@ was an event that requires aborting the operation carried out by the calling fun
     (skip-line 2)
     (print-message (format nil "Transport complete.~%"))
     (when (and *landedp*
-               (shuttle-down-p *ship-quadrant*))
+               (shuttle-landed-p *ship-quadrant*))
       (print-message (format nil "The shuttle craft Galileo is here!~%")))
     (when (and (not *landedp*)
                *miningp*)
@@ -7484,7 +7481,7 @@ the planet."
        (print-message (format nil "         Planet at ~A is of class ~A.~%"
                               (format-sector-coordinates *current-planet*)
                               (format-planet-class (planet-class pl))))
-       (when (planet-shuttle-landed-p pl)
+       (when (shuttle-landed-p *ship-quadrant*)
          ;; TODO - use pretty print justification
          (print-message (format nil "         Sensors show Galileo still on surface.~%")))
        ;; TODO - use pretty print justification
@@ -7642,7 +7639,7 @@ it's your problem."
           (unless (eql (planet-crystals (rest p-cons)) 'present)
             (print-out "no "))
           (print-out (format nil "dilithium crystals present.~%"))
-          (when (shuttle-down-p (first p-cons))
+          (when (shuttle-landed-p (first p-cons))
             (print-out (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))
     (unless one-planet-knownp-p
       (print-out (format nil "No information available.~%")))))
@@ -8281,8 +8278,7 @@ values, expecially number of entities in the game."
             ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
             (setf (planet-knownp pl) t)
             (setf (planet-inhabitedp pl) t)
-            (setf (planet-name pl) (aref *system-names* i))
-            (setf (planet-shuttle-landed-p pl) nil))
+            (setf (planet-name pl) (aref *system-names* i)))
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
             ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
@@ -8292,8 +8288,7 @@ values, expecially number of entities in the game."
                 (setf (planet-crystals pl) 'absent))
             (setf (planet-knownp pl) nil)
             (setf (planet-inhabitedp pl) nil)
-            (setf (planet-name pl) "")
-            (setf (planet-shuttle-landed-p pl) nil)))
+            (setf (planet-name pl) "")))
       (setf *planet-information* (acons q pl *planet-information*)))
 
     ;; Put Romulans in the galaxy
