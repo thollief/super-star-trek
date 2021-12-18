@@ -147,23 +147,14 @@ shortest string, are the same."
                      (subseq candidate 0 length-to-compare))
         (return-from match-token candidate)))))
 
-(defun print-out (string-to-print)
-  "Print a string. In curses mode use the current window."
-
-  (if *window-interface-p*
-      (progn
-        (waddstr *current-window* string-to-print)
-        (wrefresh *current-window*))
-      (progn
-        (format t "~A" string-to-print)
-        (finish-output))))
-
-(defun print-out-slowly (string-to-print) ; C: prouts
-  "Like print-out but with a delay between each character to build dramatic tension. Slow printing
-was not optional on early paper-based terminals."
+(defun print-out (string-to-print &key (print-slowly nil))
+  "Print a string. In curses mode use the current window. If print-slowly is true then print with a
+delay between each character to build dramatic tension. Slow printing was not optional on some
+paper-based terminals."
 
   (map nil #'(lambda (c)
-               (sleep 0.030)
+               (when print-slowly
+                 (sleep 0.030))
                (if *window-interface-p*
                    (progn
                      (wprintw *current-window* (string c))
@@ -172,7 +163,8 @@ was not optional on early paper-based terminals."
                      (princ c)
                      (finish-output))))
        string-to-print)
-  (sleep 0.300))
+  (when print-slowly
+    (sleep 0.300)))
 
 ;; TODO - multi-line skips don't work with message window paging
 ;;        message lines with more than one embedded newline don't work either
@@ -197,21 +189,12 @@ that did not print their own newline."
 
 ;; TODO - if there is more than one newline in the message to print then split the message
 ;;        into multiple lines and print them separately to account for paging
-(defun print-message (message-to-print)
+(defun print-message (message-to-print &key (print-slowly nil))
   "Print a string in the message window. If not using the window interface just print it."
 
   (when *window-interface-p*
     (select-window *message-window*))
-  (print-out message-to-print)
-  (page-message-window))
-
-(defun print-message-slowly (message-to-print) ; C: prouts()
-  "Print a message in the message window, like print-message, but with a delay between each
-character to build dramatic tension."
-
-  (when *window-interface-p*
-    (select-window *message-window*))
-  (print-out-slowly message-to-print)
+  (print-out message-to-print :print-slowly print-slowly)
   (page-message-window))
 
 (defun page-message-window ()
@@ -236,7 +219,8 @@ can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
 (defun print-stars ()
   "Print a line of stars."
 
-  (print-message-slowly (format nil "******************************************************~%")))
+  (print-message (format nil "******************************************************~%")
+                 :print-slowly t))
 
 (defun huh () ; C: huh(void)
   "Complain about unparseable input."
@@ -1350,7 +1334,7 @@ affected."
       ;; we are in the quadrant!
       (progn
         (skip-line)
-        (print-message-slowly (format nil "***RED ALERT!  RED ALERT!~%"))
+        (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
         (skip-line)
         (print-message (format nil "***Incipient supernova detected at ~A~%"
                                (format-sector-coordinates nova-sector)))
@@ -1359,7 +1343,7 @@ affected."
                      (expt (- (coordinate-y nova-sector) (coordinate-y *ship-sector*)) 2))
                   2.1)
           (print-message "Emergency override attempts t")
-          (print-message-slowly (format nil "***************~%"))
+          (print-message (format nil "***************~%") :print-slowly t)
           (skip-line)
           (print-stars)
           (setf *all-done-p* t))))
@@ -2720,19 +2704,21 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
               (return-from toggle-high-speed-shield-control t))
             (progn
               ;; Something bad has happened
-              (print-message-slowly (format nil "***RED ALERT!  RED ALERT!~%"))
+              (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
               (skip-line 2)
               (let* ((energy-hit (/ (* phaser-energy *shield-energy*) *initial-shield-energy*))
                      (casualties (truncate (* energy-hit (random 1) 0.012))))
                 (setf *ship-energy* (- *ship-energy* (+ phaser-energy (* energy-hit 0.8))))
                 (setf *shield-energy* (- *shield-energy* (* energy-hit 0.2)))
                 (when (<= *ship-energy* 0.0)
-                  (print-message-slowly (format nil "Sulu-  \"Captain! Shield malf***********************\"~%"))
+                  (print-message (format nil "Sulu-  \"Captain! Shield malf***********************\"~%")
+                                 :print-slowly t)
                   (skip-line)
                   (print-stars)
                   (finish +phaser+)
                   (return-from toggle-high-speed-shield-control nil))
-                (print-message-slowly (format nil "Sulu-  \"Captain! Shield malfunction! Phaser fire contained!\"~%"))
+                (print-message (format nil "Sulu-  \"Captain! Shield malfunction! Phaser fire contained!\"~%")
+                               :print-slowly t)
                 (skip-line 2)
                 (print-message (format nil "Lt. Uhura-  \"Sir, all decks reporting damage.\"~%"))
                 (skip-line)
@@ -2756,7 +2742,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
             (return-from toggle-high-speed-shield-control t))
           (progn
             (print-message (format nil "Sulu-  \"Sir, the high-speed shield control has malfunctioned . . .~%"))
-            (print-message-slowly (format nil "         CLICK   CLICK   POP  . . .~%"))
+            (print-message (format nil "         CLICK   CLICK   POP  . . .~%") :print-slowly t)
             (print-message (format nil " No response, sir!~%"))
             (setf *shields-are-up-p* nil)
             (return-from toggle-high-speed-shield-control nil)))))
@@ -2985,7 +2971,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
                 (print-message (format nil "Battle computer damaged, manual fire only.~%"))
                 (progn
                   (skip-line)
-                  (print-message-slowly (format nil "---WORKING---~%"))
+                  (print-message (format nil "---WORKING---~%") :print-slowly t)
                   (skip-line)
                   (print-message (format nil "Short-range-sensors-damaged~%"))
                   (print-message (format nil "Insufficient-data-for-automatic-phaser-fire~%"))
@@ -3458,12 +3444,16 @@ handling the result. Return the amount of damage if the player ship was hit."
                  (if (> (random 1.0) 0.7)
                      (progn
                        (skip-line)
-                       (print-message-slowly (format nil "AAAAIIIIEEEEEEEEAAAAAAAAUUUUUGGGGGHHHHHHHHHHHH!!!~%"))
+                       (print-message
+                        (format nil "AAAAIIIIEEEEEEEEAAAAAAAAUUUUUGGGGGHHHHHHHHHHHH!!!~%")
+                        :print-slowly t)
                        (skip-line)
-                       (print-message-slowly (format nil "    HACK!     HACK!    HACK!        *CHOKE!*  ~%"))
+                       (print-message
+                        (format nil "    HACK!     HACK!    HACK!        *CHOKE!*  ~%")
+                        :print-slowly t)
                        (skip-line)
                        (print-message "Mr. Spock-")
-                       (print-message-slowly (format nil "  \"Fascinating!\"~%"))
+                       (print-message (format nil "  \"Fascinating!\"~%") :print-slowly t)
                        (skip-line)
                        (dead-enemy torpedo-sector sector-contents torpedo-sector))
                      ;; Stas Sergeev added the possibility that you can shove the Thingy and
@@ -3671,8 +3661,8 @@ there was an error (including -1 entered by the player to exit the command)."
                 ;; misfire!
                 (setf random-variation (* (+ (random 1.0) 1.2) random-variation)) ; unused calculation!
                 (if (> number-of-torpedoes-to-fire 1)
-                    (print-message-slowly (format nil "***TORPEDO NUMBER ~A MISFIRES" i))
-                    (print-message-slowly "***TORPEDO MISFIRES."))
+                    (print-message (format nil "***TORPEDO NUMBER ~A MISFIRES" i) :print-slowly t)
+                    (print-message "***TORPEDO MISFIRES." :print-slowly t))
                 (skip-line)
                 (when (< (1+ i) number-of-torpedoes-to-fire)
                   (print-message (format nil "  Remainder of burst aborted.~%")))
@@ -3899,7 +3889,7 @@ enemy is the single-letter symbol of the enemy ramming/being rammed. enemy-coord
 coordinates of the enemy being rammed or the original coordinates of ramming enemy."
 
   (skip-line)
-  (print-message-slowly (format nil "***RED ALERT!  RED ALERT!~%"))
+  (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
   (skip-line)
   (print-message (format nil "***COLLISION IMMINENT.~%"))
   (skip-line)
@@ -4243,17 +4233,21 @@ is a string suitable for use with the format function."
               (print-message (format nil "promotes you to Commodore Emeritus.~%")))
              ((= (skill-level-value *skill-level*) +emeritus+)
               (print-message "Computer-  ")
-              (print-message-slowly (format nil "ERROR-ERROR-ERROR-ERROR~%"))
+              (print-message (format nil "ERROR-ERROR-ERROR-ERROR~%") :print-slowly t)
               (skip-line)
-              (print-message-slowly (format nil "  YOUR-SKILL-HAS-EXCEEDED-THE-CAPACITY-OF-THIS-PROGRAM~%"))
+              (print-message
+               (format nil "  YOUR-SKILL-HAS-EXCEEDED-THE-CAPACITY-OF-THIS-PROGRAM~%")
+               :print-slowly t)
               (skip-line)
-              (print-message-slowly (format nil "  THIS-PROGRAM-MUST-SURVIVE~%"))
+              (print-message (format nil "  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
               (skip-line)
-              (print-message-slowly (format nil "  THIS-PROGRAM-MUST-SURVIVE~%"))
+              (print-message (format nil "  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
               (skip-line)
-              (print-message-slowly (format nil "  THIS-PROGRAM-MUST-SURVIVE~%"))
+              (print-message (format nil "  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
               (skip-line)
-              (print-message-slowly (format nil "  THIS-PROGRAM-MUST?- MUST ? - SUR? ? -?  VI~%"))
+              (print-message
+               (format nil "  THIS-PROGRAM-MUST?- MUST ? - SUR? ? -?  VI~%")
+               :print-slowly t)
               (skip-line)
               (print-message (format nil "Now you can retire and write your own Star Trek game!~%")))))
            (when (>= (skill-level-value *skill-level*) +expert+)
@@ -4441,8 +4435,9 @@ is a string suitable for use with the format function."
 
   (print-stars)
   (when (string= *ship* +enterprise+)
-    (print-message-slowly "***")) ; Extra stars so the lengths of the output lines are the same
-  (print-message-slowly (format nil "********* Entropy of ~A maximized *********~%" (format-ship-name)))
+    (print-message "***") :print-slowly t) ; Extra stars so the lengths of the output lines are the same
+  (print-message
+   (format nil "********* Entropy of ~A maximized *********~%" (format-ship-name)) :print-slowly t)
   (print-stars)
   (do ((whammo (* 25.0 *ship-energy*))
        (i 0 (+ i 1))) ; TODO - C source starts at 1 and counts up, why?
@@ -4799,9 +4794,9 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
         (t
          ;; Print abandon ship messages
          (skip-line)
-         (print-message-slowly (format nil "***ABANDON SHIP!  ABANDON SHIP!~%"))
+         (print-message (format nil "***ABANDON SHIP!  ABANDON SHIP!~%") :print-slowly t)
          (skip-line)
-         (print-message-slowly (format nil "***ALL HANDS ABANDON SHIP!~%"))
+         (print-message (format nil "***ALL HANDS ABANDON SHIP!~%") :print-slowly t)
          (skip-line 2)
          ;; TODO - this isn't consistent with the "Entire crew.." message below
          (print-message (format nil "Captain and crew escape in shuttle craft.~%"))
@@ -5757,7 +5752,7 @@ can occur."
                 :enemy-coordinates *ship-sector*))
           ((string= (coord-ref *quadrant-contents* s-coord) +black-hole+)
            (skip-line)
-           (print-message-slowly (format nil "***RED ALERT!  RED ALERT!~%"))
+           (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
            (skip-line)
            (print-message (format nil "*** ~A pulled into black hole at ~A~%"
                                   (format-ship-name) (format-sector-coordinates s-coord)))
@@ -6410,13 +6405,13 @@ quadrant experiencing a supernova)."
   (if (damagedp +computer+)
       (print-message (format nil "Computer damaged; cannot execute destruct sequence.~%"))
       (progn
-        (print-message-slowly (format nil "---WORKING---~%"))
-        (print-message-slowly (format nil "SELF-DESTRUCT-SEQUENCE-ACTIVATED~%"))
-        (print-message-slowly (format nil "   10~%"))
-        (print-message-slowly (format nil "       9~%"))
-        (print-message-slowly (format nil "          8~%"))
-        (print-message-slowly (format nil "             7~%"))
-        (print-message-slowly (format nil "                6~%"))
+        (print-message (format nil "---WORKING---~%") :print-slowly t)
+        (print-message (format nil "SELF-DESTRUCT-SEQUENCE-ACTIVATED~%") :print-slowly t)
+        (print-message (format nil "   10~%") :print-slowly t)
+        (print-message (format nil "       9~%") :print-slowly t)
+        (print-message (format nil "          8~%") :print-slowly t)
+        (print-message (format nil "             7~%") :print-slowly t)
+        (print-message (format nil "                6~%") :print-slowly t)
         (skip-line)
         (print-message (format nil "ENTER-CORRECT-PASSWORD-TO-CONTINUE-~%"))
         (skip-line 2)
@@ -6433,18 +6428,18 @@ quadrant experiencing a supernova)."
           (setf *input-item* (write-to-string *input-item*))
         (if (string= *self-destruct-password* *input-item*)
             (progn
-              (print-message-slowly (format nil "PASSWORD-ACCEPTED~%"))
-              (print-message-slowly (format nil "                   5~%"))
-              (print-message-slowly (format nil "                      4~%"))
-              (print-message-slowly (format nil "                         3~%"))
-              (print-message-slowly (format nil "                            2~%"))
-              (print-message-slowly (format nil "                              1~%"))
+              (print-message (format nil "PASSWORD-ACCEPTED~%") :print-slowly t)
+              (print-message (format nil "                   5~%") :print-slowly t)
+              (print-message (format nil "                      4~%")) :print-slowly t
+              (print-message (format nil "                         3~%") :print-slowly t)
+              (print-message (format nil "                            2~%") :print-slowly t)
+              (print-message (format nil "                              1~%") :print-slowly t)
               (when (< (random 1.0) 0.15)
-                  (print-message-slowly (format nil "GOODBYE-CRUEL-WORLD~%")))
+                (print-message (format nil "GOODBYE-CRUEL-WORLD~%") :print-slowly t))
               (kaboom))
             (progn
-              (print-message-slowly (format nil "PASSWORD-REJECTED;~%"))
-              (print-message-slowly (format nil "CONTINUITY-EFFECTED~%"))))))))
+              (print-message (format nil "PASSWORD-REJECTED;~%") :print-slowly t)
+              (print-message (format nil "CONTINUITY-EFFECTED~%") :print-slowly t)))))))
 
 (defun calculate-eta () ; C: eta(void)
   "Use computer to get estimated time of arrival for a warp jump."
@@ -7173,7 +7168,7 @@ was an event that requires aborting the operation carried out by the calling fun
           (print-message (format nil "Landing party assembled, ready to beam up.~%"))
           (skip-line)
           (print-message (format nil "Kirk whips out communicator...~%"))
-          (print-message-slowly (format nil "BEEP  BEEP  BEEP~%"))
+          (print-message (format nil "BEEP  BEEP  BEEP~%") :print-slowly t)
           (skip-line 2)
           (print-message (format nil "\"Kirk to enterprise-  Lock on coordinates...energize.\"~%")))
         ;; Going to planet
@@ -7185,15 +7180,15 @@ was an event that requires aborting the operation carried out by the calling fun
           (print-message (format nil "Kirk-  \"Energize.\"~%"))))
     (setf *action-taken-p* t)
     (skip-line)
-    (print-message-slowly (format nil "WWHOOOIIIIIRRRRREEEE.E.E.  .  .  .  .   .    .~%"))
+    (print-message (format nil "WWHOOOIIIIIRRRRREEEE.E.E.  .  .  .  .   .    .~%") :print-slowly t)
     (skip-line)
     (when (> (random 1.0) 0.98)
-      (print-message-slowly (format nil "BOOOIIIOOOIIOOOOIIIOIING . . .~%"))
+      (print-message (format nil "BOOOIIIOOOIIOOOOIIIOIING . . .~%") :print-slowly t)
       (skip-line)
       (print-message (format nil "Scotty-  \"Oh my God!  I've lost them.\"~%"))
       (finish +lost+)
       (return-from beam nil))
-    (print-message-slowly (format nil ".    .   .  .  .  .  .E.E.EEEERRRRRIIIIIOOOHWW~%"))
+    (print-message (format nil ".    .   .  .  .  .  .E.E.EEEERRRRRIIIIIOOOHWW~%") :print-slowly t)
     (setf *landedp* (not *landedp*))
     (setf *ship-energy* (- *ship-energy* energy-needed))
     (skip-line 2)
@@ -7231,7 +7226,7 @@ was an event that requires aborting the operation carried out by the calling fun
      (print-message (format nil "Spock-  \"Acknowledged.\"~%"))
      (skip-line)
      (setf *action-taken-p* t)
-     (print-message-slowly (format nil "WHOOEE ... WHOOEE ... WHOOEE ... WHOOEE~%"))
+     (print-message (format nil "WHOOEE ... WHOOEE ... WHOOEE ... WHOOEE~%") :print-slowly t)
      (print-message (format nil "Crew scrambles in emergency preparation.~%"))
      (print-message (format nil "Spock and Scotty ready the death ray and~%"))
      (print-message (format nil "prepare to channel all ship's power to the device.~%"))
@@ -7239,10 +7234,10 @@ was an event that requires aborting the operation carried out by the calling fun
      (print-message (format nil "Spock-  \"Preparations complete, sir.\"~%"))
      (print-message (format nil "Kirk-  \"Engage!\"~%"))
      (skip-line)
-     (print-message-slowly (format nil "WHIRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR~%"))
+     (print-message (format nil "WHIRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR~%") :print-slowly t)
      (if (> (random 1.0) +deathray-failure-chance+)
          (progn
-           (print-message-slowly (format nil "Sulu- \"Captain!  It's working!\"~%"))
+           (print-message (format nil "Sulu- \"Captain!  It's working!\"~%") :print-slowly t)
            (skip-line)
            (when (> *enemies-here* 0)
              (dead-enemy (aref *klingon-sectors* 1)
@@ -7265,17 +7260,23 @@ was an event that requires aborting the operation carried out by the calling fun
            ;; Pick failure method
            (cond
              ((<= r 0.30)
-              (print-message-slowly (format nil "Sulu- \"Captain!  It's working!\"~%"))
-              (print-message-slowly (format nil "***RED ALERT!  RED ALERT!~%"))
+              (print-message (format nil "Sulu- \"Captain!  It's working!\"~%") :print-slowly t)
+              (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
               (print-message (format nil "***MATTER-ANTIMATTER IMPLOSION IMMINENT!~%"))
               (skip-line)
-              (print-message-slowly (format nil "***RED ALERT!  RED A*L********************************~%"))
+              (print-message
+               (format nil "***RED ALERT!  RED A*L********************************~%")
+               :print-slowly t)
               (print-stars)
-              (print-message-slowly (format nil "******************   KA-BOOM!!!!   *******************~%"))
+              (print-message
+               (format nil "******************   KA-BOOM!!!!   *******************~%")
+               :print-slowly t)
               (kaboom))
 
              ((<= r 0.55)
-              (print-message-slowly (format nil "Sulu- \"Captain!  Yagabandaghangrapl, brachriigringlanbla!\"~%"))
+              (print-message
+               (format nil "Sulu- \"Captain!  Yagabandaghangrapl, brachriigringlanbla!\"~%")
+               :print-slowly t)
               (print-message (format nil "Lt. Uhura-  \"Graaeek!  Graaeek!\"~%"))
               (print-message (format nil "Spock-  \"Fascinating!  . . . All humans aboard~%"))
               (print-message (format nil "  have apparently been transformed into strange mutations.~%"))
@@ -7285,10 +7286,10 @@ was an event that requires aborting the operation carried out by the calling fun
               (finish +death-ray+))
 
              ((<= r 0.75)
-              (print-message-slowly (format nil "Sulu- \"Captain!  It's   --WHAT?!?!\"~%"))
+              (print-message (format nil "Sulu- \"Captain!  It's   --WHAT?!?!\"~%") :print-slowly t)
               (skip-line)
               (print-message "Spock-  \"I believe the word is")
-              (print-message-slowly " *ASTONISHING*")
+              (print-message " *ASTONISHING*"  :print-slowly t)
               (print-message (format nil " Mr. Sulu.~%"))
               (do ((i 0 (1+ i)))
                   ((>= i +quadrant-size+))
@@ -7297,11 +7298,13 @@ was an event that requires aborting the operation carried out by the calling fun
                   (when (string= (aref *quadrant-contents* i j) +empty-sector+)
                     (setf (aref *quadrant-contents* i j) +thing+))))
               (print-message (format nil "  Captain, our quadrant is now infested with~%"))
-              (print-message-slowly (format nil " - - - - - -  *THINGS*.~%"))
+              (print-message (format nil " - - - - - -  *THINGS*.~%") :print-slowly t)
               (print-message (format nil "  I have no logical explanation.\"~%")))
 
              (t
-              (print-message-slowly (format nil "Sulu- \"Captain!  The Death Ray is creating tribbles!\"~%"))
+              (print-message
+               (format nil "Sulu- \"Captain!  The Death Ray is creating tribbles!\"~%")
+               :print-slowly t)
               (print-message (format nil "Scotty-  \"There are so many tribbles down here~%"))
               (print-message (format nil "  in Engineering, we can't move for 'em, Captain.\"~%"))
               (finish +tribbles+))))))))
@@ -7359,7 +7362,7 @@ the planet."
       (print-message (format nil "But with the shields up it's hopeless.~%"))
       (finish finish-reason)
       (return-from quadrant-exit-while-on-planet nil))
-    (print-message-slowly (format nil "His desperate attempt to rescue you . . ."))
+    (print-message (format nil "His desperate attempt to rescue you . . .") :print-slowly t)
     (if (<= (random 1.0) 0.05)
         (progn
           (print-message (format nil "fails.~%"))
@@ -7391,9 +7394,9 @@ the planet."
         ;; Repeat if another supernova
         ((not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))))
       (when *just-in-p*
-        (print-message-slowly (format nil "***RED ALERT!  RED ALERT!~%"))
+        (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
         (print-message (format nil "The ~A has stopped in a quadrant containing~%" (format-ship-name)))
-        (print-message-slowly (format nil "   a supernova.~%"))
+        (print-message (format nil "   a supernova.~%") :print-slowly t)
         (skip-line))
       (print-message (format nil "***Emergency automatic override attempts to hurl ~A~%" (format-ship-name)))
       (print-message (format nil "safely out of quadrant.~%"))
@@ -7669,17 +7672,19 @@ it's your problem."
   (print-message (format nil "Spock-  \"Crystals in place, Sir.~%"))
   (print-message (format nil "  Ready to activate circuit.\"~%"))
   (skip-line)
-  (print-message-slowly (format nil "Scotty-  \"Keep your fingers crossed, Sir!\"~%"))
+  (print-message (format nil "Scotty-  \"Keep your fingers crossed, Sir!\"~%") :print-slowly t)
   (when (<= (random 1.0) *crystal-work-probability*)
-    (print-message-slowly (format nil "  \"Activating now! - - No good!  It's***~%"))
+    (print-message (format nil "  \"Activating now! - - No good!  It's***~%") :print-slowly t)
     (skip-line)
-    (print-message-slowly (format nil "***RED ALERT!  RED A*L********************************~%"))
+    (print-message
+     (format nil "***RED ALERT!  RED A*L********************************~%") :print-slowly t)
     (print-stars)
-    (print-message-slowly (format nil "******************   KA-BOOM!!!!   *******************~%"))
+    (print-message (format nil "******************   KA-BOOM!!!!   *******************~%")
+                   :print-slowly t)
     (kaboom)
     (return-from use-crystals nil))
   (setf *ship-energy* (+ *ship-energy* (* 5000.0 (+ 1.0 (* 0.9 (random 1.0))))))
-  (print-message-slowly (format nil "  \"Activating now! - - ~%"))
+  (print-message (format nil "  \"Activating now! - - ~%") :print-slowly t)
   (print-message (format nil "   The instruments~%"))
   (print-message (format nil "   are going crazy, but I think it's~%"))
   (print-message (format nil "   going to work!!  Congratulations, Sir!\"~%"))
