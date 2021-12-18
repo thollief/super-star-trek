@@ -176,7 +176,6 @@ was not optional on early paper-based terminals."
 
 ;; TODO - multi-line skips don't work with message window paging
 ;;        message lines with more than one embedded newline don't work either
-
 (defun skip-line (&optional (lines-to-skip 1))
   "A convenience function to add blank lines at the current cursor position of the screen or
 current window, normally the last line. Since this is just a newline it can also end strings
@@ -196,6 +195,8 @@ that did not print their own newline."
               (equal *current-window* *message-window*))
       (page-message-window))))
 
+;; TODO - if there is more than one newline in the message to print then split the message
+;;        into multiple lines and print them separately to account for paging
 (defun print-message (message-to-print)
   "Print a string in the message window. If not using the window interface just print it."
 
@@ -412,24 +413,22 @@ than the previous."
   value ; Numeric skill level used to initialize gameplay parameters
   label) ; The textual representaion of the skill level: novice, fair, good, expert, emeritus
 
-(define-constant +destroyed+ -1)
 (define-constant +class-m+ 1)
 (define-constant +class-n+ 2)
 (define-constant +class-o+ 3)
 
-;; TODO - the element 'class' is overloaded, 'destroyed' should be a different property
 (defstruct planet ; C: planet
   "Information about a planet."
 
   quadrant ; C: w, a coordinate
-  class ; C: pclass, one of M, N, or O (1, 2, or 3), or -1 for destroyed planets, TODO - use symbols
+  ;; TODO - planet class has both a letter and a value. How to represent?
+  class ; C: pclass, one of 1, 2, or 3 (M, N, or O) - affects time needed to mine crystals
   name ; Name of the planet. An empty string for uninhabited planets
+  destroyedp ; Whether or not this planet has been destroyed
   knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
   crystals) ; has crystals: 'absent, 'present, or 'mined
 
-;; TODO - the C source used an array lookup to return the letter belonging to the number.
-;;        Change the data structure to just store the class letter.
 (defun format-planet-class (class)
   "Given a numeric value for the class of a planet, return the single letter equivalent, or an
 empty string if the planet class can't be determined."
@@ -1220,7 +1219,7 @@ affected."
                                           (format-sector-coordinates adjacent-coord)))
                    ;; Update the planet struct to show planet is destroyed, then put it back in the alist
                    (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-                     (setf (planet-class p) +destroyed+)
+                     (setf (planet-destroyedp p) t)
                      (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
                    (setf *planet-coord* nil)
                    (setf *current-planet* nil)
@@ -1400,7 +1399,7 @@ affected."
   ;; Destroy planet if there is one
   (let ((p (rest (assoc nova-quadrant *planet-information* :test #'coord-equal))))
     (when p ; p should be nil if there is no planet in the quadrant
-      (setf (planet-class p) +destroyed+)
+      (setf (planet-destroyedp p) t)
       (rplacd (assoc nova-quadrant *planet-information* :test #'coord-equal) p))
   ;; Destroy any base in supernovaed quadrant
   (setf *base-quadrants* (remove nova-quadrant *base-quadrants* :test #'coord-equal))
@@ -1547,7 +1546,7 @@ Return true on successful move."
   (setf (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*))
         (1+ (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*))))
   (when (> *super-commanders-here* 0)
-    ;; SC has scooted, Remove him from current quadrant
+    ;; SC has scooted, remove him from current quadrant
     (setf *super-commander-attack-enterprise-p* nil)
     (setf *super-commander-attacking-base* 0)
     (setf *super-commanders-here* 0)
@@ -1570,7 +1569,7 @@ Return true on successful move."
     (when (and helpful-planet
                (eql (planet-crystals helpful-planet) 'present))
       ;; Destroy the planet
-      (setf (planet-class helpful-planet) +destroyed+)
+      (setf (planet-destroyedp helpful-planet) t)
       (rplacd (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal) helpful-planet)
       (when (or *dockedp*
                 (not (damagedp +subspace-radio+)))
@@ -3425,7 +3424,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                                         (format-sector-coordinates torpedo-sector)))
                  (setf *destroyed-uninhabited-planets* (1+ *destroyed-uninhabited-planets*))
                  (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-                   (setf (planet-class p) +destroyed+)
+                   (setf (planet-destroyedp p) t)
                    (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
                  (setf *planet-coord* nil)
                  (setf *current-planet* nil)
@@ -3438,7 +3437,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                                         (format-sector-coordinates torpedo-sector)))
                  (setf *destroyed-inhabited-planets* (1+ *destroyed-inhabited-planets*))
                  (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-                   (setf (planet-class p) +destroyed+)
+                   (setf (planet-destroyedp p) t)
                    (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
                  (setf *planet-coord* nil)
                  (setf *current-planet* nil)
@@ -6219,6 +6218,7 @@ quadrant experiencing a supernova)."
 
     (execute-warp-move course distance)))
 
+;; TODO - make the prompted interface for this function more similar to the typed command
 (defun launch-probe () ; C: probe(void)
   "Launch deep-space probe."
 
@@ -7629,7 +7629,7 @@ it's your problem."
         (skip-line)))
   (let ((one-planet-knownp-p nil))
     (dolist (p-cons *planet-information*)
-      (unless (= (planet-class (rest p-cons)) +destroyed+)
+      (unless (planet-class (rest p-cons))
         (when (and (planet-knownp (rest p-cons))
                    (not (planet-inhabitedp (rest p-cons))))
           (setf one-planet-knownp-p t)
@@ -8277,16 +8277,17 @@ values, expecially number of entities in the game."
             (setf (planet-crystals pl) 'absent)
             ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
             (setf (planet-knownp pl) t)
+            (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) t)
             (setf (planet-name pl) (aref *system-names* i)))
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
             ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
-            ;; TODO - examine the planet information to ensure ~ 1/3 of planets have crystals
             (if (= (random 2) 0) ; 1 in 3 chance of crystals
                 (setf (planet-crystals pl) 'present)
                 (setf (planet-crystals pl) 'absent))
             (setf (planet-knownp pl) nil)
+            (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) nil)
             (setf (planet-name pl) "")))
       (setf *planet-information* (acons q pl *planet-information*)))
