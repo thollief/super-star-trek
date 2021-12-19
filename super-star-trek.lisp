@@ -1,7 +1,8 @@
 ;;;; Super Star Trek
 
-;; TODO - review all (skip-line) calls to ensure they are going to the correct window. Consider
-;;        adding a (skip-message-line)
+;; TODO - review all (skip-line) calls to ensure they are going to the correct window
+;; TODO - some functions only output to the message window, so ensure that the message window
+;;        is selected at the beginning of the function
 ;; TODO - message window scrolling isn't correct
 
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
@@ -149,8 +150,9 @@ shortest string, are the same."
 
 (defun print-out (string-to-print &key (print-slowly nil))
   "Print a string. In curses mode use the current window. If print-slowly is true then print with a
-delay between each character to build dramatic tension. Slow printing was not optional on some
-paper-based terminals."
+delay between each character to build dramatic tension. Slow printing was not optional on most
+paper-based terminals so slow printing helps recreate some of the gameplay experience of prior
+versions of Super Star Trek."
 
   (map nil #'(lambda (c)
                (when print-slowly
@@ -166,8 +168,6 @@ paper-based terminals."
   (when print-slowly
     (sleep 0.300)))
 
-;; TODO - multi-line skips don't work with message window paging
-;;        message lines with more than one embedded newline don't work either
 (defun skip-line (&optional (lines-to-skip 1))
   "A convenience function to add blank lines at the current cursor position of the screen or
 current window, normally the last line. Since this is just a newline it can also end strings
@@ -183,19 +183,31 @@ that did not print their own newline."
         (progn
           (print-out (format nil "~%"))
           (finish-output)))
-    (when (or (not *window-interface-p*)
-              (equal *current-window* *message-window*))
+    (when (equal *current-window* *message-window*)
       (page-message-window))))
 
 ;; TODO - if there is more than one newline in the message to print then split the message
 ;;        into multiple lines and print them separately to account for paging
 (defun print-message (message-to-print &key (print-slowly nil))
-  "Print a string in the message window. If not using the window interface just print it."
+  "Print a string in the message window. If not using the window interface just print it. Page the
+window after each newline."
 
   (when *window-interface-p*
     (select-window *message-window*))
-  (print-out message-to-print :print-slowly print-slowly)
-  (page-message-window))
+
+  (let (message-line
+        (first-newline-position (position #\newline message-to-print)))
+    (if first-newline-position
+        (progn
+          (setf first-newline-position (1+ first-newline-position))
+          (setf message-line (subseq message-to-print 0 first-newline-position)))
+        (setf message-line message-to-print))
+    (print-out message-line :print-slowly print-slowly)
+    (when first-newline-position
+      (page-message-window)
+      (when (> (length message-to-print) first-newline-position)
+        (print-message (subseq message-to-print first-newline-position)
+                       :print-slowly print-slowly)))))
 
 (defun page-message-window ()
   "Pause message window output if the window has been filled with the maximum number of lines it
@@ -2292,7 +2304,8 @@ There is no line 10.
       ((= *condition* +dead+)
        (print-out "DEAD")))
     (when (> (damaged-device-count) 0)
-      (print-out (format nil ", ~A DAMAGES" (damaged-device-count))))
+      (print-out (format nil ", ~A DAMAGE~A" (damaged-device-count)
+                         (if (> (damaged-device-count) 1) "S" ""))))
     (skip-line))
   (when (= line-to-print 2)
     (print-out (format nil "Position ~A , ~A" (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
@@ -2424,7 +2437,7 @@ range scan."
             (progn
               (print-out (format nil "  S.R. SENSORS DAMAGED!~%"))
               (setf good-scan-p nil))
-            (print-out (format nil "  [Using Base's sensors]~%")))
+            (print-out (format nil " [Using Base's sensors]~%")))
         (print-out (format nil "     SHORT-RANGE SCAN~%")))
     (when good-scan-p
       (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
@@ -6347,7 +6360,6 @@ quadrant experiencing a supernova)."
     (unless (> (length *line-tokens*) 0)
       (print-prompt "How long? "))
     (scan-input)
-    (clear-type-ahead-buffer)
     (when (not (numberp *input-item*))
       (huh)
       (return-from wait nil))
@@ -7465,7 +7477,10 @@ the planet."
 (defun sensor () ; C: sensor(void)
   "Examine planets in this quadrant."
 
-  (skip-line 2)
+  (when *window-interface-p*
+    (select-window *message-window*))
+
+  (skip-line)
   (cond
     ((and (damagedp +short-range-sensors+)
           (not *dockedp*))
@@ -7476,7 +7491,6 @@ the planet."
 
     (t ; Go ahead and scan even if the planet has been scanned before
      (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-       (skip-line)
        (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
                               (format-quadrant-coordinates *ship-quadrant*)))
        (skip-line)
@@ -8405,7 +8419,6 @@ consequences."
     ;; Prompt if no topic supplied, or a second try if the supplied topic didn't exist
     (when (= (length topic) 0)
       (print-help-topics help-topics)
-      (skip-line)
       (print-prompt "Help on what command or topic? ")
       (clear-type-ahead-buffer)
       (scan-input)
