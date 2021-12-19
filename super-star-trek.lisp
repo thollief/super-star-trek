@@ -186,8 +186,6 @@ that did not print their own newline."
     (when (equal *current-window* *message-window*)
       (page-message-window))))
 
-;; TODO - if there is more than one newline in the message to print then split the message
-;;        into multiple lines and print them separately to account for paging
 (defun print-message (message-to-print &key (print-slowly nil))
   "Print a string in the message window. If not using the window interface just print it. Page the
 window after each newline."
@@ -969,7 +967,6 @@ shuttle craft landed on it."
   (select-window *message-window*)
   (clear-window))
 
-;; TODO - not all windows cleared
 (defun clear-screen ()
   "Clear all windows."
 
@@ -977,10 +974,20 @@ shuttle craft landed on it."
   (clear-window)
   (setf *current-window* *ship-status-window*)
   (clear-window)
+  (setf *current-window* *game-status-window*)
+  (clear-window)
   (setf *current-window* *long-range-scan-window*)
   (clear-window)
   (clear-message-window)
   (setf *current-window* *prompt-window*)
+  (clear-window)
+  (setf *current-window* *starchart-window*)
+  (clear-window)
+  (setf *current-window* *damage-report-window*)
+  (clear-window)
+  (setf *current-window* *planet-report-window*)
+  (clear-window)
+  (setf *current-window* *score-window*)
   (clear-window))
 
 (defun textcolor (color) ; C: void textcolor(int color)
