@@ -7648,19 +7648,19 @@ it's your problem."
 
   (if *planet-report-window*
       (print-out (format nil "~36@A~%" "KNOWN PLANETS"))
-      (progn
-        (print-out (format nil "Spock-  \"Planet report follows, Captain.\"~%"))
-        (skip-line)))
-  (let ((one-planet-knownp-p nil))
+      (print-out (format nil "Spock-  \"Planet report follows, Captain.\"~%~%")))
+  (let ((one-planet-knownp-p nil)
+        pl)
     (dolist (p-cons *planet-information*)
-      (unless (planet-class (rest p-cons))
-        (when (and (planet-knownp (rest p-cons))
-                   (not (planet-inhabitedp (rest p-cons))))
+      (setf pl (rest p-cons))
+      (unless (planet-destroyedp pl)
+        (when (and (planet-knownp pl)
+                   (not (planet-inhabitedp pl)))
           (setf one-planet-knownp-p t)
           (print-out (format nil "~A  class ~A  "
                              (format-quadrant-coordinates (first p-cons))
-                             (format-planet-class (planet-class (rest p-cons)))))
-          (unless (eql (planet-crystals (rest p-cons)) 'present)
+                             (format-planet-class (planet-class pl))))
+          (unless (eql (planet-crystals pl) 'present)
             (print-out "no "))
           (print-out (format nil "dilithium crystals present.~%"))
           (when (shuttle-landed-p (first p-cons))
