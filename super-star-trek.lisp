@@ -3,7 +3,6 @@
 ;; TODO - review all (skip-line) calls to ensure they are going to the correct window
 ;; TODO - some functions only output to the message window, so ensure that the message window
 ;;        is selected at the beginning of the function
-;; TODO - message window scrolling isn't correct
 
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
@@ -445,7 +444,10 @@ empty string if the planet class can't be determined."
   "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; Characters displayed for game entities in short range scans
-;; TODO - are probes visible in short range scans? Should they be?
+;; TODO - are probes visible in short range scans? Should they be? They move fast so they might
+;;        not be visible for long enough to make a difference. At least for the period of time
+;;        between "launch probe" and some other command that uses time the probe could be
+;;        visible. Use the "^" symbol?
 ;; C: typedef enum {} feature
 (define-constant +romulan+ "R") ; C: IHR
 (define-constant +klingon+ "K") ; C: IHK
@@ -472,7 +474,8 @@ empty string if the planet class can't be determined."
   "Convert a single letter quadrant entity to a string for display."
 
   ;; TODO these are the strings actually used. Should plan for them all, or use a struct with a
-  ;;      symbol and a label, like the game type or game length. Is there an alist in here somewhere?
+  ;;      symbol and a label, like the game type or game length. Is there an alist in here
+  ;;      somewhere, or an object?
   (cond
     ((string= quadrant-entity +klingon+)
      "Klingon")
@@ -572,7 +575,7 @@ be tracked."
 
 ;; The following global state doesn't need to be saved
 ;; TODO should devices be a structure instead of an array? Or perhaps each device should be a
-;; structure with elements damage, output string? Or some sort of object...
+;; structure with elements damage, output string? A list of structs? Or some sort of object...
 (defparameter *devices* (make-array +number-of-devices+
                                     :initial-contents '("S. R. Sensors" "L. R. Sensors" "Phasers"
                                                         "Photon Tubes" "Life Support"
@@ -593,7 +596,8 @@ be tracked."
 (define-constant +snapshot-for-time-warp+ 3) ; C: FSNAP
 (define-constant +commander-attacks-base+ 4) ; C: FBATTAK
 (define-constant +commander-destroys-base+ 5) ; C: FCDBAS
-(define-constant +move-super-commander+ 6 "The Super-commander moves, and might attack a base.") ; C: FSCMOVE
+(define-constant +move-super-commander+ 6
+  "The Super-commander moves, and might attack a base.") ; C: FSCMOVE
 (define-constant +super-commander-destroys-base+ 7) ; C: FSCDBAS
 (define-constant +move-deep-space-probe+ 8) ; C: FDSPROB
 (define-constant +distress-call-from-inhabited-world+ 9) ; C: FDISTR
@@ -608,7 +612,7 @@ be tracked."
 (defparameter *conquest-quadrant* nil "Location of planet where the distress/enslave/reproduce events occur.")
 
 ;; C: see the enum "condition" in sst.h
-;; TODO - must these be integers? Maybe use the word?
+;; TODO - must these be integers? Maybe use a symbol?
 ;; values for *condition*
 (define-constant +green-status+ 0) ; C: IHGREEN
 (define-constant +yellow-status+ 1) ; C: IHYELLOW
@@ -4073,6 +4077,7 @@ is a string suitable for use with the format function."
   (if *score-window*
       (print-out (format nil "~21@A~%" "SCORE"))
       (print-out (format nil "Your score --~%")))
+  ;; TODO - use pretty printing and formatting
   (score-multiple "~6@A Romulans destroyed                        ~5@A~%"
                   (- *initial-romulans* *remaining-romulans*)
                   (* 20 (- *initial-romulans* *remaining-romulans*)))
@@ -4616,7 +4621,6 @@ player has reached a base by abandoning ship or using the SOS command."
     (setf *super-commander-attack-enterprise-p* nil)
     (setf *attempted-escape-from-super-commander-p* t))
 
-  ;; TODO - do the above variables need to be initialized if we are leaving the quadrant anyway?
   ;; Cope with supernova
   (unless (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
     ;; Clear/initialize quadrant
@@ -6466,7 +6470,7 @@ quadrant experiencing a supernova)."
   (skip-line)
 
   (when (damagedp +computer+)
-    (print-message (format nil "COMPUTER DAMAGED, USE A POCKET CALCULATOR.~%")) ;  TODO -rude!
+    (print-message (format nil "COMPUTER DAMAGED, TRAVEL CALCULATION NOT POSSIBLE.~%"))
     (return-from calculate-eta nil))
 
   (let (need-prompt wfl ttime twarp tpower trip-distance destination-quadrant)
