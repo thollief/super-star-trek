@@ -1344,6 +1344,9 @@ affected."
 (defun supernova (nova-quadrant nova-sector) ; C: supernova(bool induced, coord *w)
   "A star goes supernova."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (if (or (not (coord-equal nova-quadrant *ship-quadrant*))
           *just-in-p*)
       ;; It isn't here, or we just entered (treat as enroute)
@@ -1437,6 +1440,9 @@ affected."
 
 t-quadrant is the quadrant to which the ship is pulled"
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (setf *time-taken-by-current-operation*
         (calculate-warp-movement-time :distance (distance t-quadrant *ship-quadrant*)
                                       :warp-factor 7.5)) ; 7.5 is tractor beam yank rate
@@ -1482,6 +1488,9 @@ t-quadrant is the quadrant to which the ship is pulled"
 (defun cancel-rest-p () ; C: bool cancelrest(void)
   "Rest period is interrupted by event."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (when *restingp*
     (skip-line)
     (print-prompt "Mr. Spock-  \"Captain, shall we cancel the rest period?\"")
@@ -1495,6 +1504,9 @@ t-quadrant is the quadrant to which the ship is pulled"
 ;;        to the player are different.
 (defun destroy-starbase (base-q)
   "A commander or the super-commander destroys a starbase."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   ;; No default case - if the ship is not in good repair then the base will be destroyed without
   ;; notice to the player including no change to the star chart (the player is in for a nasty surprise)
@@ -1965,6 +1977,9 @@ tractor-beamed the ship then the other will not."
        (schedule-event +snapshot-for-time-warp+ (expran (* 0.5 *initial-time*))))
       ;; Commander attacks starbase
       ((= event-code +commander-attacks-base+)
+       (when *window-interface-p*
+         (select-window *message-window*))
+
        (if (or (= (length *commander-quadrants*) 0)
                (= (length *base-quadrants*) 0))
            (progn
@@ -2043,6 +2058,9 @@ tractor-beamed the ship then the other will not."
          (move-super-commander)))
       ;; Move deep space probe
       ((= event-code +move-deep-space-probe+)
+       (when *window-interface-p*
+         (select-window *message-window*))
+
        (schedule-event +move-deep-space-probe+ 0.01)
        ;; When the probe quadrant changes provide an update to the player
        (setf *probe-x-coord* (+ *probe-x-coord* *probe-x-increment*))
@@ -2109,6 +2127,9 @@ tractor-beamed the ship then the other will not."
                (return-from process-events nil))))))
       ;; Inhabited system issues distress call
       ((= event-code +distress-call-from-inhabited-world+)
+       (when *window-interface-p*
+         (select-window *message-window*))
+
        (unschedule +distress-call-from-inhabited-world+)
        ;; Try a whole bunch of times to find something suitable.
        ;; TODO - or just make a list of candidate planets/quadrants, randomly select one, and then
@@ -2147,6 +2168,9 @@ tractor-beamed the ship then the other will not."
              (return-from process-events nil)))))
       ;; Starsystem is enslaved
       ((= event-code +inhabited-world-is-enslaved+)
+       (when *window-interface-p*
+         (select-window *message-window*))
+
        (unschedule +inhabited-world-is-enslaved+)
        ;; TODO should this status change when the last klingon in the quadrant is destroyed?
        ;; see if current distress call still active
@@ -2717,6 +2741,9 @@ of the shields before calling this function.
 
 Return t if the shields were successfully raised or lowered, nil if there was a malfunction."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (if *shields-are-up-p*
       ;; Lower shields
       (progn
@@ -2774,6 +2801,9 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
 (defun apply-phaser-hits (hits) ; C: hittem(double *hits)
   "Apply phaser hits to Klingons and Romulans."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   ;; TODO - Initially, the number of enemies and the number of entries in the hits array are the
   ;;        same. As enemies are killed the enemies array becomes shorter but the hits array does
   ;;        not. Convert this index tracking to some sort of structure that uses lists.
@@ -2829,6 +2859,9 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
             (setf (aref *klingon-energy* enemy-index) 0))))))
 
 (defun fire-phasers () ; C: phasers()
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (skip-line)
   (when *dockedp*
@@ -3552,6 +3585,9 @@ handling the result. Return the amount of damage if the player ship was hit."
   "Verfiy that the parameter is an acceptable target for a photon torpedo. Return the course
 direction of the target or nil."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (when (not (valid-sector-p (coordinate-x target-coord) (coordinate-y target-coord)))
     (huh)
     (return-from photon-torpedo-target-check nil))
@@ -3912,6 +3948,9 @@ input when a tractor beam event occurs."
 enemy is the single-letter symbol of the enemy ramming/being rammed. enemy-coordinates are the
 coordinates of the enemy being rammed or the original coordinates of ramming enemy."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (skip-line)
   (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
   (skip-line)
@@ -4201,6 +4240,9 @@ is a string suitable for use with the format function."
 
 (defun finish (finish-reason) ; C: finish(FINTYPE ifin)
   "End the game, with appropriate notfications."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (setf *all-done-p* t)
   (skip-line)
@@ -4598,6 +4640,9 @@ Return the sector coordinates, distance from the ship, and Tholian power."
   "Set up a new quadrant when it is entered or re-entered. The thing should only be shown when the
 player has reached a base by abandoning ship or using the SOS command."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (setf *just-in-p* t)
   (setf *klingons-here* 0) ; TODO - a convenience variable to avoid referencing the galaxy array, keep it?
   (setf *commanders-here* 0)
@@ -4789,6 +4834,9 @@ If there are no starbases left, you are captured by the Klingons, who torture yo
 However, if there is at least one starbase, you are returned to the Federation in a prisoner of war
 exchange. Of course, this can't happen unless you have taken some prisoners."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (if *dockedp*
       (when (string/= *ship* +enterprise+)
         (print-message (format nil "You cannot abandon Ye Faerie Queene.~%"))
@@ -4905,6 +4953,9 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
 
 (defun dock () ; C: dock(bool verbose)
   "Dock the ship at a starbase."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (skip-line)
   (cond
@@ -5635,6 +5686,9 @@ the player completes their turn."
   "In-sector movement actions for warp and impulse drives. Supernova and tractor beam events
 can occur."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (when *in-orbit-p*
     (print-message (format nil "Helmsman Sulu- \"Leaving standard orbit.\"~%"))
     (setf *in-orbit-p* nil))
@@ -6061,6 +6115,9 @@ displayed y - x, where +y is downward!"
 
 (defun move-under-impulse-power () ; C: impulse(void)
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (when (damagedp +impluse-engines+)
     (clear-type-ahead-buffer)
     (skip-line)
@@ -6107,6 +6164,9 @@ displayed y - x, where +y is downward!"
 (defun execute-warp-move (course distance) ; C: part of warp(bool timewarp)
   "Carry out warp movement that was set up by player command or emergency override (fast exit from
 quadrant experiencing a supernova)."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (let ((time-warp-p nil)
         (engine-damage-p nil))
@@ -6172,6 +6232,9 @@ quadrant experiencing a supernova)."
     (setf *action-taken-p* t)))
 
 (defun move-under-warp-drive () ;  C: warp(bool timewarp)
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (when *cloakedp*
     (clear-type-ahead-buffer)
@@ -6239,6 +6302,9 @@ quadrant experiencing a supernova)."
 
 (defun launch-probe () ; C: probe(void)
   "Launch deep-space probe."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   ;; New code to launch a deep space probe
   (cond
@@ -6319,6 +6385,9 @@ quadrant experiencing a supernova)."
 
 (defun set-warp-factor () ; C: setwarp(void)
   "Change the warp factor."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (if (> (length *line-tokens*) 0)
       (scan-input)
@@ -6421,6 +6490,9 @@ quadrant experiencing a supernova)."
 (defun self-destruct () ; C: selfdestruct(void)
   "Self-destruct maneuver."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   ;; Finish with a BANG!
   (clear-type-ahead-buffer)
   (skip-line)
@@ -6465,6 +6537,9 @@ quadrant experiencing a supernova)."
 
 (defun calculate-eta () ; C: eta(void)
   "Use computer to get estimated time of arrival for a warp jump."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (skip-line)
 
@@ -6699,6 +6774,9 @@ quadrant experiencing a supernova)."
 (defun report ()
   "Report on general game status."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (skip-line)
   (print-message (format nil "You are playing a ~A ~A game.~%"
                          (game-length-label *game-length*)
@@ -6776,6 +6854,9 @@ quadrant experiencing a supernova)."
 (defun request () ; C: request()
   "Request a single item of status information."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (let (req-item)
     (unless *line-tokens*
       (print-prompt "Information desired? "))
@@ -6829,6 +6910,9 @@ are out.
 
 Code swiped from BSD-Trek. Not necesssarily useful, as we automatically display all adjacent
 sectors on the short-range scan even when short-range sensors are out."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   ;; The C source uses an array of coordinate structs. Just use pairs of numbers here.
   (let (delta-index
@@ -7024,6 +7108,9 @@ was an event that requires aborting the operation carried out by the calling fun
 (defun shuttle () ; C: shuttle(void)
   "Use shuttle craft for planetary jaunt."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (skip-line)
   (cond
     ((damagedp +shuttle+)
@@ -7133,6 +7220,9 @@ was an event that requires aborting the operation carried out by the calling fun
 (defun beam () ; C: beam(void)
   "Use the transporter."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (let ((energy-needed (+ (* 50 (skill-level-value *skill-level*)) (/ *height-of-orbit* 100.0))))
     (skip-line)
     (when (damagedp +transporter+)
@@ -7226,6 +7316,9 @@ was an event that requires aborting the operation carried out by the calling fun
 
 (defun deathray () ; C: deathray(void)
   "Use the big zapper."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (setf *action-taken-p* nil)
   (skip-line)
@@ -7334,6 +7427,9 @@ was an event that requires aborting the operation carried out by the calling fun
 (defun mine () ; C: mine(void)
   "Mine dilithium from a planet."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (skip-line)
   (cond
     ((not *landedp*)
@@ -7403,6 +7499,9 @@ the planet."
 (defun emergency-supernova-exit () ; C: atover()
   "Handle emergency exit from the quadrant due to a supernova."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (quadrant-exit-while-on-planet +mining-party-nova+)
   ;; TODO - is this the correct place for the shuttle craft check?
   ;; Check to see if captain in shuttle craft
@@ -7454,6 +7553,9 @@ the planet."
 
 (defun orbit () ; C: orbit(void)
   "Enter standard orbit."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (skip-line)
   (cond
@@ -7535,6 +7637,9 @@ thing mentioned above comes up positive), you are put into that quadrant (anywhe
 to see if there is a spot adjacent to the starbase.  If not, you can't be rematerialized!!!
 Otherwise, it drops you there.  It only tries five times to find a spot to drop you. After that,
 it's your problem."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   ;; Test for conditions which prevent calling for help.
   (cond
@@ -7673,6 +7778,9 @@ it's your problem."
 
 (defun use-crystals () ; C: usecrystals(void)
   "Use dilithium crystals."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (setf *action-taken-p* nil)
   (skip-line)
@@ -8058,6 +8166,9 @@ Return game type, tournament number, and whether or not this is a restored game.
   "Prepare to play - set up the universe. Use input parameters to generate initial core game
 values, expecially number of entities in the game."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (skip-line)
   ;; Choose game type, length, skill level, and password
   (multiple-value-bind (game-type tournament-number) (get-game-type)
@@ -8402,6 +8513,9 @@ consequences."
 (defun print-help-topics (help-topics)
   "Print a list of help topics."
 
+  (when *window-interface-p*
+    (select-window *message-window*))
+
   (restart-message-window-paging)
   (skip-line)
   (print-message (format nil "Available help topics are:~%"))
@@ -8419,6 +8533,9 @@ consequences."
 
 (defun display-online-help () ; C: helpme(void)
   "Browse on-line help."
+
+  (when *window-interface-p*
+    (select-window *message-window*))
 
   (let (help-topics
         topic)
@@ -8471,7 +8588,8 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ((or *all-done-p*
            exit-game-p))
     (when *window-interface-p*
-      (draw-windows))
+      (draw-windows)
+      (select-window *message-window*))
     (skip-line)
     (restart-message-window-paging)
     (setf hit-me-p nil)
