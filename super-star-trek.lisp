@@ -1,9 +1,5 @@
 ;;;; Super Star Trek
 
-;; TODO - review all (skip-line) calls to ensure they are going to the correct window
-;; TODO - some functions only output to the message window, so ensure that the message window
-;;        is selected at the beginning of the function
-
 ;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
 ;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
 ;; Also, commander in q1,1 was not killed but should have been.
@@ -420,7 +416,8 @@ than the previous."
   destroyedp ; Whether or not this planet has been destroyed
   knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
   inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
-  crystals) ; has crystals: 'absent, 'present, or 'mined
+  crystals ; has crystals: 'absent, 'present, or 'mined
+  (status 'secure)) ; C: status, One of secure, distressed, enslaved
 
 (defun format-planet-class (class)
   "Given a numeric value for the class of a planet, return the single letter equivalent, or an
@@ -435,10 +432,6 @@ empty string if the planet class can't be determined."
      "O")
     (t
      "")))
-
-(define-constant +secure+ 0)
-(define-constant +distressed+ 1)
-(define-constant +enslaved+ 2)
 
 (defparameter *planet-information* nil
   "An alist of planet structs keyed by the quadrant coordinates of the planet")
@@ -512,13 +505,10 @@ be tracked."
 
   (stars 0)
   (starbases 0) ; 0 or 1
-  ;; TODO - track klingons, commanders and super-commanders separately? If yes, then there may be a
-  ;;        need for a function to check if klingons of any type are present. Swings and roundabouts...
   (klingons 0) ; number of klingons of all type: klingons + commanders + super commanders
   (romulans 0)
   (supernovap nil)
-  (chartedp nil)
-  (status +secure+)) ; C: status, One of 0, 1, 2 for secure, distressed, enslaved - TODO this is a property of the planet
+  (chartedp nil))
 
 ;; TODO - what's the difference between the star chart and the galaxy?
 ;; Planets and Romulans don't show on the star chart
@@ -2131,79 +2121,83 @@ tractor-beamed the ship then the other will not."
          (select-window *message-window*))
 
        (unschedule +distress-call-from-inhabited-world+)
-       ;; Try a whole bunch of times to find something suitable.
-       ;; TODO - or just make a list of candidate planets/quadrants, randomly select one, and then
-       ;;        randomly decide to attack it, or not? Not sure what the frequency of success in
-       ;;        "try a whole bunch of times" is, so it might be difficult to tune the randomness.
-       (do ((i 0 (1+ i))
-            (candidate-quadrant nil)
-            ;;candidate-planet-index ; convenience variable
-            candidate-planet)
-           ((or (> i 100)
-                candidate-quadrant)
-            (setf *conquest-quadrant* candidate-quadrant))
-         (setf candidate-quadrant (get-random-quadrant))
-         (setf candidate-planet (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
-         (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
-                      candidate-planet
-                      (not (planet-inhabitedp candidate-planet))
-                      (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
-                      (= (quadrant-status (coord-ref *galaxy* candidate-quadrant)) +secure+)
-                      (> (quadrant-klingons (coord-ref *galaxy* candidate-quadrant)) 0))
-           (setf candidate-quadrant nil)))
-       (when *conquest-quadrant*
-         ;; got one!!  Schedule its enslavement
-         (schedule-event +inhabited-world-is-enslaved+ (expran *initial-time*))
-         (setf (quadrant-status (coord-ref *galaxy* *conquest-quadrant*)) +distressed+)
-         ;; tell the captain about it if we can
-         (when (or (not (damagedp +subspace-radio+))
-                   *dockedp*)
-           (skip-line)
-           (print-message (format nil "Lt. Uhura- Captain, ~A in ~A reports it is under attack"
-                                  (planet-name (rest (assoc *conquest-quadrant* *planet-information*
-                                                            :test #'coord-equal)))
-                                  (format-quadrant-coordinates *conquest-quadrant*)))
-           (print-message (format nil "by a Klingon invasion fleet.~%"))
-           (when (cancel-rest-p)
-             (return-from process-events nil)))))
+       (let (candidate-planet)
+         ;; Try a whole bunch of times to find something suitable.
+         ;; TODO - or just make a list of candidate planets/quadrants, randomly select one, and then
+         ;;        randomly decide to attack it, or not? Not sure what the frequency of success in
+         ;;        "try a whole bunch of times" is, so it might be difficult to tune the randomness.
+         (do ((i 0 (1+ i))
+              (candidate-quadrant nil))
+             ((or (> i 100)
+                  candidate-quadrant)
+              (setf *conquest-quadrant* candidate-quadrant))
+           (setf candidate-quadrant (get-random-quadrant))
+           (setf candidate-planet
+                 (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
+           (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
+                        candidate-planet
+                        (not (planet-inhabitedp candidate-planet))
+                        (eql (planet-status candidate-planet) 'secure)
+                        (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
+                        (> (quadrant-klingons (coord-ref *galaxy* candidate-quadrant)) 0))
+             (setf candidate-quadrant nil)))
+         (when *conquest-quadrant*
+           ;; got one!!  Schedule its enslavement
+           (schedule-event +inhabited-world-is-enslaved+ (expran *initial-time*))
+           (setf (planet-status candidate-planet) 'distressed)
+           (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+                   candidate-planet)
+           ;; tell the captain about it if we can
+           (when (or (not (damagedp +subspace-radio+))
+                     *dockedp*)
+             (skip-line)
+             (print-message (format nil "Lt. Uhura- Captain, ~A in ~A reports it is under attack"
+                                    (planet-name candidate-planet)
+                                    (format-quadrant-coordinates *conquest-quadrant*)))
+             (print-message (format nil "by a Klingon invasion fleet.~%"))
+             (when (cancel-rest-p)
+               (return-from process-events nil))))))
       ;; Starsystem is enslaved
       ((= event-code +inhabited-world-is-enslaved+)
        (when *window-interface-p*
          (select-window *message-window*))
 
        (unschedule +inhabited-world-is-enslaved+)
-       ;; TODO should this status change when the last klingon in the quadrant is destroyed?
-       ;; see if current distress call still active
-       (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*))
-              0)
-           (progn
-             (setf (quadrant-status (coord-ref *galaxy* *conquest-quadrant*))
-                   +enslaved+)
-             ;; play stork and schedule the first baby
-             (schedule-event +klingons-build-ship-in-enslaved-system+ (expran (* 2.0 *initial-time*)))
-             ;; report the disaster if we can
-             (when (or (not (damagedp +subspace-radio+))
-                       *dockedp*)
-               (print-message (format nil "Lt. Uhura- We've lost contact with starsystem ~A"
-                                      (planet-name (rest (assoc *conquest-quadrant*
-                                                                *planet-information*
-                                                                :test #'coord-equal)))))
-               (print-message (format nil "in ~A." (format-quadrant-coordinates *conquest-quadrant*)))))
-           (progn
-             (setf (quadrant-status (coord-ref *galaxy* *conquest-quadrant*))
-                   +secure+)
-             (setf *conquest-quadrant* nil))))
+       (let ((conquest-planet
+               (rest (assoc *conquest-quadrant* *planet-information* :test #'coord-equal))))
+         ;; TODO should this status change when the last klingon in the quadrant is destroyed?
+         ;; see if current distress call still active
+         (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
+             (progn
+               (setf (planet-status conquest-planet) 'enslaved)
+               (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+                       conquest-planet)
+               ;; play stork and schedule the first baby
+               (schedule-event +klingons-build-ship-in-enslaved-system+
+                               (expran (* 2.0 *initial-time*)))
+               ;; report the disaster if we can
+               (when (or (not (damagedp +subspace-radio+))
+                         *dockedp*)
+                 (print-message (format nil "Lt. Uhura- We've lost contact with starsystem ~A in ~A."
+                                        (planet-name conquest-planet)
+                                        (format-quadrant-coordinates *conquest-quadrant*)))))
+             (progn
+               (setf (planet-status *conquest-quadrant*) 'secure)
+               (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+                       conquest-planet)
+               (setf *conquest-quadrant* nil)))))
       ;; Klingon reproduces
       ((= event-code +klingons-build-ship-in-enslaved-system+)
-       ;; TODO should this status change when the last klingon in the quadrant is destroyed?
-       ;; see if current distress call still active
-       (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*))
-              0)
-           (progn
-             (schedule-event +klingons-build-ship-in-enslaved-system+ (* 1.0 *initial-time*))
-             (unless (>= *remaining-klingons* +max-klingons-per-game+) ; full right now
-               ;; reproduce one Klingon
-               (let ((build-quadrant nil))
+       (let ((conquest-planet
+               (rest (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)))
+             (build-quadrant nil))
+         ;; TODO should this status change when the last klingon in the quadrant is destroyed?
+         ;; see if current distress call still active
+         (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
+             (progn
+               (schedule-event +klingons-build-ship-in-enslaved-system+ (* 1.0 *initial-time*))
+               (unless (>= *remaining-klingons* +max-klingons-per-game+) ; full right now
+                 ;; reproduce one Klingon
                  (if (< (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*))
                         +max-klingons-per-quadrant+)
                      (setf build-quadrant *conquest-quadrant*)
@@ -2244,24 +2238,20 @@ tractor-beamed the ship then the other will not."
                    (cond
                      ((and (coord-equal *ship-quadrant* build-quadrant)
                            (not (damagedp +short-range-sensors+)))
-                      ;; TODO - this formatting doesn't look right. Check it, and use newlines or
-                      ;;        combine the two statements
-                      (print-message (format nil "Spock- sensors indicate the Klingons have"))
-                      (print-message (format nil "launched a warship from ~A."
-                                  (planet-name (rest (assoc *conquest-quadrant* *planet-information*
-                                                            :test #'coord-equal))))))
+                      (print-message
+                       (format nil "Spock- sensors indicate the Klingons have launched a warship from ~A."
+                               (planet-name conquest-planet))))
                      ((or (not (damagedp +subspace-radio+))
                           *dockedp*)
-                      (print-message (format nil "Lt. Uhura- Starfleet reports increased Klingon activity"))
-                      (print-message (format nil "near ~A in ~A."
-                                             (planet-name (rest (assoc *conquest-quadrant*
-                                                                       *planet-information*
-                                                                       :test #'coord-equal)))
-                                             (format-quadrant-coordinates build-quadrant)))))))))
+                      (print-message
+                       (format nil "Lt. Uhura- Starfleet reports increased Klingon activity near ~A in ~A."
+                               (planet-name conquest-planet)
+                               (format-quadrant-coordinates build-quadrant))))))))
            (progn
-             (setf (quadrant-status (coord-ref *galaxy* *conquest-quadrant*))
-                   +secure+)
-             (setf *conquest-quadrant* nil)))))))
+             (setf (planet-status conquest-planet) 'secure)
+             (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+                     conquest-planet)
+             (setf *conquest-quadrant* nil))))))))
 
 (defun damaged-device-count ()
   "Return the number of damaged devices."
@@ -8272,8 +8262,7 @@ values, expecially number of entities in the game."
                                                  :romulans 0
                                                  :klingons 0
                                                  :starbases 0
-                                                 :supernovap nil
-                                                 :status +secure+))))
+                                                 :supernovap nil))))
 
     (initialize-events)
     ;; Initialize times for extraneous events
@@ -8420,7 +8409,9 @@ values, expecially number of entities in the game."
             (setf (planet-knownp pl) t)
             (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) t)
-            (setf (planet-name pl) (aref *system-names* i)))
+            (setf (planet-name pl) (aref *system-names* i))
+            (setf (planet-status pl) 'secure)
+            )
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
             ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
@@ -8430,7 +8421,9 @@ values, expecially number of entities in the game."
             (setf (planet-knownp pl) nil)
             (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) nil)
-            (setf (planet-name pl) "")))
+            (setf (planet-name pl) "")
+            (setf (planet-status pl) 'secure)
+            ))
       (setf *planet-information* (acons q pl *planet-information*)))
 
     ;; Put Romulans in the galaxy
