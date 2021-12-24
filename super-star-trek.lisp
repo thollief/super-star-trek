@@ -601,14 +601,6 @@ be tracked."
 ;;  quadrant) ; coordinates of quadrant where event will occur
 (defparameter *conquest-quadrant* nil "Location of planet where the distress/enslave/reproduce events occur.")
 
-;; C: see the enum "condition" in sst.h
-;; TODO - must these be integers? Maybe use a symbol?
-;; values for *condition*
-(define-constant +green-status+ 0) ; C: IHGREEN
-(define-constant +yellow-status+ 1) ; C: IHYELLOW
-(define-constant +red-status+ 2) ; C: IHRED
-(define-constant +dead+ 3)
-
 (define-constant +sst-version+ "SST 2.0") ; C: SSTMAGIC
 
 ;; User-selectable game parameters.
@@ -644,8 +636,15 @@ be tracked."
 (defparameter *dilithium-crystals-on-board-p* nil) ; C: icrystl
 ;; TODO - is the probability crystals will work or that they will fail?
 (defparameter *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
-;; TODO - dead is captured in *alivep*, should it just be red?
-(defparameter *condition* nil "red, yellow, green, dead") ; C: condition,  - TODO - another alist?
+
+;; TODO - dead seems to be the same as (not *alivep*)
+(defparameter *condition* nil "red, yellow, green, dead") ; C: condition
+;; Values for *condition*
+(define-constant +green-status+ "GREEN") ; C: IHGREEN
+(define-constant +yellow-status+ "YELLOW") ; C: IHYELLOW
+(define-constant +red-status+ "RED") ; C: IHRED
+(define-constant +dead+ "DEAD")
+
 ;; TODO - decide if orbital cloaking is possible
 (defparameter *dockedp* nil) ; a possible flight condition
 (defparameter *in-orbit-p* nil) ; C: inorbit, orbiting - a possible flight condition
@@ -1084,15 +1083,15 @@ move that distance."
                   (string= (aref *quadrant-contents* i j) +enterprise+)
                   (string= (aref *quadrant-contents* i j) +faerie-queene+))
           (cond
-            ((= *condition* +red-status+)
+            ((string= *condition* +red-status+)
              (textcolor +red+))
-            ((= *condition* +yellow-status+)
+            ((string= *condition* +yellow-status+)
              (textcolor +yellow+))
-            ((= *condition* +green-status+)
+            ((string= *condition* +green-status+)
              (textcolor +green+))
             (*dockedp*
              (textcolor +cyan+))
-            ((= *condition* +dead+)
+            ((string= *condition* +dead+)
              (textcolor +brown+))
             (t
              (textcolor +default-color+)))
@@ -2319,15 +2318,7 @@ There is no line 10.
     (when *dockedp*
       ;; TODO - update the player condition every turn, not only when checking status
       (update-condition))
-    (cond
-      ((= *condition* +red-status+)
-       (print-out "RED"))
-      ((= *condition* +yellow-status+)
-       (print-out "YELLOW"))
-      ((= *condition* +green-status+)
-       (print-out "GREEN"))
-      ((= *condition* +dead+)
-       (print-out "DEAD")))
+    (print-out *condition*)
     (when (> (damaged-device-count) 0)
       (print-out (format nil ", ~A DAMAGE~A" (damaged-device-count)
                          (if (> (damaged-device-count) 1) "S" ""))))
@@ -5020,7 +5011,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
 (defun time-warp () ; C: timwrp(), /* let's do the time warp again */
   "Travel forward or backward in time."
 
-  (print-message (format nil "***TIME WARP ENTERED.~%"))
+  (print-message (format nil "~%***TIME WARP ENTERED.~%"))
   (if (and *snapshot-taken-p*
            (< (random 1.0) 0.5))
       (progn
