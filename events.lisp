@@ -32,7 +32,8 @@
 (defun postpone-event (event offset) ; C: postpone(int evtype, double offset)
   "Postpone a scheduled event."
 
-  (setf (aref *future-events* event) (+ (aref *future-events* event) offset)))
+  (when (is-scheduled-p event)
+    (setf (aref *future-events* event) (+ (aref *future-events* event) offset))))
 
 (defun unschedule (event) ; C: event *unschedule(int evtype)
   "Remove an event from the schedule."
