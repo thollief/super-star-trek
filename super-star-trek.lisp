@@ -1,9 +1,5 @@
 ;;;; Super Star Trek
 
-;; TODO - this sequence of events: tractor beam to q1,1, then supernova in q1,1 correctly triggered
-;; emergency override. Warp factor set to 7, which triggered a time warp. Was that ok?
-;; Also, commander in q1,1 was not killed but should have been.
-
 (in-package super-star-trek)
 
 (define-constant +galaxy-size+ 8) ; C: GALSIZE
@@ -50,10 +46,14 @@ should be suitable for a classic 80x24 terminal.")
 (defparameter *line-tokens* nil "List of input tokens")
 (defparameter *input-item* nil "One space-separated token from the keyboard.")
 
-(defun select-window (window)
-  "Change window. Do nothing in line-by-line mode."
+(defun select-window (window &key (clear-window nil))
+  "Change window. Do nothing in line-by-line mode. If clear-window is true then also clear the
+window."
+
   (when *window-interface-p*
     (setf *current-window* window)
+    (when clear-window
+      (clear-window window))
     ;; make cursor visible if selecting one of these windows, otherwise hide it
     (if (or (equal *message-window* window)
             (equal *prompt-window* window))
@@ -469,6 +469,7 @@ empty string if the planet class can't be determined."
   ;; TODO these are the strings actually used. Should plan for them all, or use a struct with a
   ;;      symbol and a label, like the game type or game length. Is there an alist in here
   ;;      somewhere, or an object?
+  ;; TODO - When displaying an inhabited world, show the name instead of "unknown"
   (cond
     ((string= quadrant-entity +klingon+)
      "Klingon")
@@ -484,6 +485,8 @@ empty string if the planet class can't be determined."
      "Thing")
     ((string= quadrant-entity +black-hole+)
      "Black hole")
+    ((string= quadrant-entity +planet+)
+     "Planet")
     (t
      "unknown")))
 
@@ -944,43 +947,37 @@ shuttle craft landed on it."
 
   (/= (aref *device-damage* device) 0.0))
 
-(defun clear-window ()
-  "Clear the current window. Do nothing in line-by-line mode."
+(defun clear-window (window)
+  "Clear the specified window. Do nothing in line-by-line mode."
 
   (when *window-interface-p*
-    ;;(wclrtoeol *current-window*)
-    ;;(wmove *current-window* 0 0)
-    (wclear *current-window*)
-    (wrefresh *current-window*)))
-
-(defun clear-message-window ()
-  "Clear the message window."
-
-  (select-window *message-window*)
-  (clear-window))
+    (wclear window)
+    (wmove window 0 0)
+    (wrefresh window)))
 
 (defun clear-screen ()
   "Clear all windows."
 
-  (setf *current-window* *short-range-scan-window*)
-  (clear-window)
-  (setf *current-window* *ship-status-window*)
-  (clear-window)
-  (setf *current-window* *game-status-window*)
-  (clear-window)
-  (setf *current-window* *long-range-scan-window*)
-  (clear-window)
-  (clear-message-window)
-  (setf *current-window* *prompt-window*)
-  (clear-window)
-  (setf *current-window* *starchart-window*)
-  (clear-window)
-  (setf *current-window* *damage-report-window*)
-  (clear-window)
-  (setf *current-window* *planet-report-window*)
-  (clear-window)
-  (setf *current-window* *score-window*)
-  (clear-window))
+  (when *short-range-scan-window*
+  (clear-window *short-range-scan-window*))
+  (when *ship-status-window*
+  (clear-window *ship-status-window*))
+  (when *game-status-window*
+  (clear-window *game-status-window*))
+  (when *long-range-scan-window*
+  (clear-window *long-range-scan-window*))
+  (when *message-window*
+  (clear-window *message-window*))
+  (when *prompt-window*
+  (clear-window *prompt-window*))
+  (when *starchart-window*
+  (clear-window *starchart-window*))
+  (when *damage-report-window*
+  (clear-window *damage-report-window*))
+  (when *planet-report-window*
+  (clear-window *planet-report-window*))
+  (when *score-window*
+  (clear-window *score-window*)))
 
 (defun textcolor (color) ; C: void textcolor(int color)
 
@@ -2319,8 +2316,7 @@ There is no line 10.
       (update-condition))
     (print-out *condition*)
     (when (> (damaged-device-count) 0)
-      (print-out (format nil ", ~A DAMAGE~A" (damaged-device-count)
-                         (if (> (damaged-device-count) 1) "S" ""))))
+      (print-out (format nil ", ~A DAMAGE~:@(~:P~)" (damaged-device-count))))
     (skip-line))
   (when (= line-to-print 2)
     (print-out (format nil "Position ~A , ~A" (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
@@ -2405,10 +2401,7 @@ range scan."
 
     (if *window-interface-p*
       (if *ship-status-window*
-          (progn
-            (select-window *ship-status-window*)
-            (clear-window)
-            (wmove *ship-status-window* 0 0))
+          (select-window *ship-status-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -2426,9 +2419,7 @@ range scan."
 
   ;; In line-by-line mode game statuses are printed by the ship status function
   (when *window-interface-p*
-    (select-window *game-status-window*)
-    (clear-window)
-    (wmove *game-status-window* 0 0)
+    (select-window *game-status-window* :clear-window t)
     (game-status 1)
     (game-status 2)
     (game-status 3)))
@@ -2437,10 +2428,7 @@ range scan."
 
     (if *window-interface-p*
       (if *short-range-scan-window*
-          (progn
-            (select-window *short-range-scan-window*)
-            (clear-window)
-            (wmove *short-range-scan-window* 0 0))
+          (select-window *short-range-scan-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -2479,10 +2467,7 @@ Long-range sensors can scan all adjacent quadrants."
 
   (if *window-interface-p*
       (if *long-range-scan-window*
-          (progn
-            (select-window *long-range-scan-window*)
-            (clear-window)
-            (wmove *long-range-scan-window* 0 0))
+          (select-window *long-range-scan-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -2537,10 +2522,7 @@ Long-range sensors can scan all adjacent quadrants."
 
   (if *window-interface-p*
       (if *prompt-window*
-          (progn
-            (select-window *prompt-window*)
-            (clear-window)
-            (wmove *prompt-window* 0 0))
+          (select-window *prompt-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -4060,34 +4042,28 @@ damage multiplier to determine how much damage is done by ramming this enemy."
                                                 *remaining-super-commanders*))
                                           time-used))))
 
-(defun score-multiple (message count score) ; C: score_item(const char *str, int score)
-  "Helper function to print a score for multiple items and update the score. The message parameter
+(defun score-multiple (format-string count score) ; C: score_item(const char *str, int score)
+  "Helper function to print a score for multiple items and update the score. The format-string
 is a string suitable for use with the format function."
 
   (when (> count 0)
-    (print-out (format nil message count score))
-    (setf *score* (+ *score* score))))
+    (print-out (format nil format-string count (* count score)))
+    (setf *score* (+ *score* (* count score)))))
 
-(defun score-single (message score) ; C: score_item(const char *str, int num, int score)
-  "Helper function to print a score for a single item and update the score. The message parameter
+(defun score-single (format-string score) ; C: score_item(const char *str, int num, int score)
+  "Helper function to print a score for a single item and update the score. The format-string
 is a string suitable for use with the format function."
 
-  (print-out (format nil message score))
+  (print-out (format nil format-string score))
   (setf *score* (+ *score* score)))
 
 ;; TODO - add an option to write the final score to a file, or record it some other way.
-;; TODO - can the format be moved to the helper functions? Can the format specification
-;;        also put the score in the correct column?
-;; TODO - check the grammar of all items, single actions should not use plural nouns
 (defun score () ; C: score(void)
   "Compute player's score."
 
   (if *window-interface-p*
       (if *score-window*
-          (progn
-            (select-window *score-window*)
-            (clear-window)
-            (wmove *score-window* 0 0))
+          (select-window *score-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -4095,42 +4071,37 @@ is a string suitable for use with the format function."
 
   (setf *score* 0)
   (if *score-window*
-      (print-out (format nil "~21@A~%" "SCORE"))
+      (print-out (format nil "~60:@<SCORE~>~%"))
       (print-out (format nil "Your score --~%")))
-  ;; TODO - use pretty printing and formatting
-  (score-multiple "~6@A Romulans destroyed                        ~5@A~%"
-                  (- *initial-romulans* *remaining-romulans*)
-                  (* 20 (- *initial-romulans* *remaining-romulans*)))
+  (score-multiple "~7@A~45< Romulan~:P destroyed~;~>~8@A~%"
+                  (- *initial-romulans* *remaining-romulans*) 20)
   (when *game-won-p*
-    (score-multiple "~6@A Romulans captured                         ~5@A~%"
+    (score-multiple "~7@A~45< Romulan~:P captured~;~>~8@A~%"
                     *remaining-romulans* *remaining-romulans*))
-  (score-multiple "~6@A ordinary Klingons destroyed               ~5@A~%"
-                  (- *initial-klingons* *remaining-klingons*)
-                  (* 10 (- *initial-klingons* *remaining-klingons*)))
-  (score-multiple "~6@A Klingon commanders destroyed              ~5@A~%"
-                  (- *initial-commanders* (length *commander-quadrants*))
-                  (* 50 (- *initial-commanders* (length *commander-quadrants*))))
-  (score-multiple "~6@A Super-Commander destroyed                 ~5@A~%"
-                  (- *initial-super-commanders* *remaining-super-commanders*)
-                  (* 200 (- *initial-super-commanders* *remaining-super-commanders*)))
-  (score-multiple "~6,2F Klingons per stardate                     ~5@A~%"
+  (score-multiple "~7@A~45< ordinary Klingon~:P destroyed~;~>~8@A~%"
+                  (- *initial-klingons* *remaining-klingons*) 10)
+  (score-multiple "~7@A~45< Klingon commander~:P destroyed~;~>~8@A~%"
+                  (- *initial-commanders* (length *commander-quadrants*)) 50)
+  (score-multiple "~7@A~45< Super-Commander~:P destroyed~;~>~8@A~%"
+                  (- *initial-super-commanders* *remaining-super-commanders*) 200)
+  (score-multiple "~7,2F~45< Klingon~:P per stardate~;~>~8,2F~%"
                   (klingons-per-stardate) (round (+ (* 500 (klingons-per-stardate)) 0.5)))
-  (score-multiple "~6@A Klingons captured               ~5@A~%"
-                  *captured-klingons* (* 3 *captured-klingons*))
-  (score-multiple "~6@A stars destroyed by your action            ~5@A~%"
-                  *destroyed-stars* (* -5 *destroyed-stars*))
-  (score-multiple "~6@A uninhabited planets destroyed by your action ~2@A~%"
-                  *destroyed-uninhabited-planets* (* -10 *destroyed-uninhabited-planets*))
-  (score-multiple "~6@A inhabited planets destroyed by your action   ~2@A~%"
-                  *destroyed-inhabited-planets* (* -300 *destroyed-inhabited-planets*))
-  (score-multiple "~6@A bases destroyed by your action            ~5@A~%"
-                  *destroyed-bases* (* -100 *destroyed-bases*))
-  (score-multiple "~6@A calls for help from starbase              ~5@A~%"
-                  *calls-for-help* (* -45 *calls-for-help*))
-  (score-multiple "~6@A casualties incurred                       ~5@A~%"
-                  *casualties* (* -1 *casualties*))
-  (score-multiple "~6@A crew abandoned in space                   ~5@A~%"
-                  *abandoned-crew* (* -3 *abandoned-crew*))
+  (score-multiple "~7@A~45< Klingon~:P captured~;~>~8@A~%"
+                  *captured-klingons* 3)
+  (score-multiple "~7@A~45< star~:P destroyed by your action~;~>~8@A~%"
+                  *destroyed-stars* -5)
+  (score-multiple "~7@A~45< uninhabited planet~:P destroyed by your action~;~>~8@A~%"
+                  *destroyed-uninhabited-planets* -10)
+  (score-multiple "~7@A~45< inhabited planet~:P destroyed by your action~;~>~8@A~%"
+                  *destroyed-inhabited-planets* -300)
+  (score-multiple "~7@A~45< base~:P destroyed by your action~;~>~8@A~%"
+                  *destroyed-bases* -100)
+  (score-multiple "~7@A~45< call~:P for help from starbase~;~>~8@A~%"
+                  *calls-for-help* -45)
+  (score-multiple "~7@A~45< casualt~:@P incurred~;~>~8@A~%"
+                  *casualties* -1)
+  (score-multiple "~7@A~45< crew abandoned in space~;~>~8@A~%"
+                  *abandoned-crew* -3)
   (let (ships-destroyed)
     (cond
       ((string= *ship* +enterprise+)
@@ -4139,19 +4110,19 @@ is a string suitable for use with the format function."
        (setf ships-destroyed 1))
       ((string= *ship* +no-ship+)
        (setf ships-destroyed 2)))
-    (score-multiple "~6@A ship(s) lost or destroyed                 ~5@A~%"
-                    ships-destroyed (* -100 ships-destroyed)))
-  (score-multiple "~6@A Treaty of Algeron violations                 ~5@A~%"
-                    *cloaking-violations* (* -100 *cloaking-violations*))
+    (score-multiple "~7@A~45< ship~:P lost or destroyed~;~>~8@A~%"
+                    ships-destroyed -100))
+  (score-multiple "~7@A~45< Treaty of Algeron violation~:P~;~>~8@A~%"
+                    *cloaking-violations* -100)
   (when (not *alivep*)
-    (score-single "Penalty for getting yourself killed              ~5@A~%" -200))
+    (score-single "~52<        Penalty for getting yourself killed~;~>~8@A~%" -200))
   (when *game-won-p*
-    (print-out (format nil "       Bonus for winning ~13A           ~5@A~%"
-                       (format nil "~A game" (string-capitalize (skill-level-label *skill-level*)))
+    (print-out (format nil "~52<        Bonus for winning ~A game~;~>~8@A~%"
+                       (string-capitalize (skill-level-label *skill-level*))
                        (* 100 (skill-level-value *skill-level*))))
     (setf *score* (+ *score* (* 100 (skill-level-value *skill-level*)))))
   (skip-line)
-  (print-out (format nil "       TOTAL SCORE                               ~5@A~%" (round *score*))))
+  (print-out (format nil "~52<TOTAL SCORE~>~8@A~%" (round *score*))))
 
 (define-constant +day-names+
     (list "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
@@ -6316,7 +6287,8 @@ quadrant experiencing a supernova)."
     (t
      (when (= (length *line-tokens*) 0)
        ;; Slow mode, so let Kirk know how many probes there are left
-       (print-message (format nil "~A probe~A left.~%" *probes-available* (if (= *probes-available* 1) "" "s")))       (print-prompt "Are you sure you want to fire a probe? ")
+       (print-message (format nil "~A probe~:P left.~%" *probes-available*))
+       (print-prompt "Are you sure you want to fire a probe? ")
        (unless (get-y-or-n-p)
          (return-from launch-probe nil)))
      (setf *probe-is-armed-p* nil)
@@ -6497,8 +6469,7 @@ quadrant experiencing a supernova)."
         (print-message (format nil "SELF-DESTRUCT-SEQUENCE-WILL-BE-ABORTED~%"))
         (skip-line 2)
         (when *window-interface-p*
-          (select-window *prompt-window*)
-          (clear-window))
+          (select-window *prompt-window* :clear-window t))
         (clear-type-ahead-buffer)
         (scan-input)
         (when (numberp *input-item*)
@@ -6677,10 +6648,7 @@ quadrant experiencing a supernova)."
 
   (if *window-interface-p*
       (if *starchart-window*
-          (progn
-            (select-window *starchart-window*)
-            (clear-window)
-            (wmove *starchart-window* 0 0))
+          (select-window *starchart-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -6730,10 +6698,7 @@ quadrant experiencing a supernova)."
 
   (if *window-interface-p*
       (if *damage-report-window*
-          (progn
-            (select-window *damage-report-window*)
-            (clear-window)
-            (wmove *damage-report-window* 0 0))
+          (select-window *damage-report-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -6773,9 +6738,8 @@ quadrant experiencing a supernova)."
                      (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)))
   (cond
     ((> (- *initial-commanders* (length *commander-quadrants*)) 0)
-     (print-message (format nil ", including ~A Commander~A.~%"
-                            (- *initial-commanders* (length *commander-quadrants*))
-                            (if (= (- *initial-commanders* (length *commander-quadrants*)) 1) "" "s"))))
+     (print-message (format nil ", including ~A Commander~:P.~%"
+                            (- *initial-commanders* (length *commander-quadrants*)))))
 
     ((> (+ (- *initial-klingons* *remaining-klingons*)
            (- *initial-super-commanders* *remaining-super-commanders*))
@@ -6803,21 +6767,21 @@ quadrant experiencing a supernova)."
   (when (> *casualties* 0)
     (print-message (format nil "~A casualt~A suffered so far.~%" *casualties* (if (= *casualties* 1) "y" "ies"))))
   (when (/= *brig-capacity* *brig-free*)
-    (print-message (format nil "~D Klingon~A in brig.~%"
-                           (- *brig-capacity* *brig-free*)
-                           (when (> (- *brig-capacity* *brig-free*) 1) "s"))))
+    (print-message (format nil "~D Klingon~:P in brig.~%"
+                           (- *brig-capacity* *brig-free*))))
   (when (> *captured-klingons* 0)
-    (print-message (format nil "~D captured Klingon~A turned in to Star Fleet.~%"
-                           *captured-klingons* (when (> *captured-klingons* 1) "s"))))
+    (print-message (format nil "~D captured Klingon~:P turned in to Star Fleet.~%"
+                           *captured-klingons*)))
   (when (> *calls-for-help* 0)
-    (print-message (format nil "There ~A ~A call~A for help.~%"
+    (print-message (format nil "There ~A ~A call~:P for help.~%"
                            (if (= *calls-for-help* 1) "was" "were")
-                           *calls-for-help*
-                           (if (= *calls-for-help* 1) "" "s"))))
+                           *calls-for-help*)))
   (when (string= *ship* +enterprise+)
-    (print-message (format nil "You have ~A deep space probe~A.~%"
-                           (if (> *probes-available* 0) *probes-available* "no")
-                           (if (/= *probes-available* 1) "s" ""))))
+    (print-message (format nil "You have ~A deep space probe~:P.~%"
+                           (if (> *probes-available* 0) *probes-available* "no"))))
+    ;;(print-message (format nil "You have ~A deep space probe~A.~%"
+    ;;                       (if (> *probes-available* 0) *probes-available* "no")
+    ;;                       (if (/= *probes-available* 1) "s" ""))))
   (when (and (or (not (damagedp +subspace-radio+))
                  *dockedp*)
              (is-scheduled-p +move-deep-space-probe+))
@@ -6832,7 +6796,7 @@ quadrant experiencing a supernova)."
         (do ((i 0 (+ i 1))
              (ai 0.05 (* ai 2.0)))
             ((< *crystal-work-probability* ai)
-             (print-message (format nil "Dilithium crystals have been used ~A time~A.~%" i (if (= i 1) "" "s"))))))))
+             (print-message (format nil "Dilithium crystals have been used ~A time~:P.~%" i)))))))
 
 (defun request () ; C: request()
   "Request a single item of status information."
@@ -7039,7 +7003,7 @@ sectors on the short-range scan even when short-range sensors are out."
        (init-pair color_blue color_blue color_black)
        (init-pair color_yellow color_yellow color_black))
      (setf *current-window* *stdscr*)
-     (clear-window) ; After this point use curses window functions, not *stdscr* functions.
+     (clear-window *stdscr*) ; After this point use curses window functions, not *stdscr* functions.
 
      ;; In curses/window mode these windows are always created because they fit the minimum
      ;; space required for windowed mode: short range scan, status, long range scan, game status,
@@ -7068,9 +7032,9 @@ sectors on the short-range scan even when short-range sensors are out."
      (when (and (>= *cols* 185)
                 (>= *lines* 44))
        (setf *planet-report-window* (newwin 44 59 0 126)))
-     (when (and (>= *cols* 182)
+     (when (and (>= *cols* 187)
                 (>= *lines* 65))
-       (setf *score-window* (newwin 20 55 45 126)))
+       (setf *score-window* (newwin 20 61 45 126)))
      (set-text-color +default-color+)
      (select-window *message-window*)))
 
@@ -7639,7 +7603,7 @@ it's your problem."
      (print-message (format nil "You must be aboard the ~A.~%" (format-ship-name))))
 
     (t ; OK -- call for help from nearest starbase
-     (1+ *calls-for-help*)
+     (setf *calls-for-help* (1+ *calls-for-help*))
      (let (dest-dist probf)
        (if (coordinate-p *base-sector*)
            ;; There's one in this quadrant
@@ -7728,10 +7692,7 @@ it's your problem."
 
   (if *window-interface-p*
       (if *planet-report-window*
-          (progn
-            (select-window *planet-report-window*)
-            (clear-window)
-            (wmove *planet-report-window* 0 0))
+          (select-window *planet-report-window* :clear-window t)
           (progn
             (select-window *message-window*)
             (skip-line)))
@@ -8304,7 +8265,7 @@ values, expecially number of entities in the game."
     ;;   Randomly accept a base location even if it doesn't meet the distance threshold, and
     ;;   progressivly lower the random threshold for base acceptance if nothing suitable is found.
     ;; Also update the starchart - base locations are known at the start of a game.
-    (setf *base-quadrants* ())
+    (setf *base-quadrants* nil)
     (do ((i 0 (1+ i))
          ;; Original distance-threshold formula seems to produce values that are too large
          ;;(distance-threshold (* 6.0 (- (1+ +max-bases+) *initial-bases*)))
@@ -8737,7 +8698,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
 (defun print-banner () ; C: prelim()
   "Print an introductory banner."
 
-  (clear-message-window)
+  (select-window *message-window* :clear-window t)
   (print-message (format nil "-SUPER- STAR TREK~%")))
 
 ;; TODO - record and play back games.
@@ -8772,7 +8733,9 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (when *all-done-p*
       (skip-line)
       (print-prompt "Do you want to play again? ")
-      (setf play-again-p (get-y-or-n-p))))
+      (setf play-again-p (get-y-or-n-p))
+      (when play-again-p
+        (clear-screen))))
 
   (clean-up)
   (format t "~%May the Great Bird of the Galaxy roost upon your home planet.~%")
