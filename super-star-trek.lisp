@@ -785,32 +785,6 @@ the same as the ship if the shuttle craft location is on-ship.")
 (defparameter *probes-available* 0) ; C: nprobes
 (defparameter *probe-is-armed-p* nil) ; C: isarmed
 
-;; All the ways to finish a game
-;; TODO - do these need to be intgers? Can symbols be used instead?
-(define-constant +won+ 0) ; C: FWON
-(define-constant +deplete+ 1) ; C: FDEPLETE
-(define-constant +life-support-consumed+ 2) ; C: FLIFESUP
-(define-constant +out-of-energy+ 3) ; C: FNRG
-(define-constant +battle+ 4) ; C: FBATTLE
-(define-constant +3-negative-energy-barrier-crossings+ 5) ; C: FNEG3
-(define-constant +nova+ 6) ; C: FNOVA
-(define-constant +destroyed-by-supernova+ 7) ; C: FSNOVAED
-(define-constant +abandon+ 8) ; C: FABANDN
-(define-constant +dilithium+ 9) ; C: FDILITHIUM
-(define-constant +materialize+ 10) ; C: FMATERIALIZE
-(define-constant +phaser+ 11) ; C: FPHASER
-(define-constant +lost+ 12) ; C: FLOST
-(define-constant +mining+ 13) ; C: FMINING
-(define-constant +destroyed-planet+ 14) ; C: FDPLANET
-(define-constant +mining-party-nova+ 15) ; C: FPNOVA
-(define-constant +shuttle-super-nova+ 16) ; C: FSSC
-(define-constant +shuttle-tractor-beam+ 17) ; C: FSTRACTOR
-(define-constant +death-ray-malfunction+ 18) ; C: FDRAY
-(define-constant +tribbles+ 19) ; C: FTRIBBLE
-(define-constant +destroyed-by-black-hole+ 20) ; C: FHOLE
-(define-constant +all-crew-killed+ 21) ; C: FCREW
-(define-constant +cloak+ 22) ; C: FCLOAK
-
 ;; C: enum COLORS
 (define-constant +default-color+ 0)
 (define-constant +black+ 1)
@@ -1216,7 +1190,7 @@ affected."
                    (setf *planet-coord* nil)
                    (setf *current-planet* nil)
                    (when *landedp*
-                     (finish +mining-party-nova+)
+                     (finish 'nova-destroys-planet-while-landed)
                      (return-from nova nil))
                    (setf (aref *quadrant-contents* adjacent-x adjacent-y) +empty-sector+))
                   ;; Destroy base
@@ -1248,7 +1222,7 @@ affected."
                                                                           energy-difference)))))
                        (setf *ship-energy* (- *ship-energy* 2000.0)))
                    (when (<= *ship-energy* 0)
-                     (finish +nova+)
+                     (finish 'ship-destroyed-by-nova)
                      (return-from nova nil))
                    ;; add in course nova contributes to kicking starship
                    (setf change-x (+ change-x (- (coordinate-x *ship-sector*) adjacent-x)))
@@ -1415,10 +1389,10 @@ affected."
      (print-message (format nil "Lucky you!~%"))
      (print-message (format nil "A supernova in ~A has just destroyed the last Klingons.~%"
                             (format-quadrant-coordinates nova-quadrant)))
-     (finish +won+))
+     (finish 'won))
     (*all-done-p*
      ;; if some Klingons remain, continue or die in supernova.
-     (finish +destroyed-by-supernova+)))))
+     (finish 'destroyed-by-supernova)))))
 
 (defun execute-tractor-beam (&key t-quadrant)
   "A commander or super-commander has tractor beamed the player ship.
@@ -1434,11 +1408,11 @@ t-quadrant is the quadrant to which the ship is pulled"
   (skip-line)
   (print-message (format nil "***~A caught in long range tractor beam--~%" (format-ship-name)))
   ;; If Kirk & Co. screwing around on planet, handle
-  (quadrant-exit-while-on-planet +mining+)
+  (quadrant-exit-while-on-planet 'tractor-beam-while-mining)
   (when *all-done-p*
     (return-from execute-tractor-beam nil))
   (when *in-shuttle-craft-p* ; Caught in Galileo?
-    (finish +shuttle-tractor-beam+)
+    (finish 'tractor-beam-destroys-shuttle)
     (return-from execute-tractor-beam nil))
   ;; Check to see if shuttle is aboard
   (when (eql *shuttle-craft-location* 'off-ship)
@@ -1677,8 +1651,8 @@ Return true on successful move."
     (if (= (length *base-quadrants*) 0)
         (unschedule +move-super-commander+)
         (dolist (bq *base-quadrants*)
-          ;; TODO - if  *base-under-attack-quadrant* refers to commander actions then it would appear that
-          ;;        the super-commander only attacks bases already under attack
+          ;; TODO - if  *base-under-attack-quadrant* refers to commander actions then it would
+          ;;        appear that the super-commander only attacks bases already under attack
           ;; TODO - Is this where the SC decides to attack a base or is it somewhere else?
           (when (and (coord-equal bq *super-commander-quadrant*)
                      (coord-equal *base-under-attack-quadrant* *super-commander-quadrant*))
@@ -1764,7 +1738,7 @@ tractor-beamed the ship then the other will not."
     (when *cloakedp*
       (setf *ship-energy* (- *ship-energy* (* execution-time 500.0))) ; cloaking uses energy!
       (when (<= *ship-energy* 0)
-        (finish +out-of-energy+)
+        (finish 'out-of-energy)
         (return-from process-events nil)))
     (setf *stardate* smallest-next-date) ; Advance game time
     ;; Decrement Federation resources and recompute remaining time
@@ -1774,18 +1748,18 @@ tractor-beamed the ship then the other will not."
         (setf *remaining-time* (/ *remaining-resources* (+ *remaining-klingons* (* 4 (length *commander-quadrants*)))))
         (setf *remaining-time* 99))
     (when (< *remaining-time* 0)
-      (finish +deplete+)
+      (finish 'federation-resources-depleted)
       (return-from process-events nil))
     ;; Any crew left alive?
     (when (<= *crew* 0)
-      (finish +all-crew-killed+)
+      (finish 'all-crew-killed)
       (return-from process-events nil))
     ;; Is life support adequate?
     (when (and (damagedp +life-support+)
                (not *dockedp*))
       (when (and (< *life-support-reserves* execution-time)
                  (> (aref *device-damage* +life-support+) *life-support-reserves*))
-        (finish +life-support-consumed+)
+        (finish 'life-support-consumed)
         (return-from process-events nil))
       (setf *life-support-reserves* (- *life-support-reserves* execution-time))
       (when (<= (aref *device-damage* +life-support+) execution-time)
@@ -1883,12 +1857,12 @@ tractor-beamed the ship then the other will not."
               (and (< *ship-energy* 2000)
                    (< *torpedoes* 4)
                    (< *shield-energy* 1250))
-              (and (damagedp +phaser+)
+              (and (damagedp +phasers+)
                    (or (damagedp +photon-torpedoes+)
                        (< *torpedoes* 4)))
               (and (damagedp +shields+)
                    (or (< *ship-energy* 2500)
-                       (damagedp +phaser+))
+                       (damagedp +phasers+))
                    (or (< *torpedoes* 5)
                        (damagedp +photon-torpedoes+))))
           ;; The ship is weak, tractor-beam her!
@@ -2663,7 +2637,7 @@ Long-range sensors can scan all adjacent quadrants."
     (let ((burn (* (- requested-energy +max-safe-phaser-power+) 0.00038))) ; TODO - name the constant
       (when (<= (random 1.0) burn)
         (print-message (format nil "Weapons officer Sulu-  \"Phasers overheated, sir.\"~%"))
-        (setf (aref *device-damage* +phaser+) (* *damage-factor* (+ 1 (random 1.0)) (+ 1.0 burn)))))))
+        (setf (aref *device-damage* +phasers+) (* *damage-factor* (+ 1 (random 1.0)) (+ 1.0 burn)))))))
 
 (defun energy-to-kill-enemy (i)
   "Calculate the amount of phaser energy needed to kill an enemy in the enemies list. i is the
@@ -2729,7 +2703,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
                                  :print-slowly t)
                   (skip-line)
                   (print-stars)
-                  (finish +phaser+)
+                  (finish 'phaser-fire-inside-shields)
                   (return-from toggle-high-speed-shield-control nil))
                 (print-message (format nil "Sulu-  \"Captain! Shield malfunction! Phaser fire contained!\"~%")
                                :print-slowly t)
@@ -2808,7 +2782,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
             (dead-enemy e-coord (coord-ref *quadrant-contents* e-coord)
                         e-coord)
             (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
-              (finish +won+))
+              (finish 'won))
             (when *all-done-p*
               (return-from apply-phaser-hits t))
             (1- enemy-index)) ; don't do the increment, enemy array has one less klingon
@@ -2830,7 +2804,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
   (when *dockedp*
     (print-message (format nil "Phasers can't be fired through base shields.~%"))
     (return-from fire-phasers nil))
-  (when (damagedp +phaser+)
+  (when (damagedp +phasers+)
     (print-message (format nil "Phaser control damaged.~%"))
     (return-from fire-phasers nil))
   (let ((targeting-support-available-p ; C: itarg, SR sensors and Computer are needed for automatic fire
@@ -3187,7 +3161,7 @@ is a function of that Klingon's remaining power, our power, etc."
                      (print-message (format nil "~D captives taken~%" klingons-captured)))))
              (dead-enemy k-coord (coord-ref *quadrant-contents* k-coord) k-coord)
              (when (= *remaining-klingons* 0)
-               (finish +won+)))))))
+               (finish 'won)))))))
 
 (defun select-klingon-for-capture () ; C: int selectklingon()
   "Cruddy, just takes one at random.  Should ask the captain.
@@ -3350,7 +3324,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                                                             angle))
                    (when (valid-sector-p (coordinate-x displaced-to-sector) (coordinate-y displaced-to-sector))
                      (when (string= (coord-ref *quadrant-contents* displaced-to-sector) +black-hole+)
-                       (finish +destroyed-by-black-hole+)
+                       (finish 'destroyed-by-black-hole)
                        (return-from move-torpedo-within-quadrant ship-hit))
                      ;; can't move into object
                      (when (string= (coord-ref *quadrant-contents* displaced-to-sector) +empty-sector+)
@@ -3436,7 +3410,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                  (setf *current-planet* nil)
                  (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
                  (when *landedp* ; captain perishes on planet
-                   (finish +destroyed-planet+)))
+                   (finish 'planet-destroyed-while-landed)))
                 ;; Hit an inhabited world -- very bad!
                 ((string= sector-contents +world+)
                  (print-message (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
@@ -3449,7 +3423,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                  (setf *current-planet* nil)
                  (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
                  (when *landedp* ; captain perishes on planet
-                   (finish +destroyed-planet+))
+                   (finish 'planet-destroyed-while-landed))
                  (print-message (format nil "You have just destroyed an inhabited planet.~%"))
                  (print-message (format nil "Celebratory rallies are being held on the Klingon homeworld.~%")))
                 ;; Hit a star
@@ -3709,7 +3683,7 @@ there was an error (including -1 entered by the player to exit the command)."
                   (return-from fire-photon-torpedoes nil))))))
       ;; TODO - is this a common idiom suitable for a function? Yes - (enemies-remaining-p)
       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
-        (finish +won+)))))
+        (finish 'won)))))
 
 (defun cloak () ; C: void cloak(void)
 
@@ -3770,6 +3744,11 @@ there was an error (including -1 entered by the player to exit the command)."
         (print-message (format nil "The Romulan ship discovers you are breaking the Treaty of Algeron!~%"))
         (setf *cloaking-violations* (1+ *cloaking-violations*))
         (setf *cloaking-violation-reported-p* t))
+      ;; TODO - breaking the Treaty of Algeron while in the Romulan Neutral Zone ends the game
+      ;;        should check for both cloaking and uncloaking
+      ;;(when (and neutz
+      ;;           (>= stardate +algeron-date+)
+      ;;  (finish 'cloaking-while-in-neutral-zone))
       (return-from cloak nil))
     ;; turn cloaking on
     (when (damagedp +cloaking-device+)
@@ -3848,7 +3827,7 @@ input when a tractor beam event occurs."
        (when (<= *ship-energy* 0)
          (skip-line)
          (print-message (format nil "Shields raising uses up last of energy.~%"))
-         (finish +out-of-energy+)
+         (finish 'out-of-energy)
          (return-from shield-actions nil))
        (setf *action-taken-p* t))
 
@@ -3950,7 +3929,7 @@ coordinates of the enemy being rammed or the original coordinates of ramming ene
   (print-message (format nil "***~A heavily damaged.~%" (format-ship-name)))
   (if (> (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
       (damage-report)
-      (finish +won+)))
+      (finish 'won)))
 
 (defun get-random-device () ; C: int randdevice(void)
   "Choose a device to damage, at random.
@@ -4191,7 +4170,34 @@ is a string suitable for use with the format function."
       (format s "~95:@<~A~>~%~%" (format nil "Klingons per stardate:  ~,2F" (klingons-per-stardate))))))
 
 (defun finish (finish-reason) ; C: finish(FINTYPE ifin)
-  "End the game, with appropriate notfications."
+  "End the game, with appropriate notfications.
+
+Here are the ways the game can end:
+
+won - All klingons have been destroyed before time runs out. The player wins.
+federation-resources-depleted - Time ran out with klingons remaining.
+life-support-consumed - Ship has no life support
+out-of-energy - Ship has no energy
+destroyed-in-battle - Ship destroyed by an enemy
+3-negative-energy-barrier-crossings - Attempted navigation outside the galaxy
+ship-destroyed-by-nova - Ship destroyed by ordinary nova
+destroyed-by-supernova - Ship did not escape from a quadrant containing a supernova
+abandon-ship-with-no-starbases - No place to go
+dilithium-crystals-failed - Use of raw dilithium crystals failed, or player self-destructed
+failed-to-rematerialize - Emergency transport of ship by a base failed
+phaser-fire-inside-shields - High-speed shield control failed, frying the ship
+transporter-failure - Transporter fails while beaming up to or down from a planet
+tractor-beam-while-mining - The ship is tractor-beamed while the mining party is on a planet
+planet-destroyed-while-landed - Planet is destroyed while the mining party is on it
+nova-destroys-planet-while-landed - Planet destroyed by nova while the mining party is on it
+super-nova-destroys-shuttle - Supernova destroys shuttle while the mining party is using it
+tractor-beam-destroys-shuttle - Tractor beam destroys shuttle while the mining part is using it
+death-ray-malfunction - Death ray malfunctions by mutating humans on the ship
+death-ray-creates-tribbles - Death ray malfunction creates tribbles that consume all life support
+destroyed-by-black-hole - Ship falls into a black hole and is destroyed
+all-crew-killed - All crew have been killed
+cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no other enemy
+"
 
   (when *window-interface-p*
     (select-window *message-window*))
@@ -4203,7 +4209,7 @@ is a string suitable for use with the format function."
   (skip-line)
   (cond
     ;; C: FWON
-    ((= finish-reason +won+)
+    ((eql finish-reason 'won)
      (setf *game-won-p* t)
      (print-message (format nil "You have smashed the Klingon invasion fleet and saved~%"))
      (print-message (format nil "the Federation.~%"))
@@ -4279,8 +4285,8 @@ is a string suitable for use with the format function."
        (print-message (format nil "LIVE LONG AND PROSPER.~%")))
      (score)
      (return-from finish nil))
-    ;; FDEPLETE ; Federation Resources Depleted
-    ((= finish-reason +deplete+)
+    ;; FDEPLETE ; time ran out - Federation Resources Depleted
+    ((eql finish-reason 'federation-resources-depleted)
      (print-message (format nil "Your time has run out and the Federation has been~%"))
      (print-message (format nil "conquered.  Your starship is now Klingon property,~%"))
      (print-message (format nil "and you are put on trial as a war criminal.  On the~%"))
@@ -4298,120 +4304,122 @@ is a string suitable for use with the format function."
      (score)
      (return-from finish nil))
     ;; FLIFESUP
-    ((= finish-reason +life-support-consumed+)
+    ((eql finish-reason 'life-support-consumed)
      (print-message (format nil "Your life support reserves have run out, and~%"))
      (print-message (format nil "you die of thirst, starvation, and asphyxiation.~%"))
      (skip-line)
      (print-message (format nil "Your starship is a derelict in space.~%")))
     ;; FNRG
-    ((= finish-reason +out-of-energy+)
+    ((eql finish-reason 'out-of-energy)
      (print-message (format nil "Your energy supply is exhausted.~%"))
      (skip-line)
      (print-message (format nil "Your starship is a derelict in space.~%")))
     ;; FBATTLE
-    ((= finish-reason +battle+)
+    ((eql finish-reason 'destroyed-in-battle)
      (print-message (format nil "The ~A has been destroyed in battle.~%" (format-ship-name)))
      (skip-line)
      (print-message (format nil "Dulce et decorum est pro patria mori.~%")))
     ;; FNEG3
-    ((= finish-reason +3-negative-energy-barrier-crossings+)
+    ((eql finish-reason '3-negative-energy-barrier-crossings)
      (print-message (format nil "You have made three attempts to cross the negative energy~%"))
      (print-message (format nil "barrier which surrounds the galaxy.~%"))
      (skip-line)
      (print-message (format nil "Your navigation is abominable.~%"))
      (score))
     ;; FNOVA
-    ((= finish-reason +nova+)
+    ((eql finish-reason 'ship-destroyed-by-nova)
      (print-message (format nil "Your starship has been destroyed by a nova.~%"))
      (skip-line)
      (print-message (format nil "That was a great shot.~%"))
      (skip-line))
     ;; FSNOVAED
-    ((= finish-reason +destroyed-by-supernova+)
+    ((eql finish-reason 'destroyed-by-supernova)
      (print-message (format nil "The ~A has been fried by a supernova.~%" (format-ship-name)))
      (skip-line)
      (print-message (format nil "...Not even cinders remain...~%")))
     ;; FABANDN
-    ((= finish-reason +abandon+)
+    ((eql finish-reason 'abandon-ship-with-no-starbases)
      (print-message (format nil "You have been captured by the Klingons. If you still~%"))
      (print-message (format nil "had a starbase to be returned to, you would have been~%"))
      (print-message (format nil "repatriated and given another chance. Since you have~%"))
      (print-message (format nil "no starbases, you will be mercilessly tortured to death.~%")))
     ;; FDILITHIUM
-    ((= finish-reason +dilithium+)
+    ;; This is the same finish as the self-destruct command
+    ((eql finish-reason 'dilithium-crystals-failed)
      (print-message (format nil "Your starship is now an expanding cloud of subatomic particles.~%")))
     ;; FMATERIALIZE
-    ((= finish-reason +materialize+)
+    ((eql finish-reason 'failed-to-rematerialize)
      (print-message (format nil "Starbase was unable to re-materialize your starship.~%"))
      (skip-line)
      (print-message (format nil "Sic transit gloria mundi~%")))
     ;; FPHASER
-    ((= finish-reason +phaser+)
+    ((eql finish-reason 'phaser-fire-inside-shields)
      (print-message (format nil "The ~A has been cremated by its own phasers.~%" (format-ship-name))))
     ;; FLOST
-    ((= finish-reason +lost+)
+    ((eql finish-reason 'transporter-failure)
      (print-message (format nil "You and your landing party have been~%"))
      (print-message (format nil "converted to energy, dissipating through space.~%")))
     ;; FMINING
-    ((= finish-reason +mining+)
+    ((eql finish-reason 'tractor-beam-while-mining)
      (print-message (format nil "You are left with your landing party on~%"))
      (print-message (format nil "a wild jungle planet inhabited by primitive cannibals.~%"))
      (print-message (format nil "They are very fond of \"Captain Kirk\" soup.~%"))
      (skip-line)
      (print-message (format nil "Without your leadership, the ~A is destroyed.~%" (format-ship-name))))
     ;; FDPLANET
-    ((= finish-reason +destroyed-planet+)
+    ((eql finish-reason 'planet-destroyed-while-landed)
      (print-message (format nil "You and your mining party perish.~%"))
      (skip-line)
      (print-message (format nil "That was a great shot.~%")))
     ;; The Galileo being caught in a supernova is a special case of a mining party being wiped
     ;; out in a nova. Handle them together.
     ;; FSSC, FPNOVA
-    ((or (= finish-reason +shuttle-super-nova+)
-         (= finish-reason +mining-party-nova+))
-     (when (= finish-reason +shuttle-super-nova+)
+    ((or (eql finish-reason 'super-nova-destroys-shuttle)
+         (eql finish-reason 'nova-destroys-planet-while-landed))
+     (when (eql finish-reason 'super-nova-destroys-shuttle)
        (print-message (format nil "The Galileo is instantly annihilated by the supernova.~%")))
      (print-message (format nil "You and your mining party are atomized.~%"))
      (skip-line)
      (print-message (format nil "Mr. Spock takes command of the ~A and~%" (format-ship-name)))
      (print-message (format nil "joins the Romulans, reigning terror on the Federation.~%")))
     ;; FSTRACTOR
-    ((= finish-reason +shuttle-tractor-beam+)
+    ((eql finish-reason 'tractor-beam-destroys-shuttle)
      (print-message (format nil "The shuttle craft Galileo is also caught,~%"))
      (print-message (format nil "and breaks up under the strain.~%"))
      (print-message (format nil "Your debris is scattered for millions of miles.~%"))
      (skip-line)
      (print-message (format nil "Without your leadership, the ~A is destroyed.~%" (format-ship-name))))
     ;; FDRAY
-    ((= finish-reason +death-ray-malfunction+)
+    ((eql finish-reason 'death-ray-malfunction)
      (print-message (format nil "The mutants attack and kill Spock.~%"))
      (print-message (format nil "Your ship is captured by Klingons, and~%"))
      (print-message (format nil "your crew is put on display in a Klingon zoo.~%")))
     ;; FTRIBBLE
-    ((= finish-reason +tribbles+)
+    ((eql finish-reason 'death-ray-creates-tribbles)
      (print-message (format nil "Tribbles consume all remaining water,~%"))
      (print-message (format nil "food, and oxygen on your ship.~%"))
      (print-message (format nil "You die of thirst, starvation, and asphyxiation.~%"))
      (skip-line)
      (print-message (format nil "Your starship is a derelict in space.~%")))
     ;; FHOLE
-    ((= finish-reason +destroyed-by-black-hole+)
+    ((eql finish-reason 'destroyed-by-black-hole)
      (print-message (format nil "Your ship is drawn to the center of the black hole.~%"))
      (print-message (format nil "You are crushed into extremely dense matter.~%")))
     ;; FCREW
-    ((= finish-reason +all-crew-killed+)
+    ((eql finish-reason 'all-crew-killed)
      (print-message (format nil "Your last crew member has died.~%")))
-    ;; FCLOAK
-    ((= finish-reason +cloak+)
-     (setf *cloaking-violations* (1+ *cloaking-violations*))
-     (print-message (format nil "You have violated the Treaty of Algeron.~%"))
-     (print-message (format nil "The Romulan Empire can never trust you again.~%")))
+    ;; TODO - implement this
+    ;;;; FCLOAK
+    ;;((eql finish-reason 'cloaking-while-in-neutral-zone)
+    ;; (setf *cloaking-violations* (1+ *cloaking-violations*))
+    ;; (print-message (format nil "You have violated the Treaty of Algeron.~%"))
+    ;; (print-message (format nil "The Romulan Empire can never trust you again.~%")))
     ;; should never reach this, but here we are
     (t
      (print-message (format nil "Game over, man!~%"))
      (skip-line)))
-  (when (and (/= finish-reason +won+)
-             (/= finish-reason +cloak+)
+  (when (and (not (eql finish-reason 'won))
+             ;;(not (eql finish-reason 'cloaking-while-in-neutral-zone))
              *cloakedp*)
     (print-message (format nil "Your ship was cloaked so your subspace radio did not receive anything.~%"))
     (print-message (format nil "You may have missed some warning messages.~%")))
@@ -4465,7 +4473,7 @@ is a string suitable for use with the format function."
       (dead-enemy (aref *klingon-sectors* i)
                   (coord-ref *quadrant-contents* (aref *klingon-sectors* i))
                   (aref *klingon-sectors* i))))
-  (finish +dilithium+))
+  (finish 'dilithium-crystals-failed))
 
 (defun expran (average)
   "Generate a random number for a time in the future.
@@ -4826,7 +4834,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
          (print-message (format nil "Captain and crew escape in shuttle craft.~%"))
          (when (= (length *base-quadrants*) 0)
            ;; Oops! no place to go...
-           (finish +abandon+)
+           (finish 'abandon-ship-with-no-starbases)
            (return-from abandon-ship nil))
          ;; Dispose of crew.
          ;; Before the introduction of inhabited planets the message was
@@ -5268,10 +5276,10 @@ retreat, especially at high skill levels.
                               (* (1- enemy-multiplier) 400))))
             (unless *shields-are-up-p*
               (setf forces (+ forces 1000))) ; Good for enemy if shield is down!
-            (if (or (not (damagedp +phaser+))
+            (if (or (not (damagedp +phasers+))
                     (not (damagedp +photon-torpedoes+)))
                 (progn
-                  (if (damagedp +phaser+) ; phasers damaged
+                  (if (damagedp +phasers+) ; phasers damaged
                       (setf forces (+ forces 300.0))
                       (setf forces (- forces (* (- *ship-energy* 2500.0) 2.0))))
                   (if (damagedp +photon-torpedoes+) ; photon torpedoes damaged
@@ -5492,7 +5500,7 @@ the player completes their turn."
                  (hit-total 0.0)) ; C: hittot
                 ((>= n *enemies-here*)
                  (when (<= *ship-energy* 0)
-                   (finish +battle+) ; Returning home upon your shield, not with it...
+                   (finish 'destroyed-in-battle) ; Returning home upon your shield, not with it...
                    (return-from attack-player nil))
                  (when (not attack-attempted-p)
                    (print-message (format nil "***Enemies decide against attacking your ship.~%")))
@@ -5574,7 +5582,7 @@ the player completes their turn."
                                                                     random-variation)))
                       (setf hit (move-torpedo-within-quadrant course random-variation enemy-sector 1 1))
                       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
-                        (finish +won+)) ; Klingons did themselves in!
+                        (finish 'won)) ; Klingons did themselves in!
                       (when (or (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
                                 *all-done-p*)
                         (return-from attack-player nil))))
@@ -5731,7 +5739,7 @@ can occur."
              (when energy-barrier-crossed-p
                (1+ *energy-barrier-crossings*)
                (when (>= *energy-barrier-crossings* 3) ; Three strikes -- you're out!
-                 (finish +3-negative-energy-barrier-crossings+)
+                 (finish '3-negative-energy-barrier-crossings)
                  (return-from move-ship-within-quadrant t))
                (skip-line)
                (print-message (format nil "YOU HAVE ATTEMPTED TO CROSS THE NEGATIVE ENERGY BARRIER~%"))
@@ -5797,7 +5805,7 @@ can occur."
                                             (expt 1.3 (1- (/ 1.0 (1+ damaged-devices))))))
                 (if (> (random 1.0) probability-factor)
                     (time-warp)
-                    (finish +destroyed-by-black-hole+))
+                    (finish 'destroyed-by-black-hole))
                 (return-from move-ship-within-quadrant t))
              (when (> (aref *device-damage* index) 0) ; TODO - define a "count damaged devices" function?
                (1+ damaged-devices))))
@@ -5815,7 +5823,7 @@ can occur."
              (setf (coordinate-y s-coord) (truncate (- prev-y delta-y)))
              (setf *ship-energy* (- *ship-energy* stop-energy))
              (when (<= *ship-energy* 0)
-               (finish +out-of-energy+)
+               (finish 'out-of-energy)
                (return-from move-ship-within-quadrant t)))))
         (setf movement-stopped-p t)))
     (setf (coordinate-x *ship-sector*) (coordinate-x s-coord))
@@ -6112,7 +6120,7 @@ displayed y - x, where +y is downward!"
     (setf *time-taken-by-current-operation* (/ distance 0.095)))
 
   (when (<= *ship-energy* 0)
-    (finish +out-of-energy+)))
+    (finish 'out-of-energy)))
 
 (defun execute-warp-move (course distance) ; C: part of warp(bool timewarp)
   "Carry out warp movement that was set up by player command or emergency override (fast exit from
@@ -6171,7 +6179,7 @@ quadrant experiencing a supernova)."
                                             (expt *warp-factor* 3)
                                             (if *shields-are-up-p* 2 1))))
     (when (<= *ship-energy* 0)
-      (finish +out-of-energy+))
+      (finish 'out-of-energy))
     (setf *time-taken-by-current-operation* (calculate-warp-movement-time :distance distance
                                                                           :warp-factor *warp-factor*))
     (when time-warp-p
@@ -7245,7 +7253,7 @@ was an event that requires aborting the operation carried out by the calling fun
       (print-message (format nil "BOOOIIIOOOIIOOOOIIIOIING . . .~%") :print-slowly t)
       (skip-line)
       (print-message (format nil "Scotty-  \"Oh my God!  I've lost them.\"~%"))
-      (finish +lost+)
+      (finish 'transporter-failure)
       (return-from beam nil))
     (print-message (format nil ".    .   .  .  .  .  .E.E.EEEERRRRRIIIIIOOOHWW~%") :print-slowly t)
     (setf *landedp* (not *landedp*))
@@ -7317,7 +7325,7 @@ was an event that requires aborting the operation carried out by the calling fun
            ;; deathray. That seems backwards - the deathray status report is irrelevant and out
            ;; of place after the text explaining that the game has been won.
            (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
-             (finish +won+)))
+             (finish 'won)))
          (let ((r (random 1.0)))
            ;; Pick failure method
            (cond
@@ -7345,7 +7353,7 @@ was an event that requires aborting the operation carried out by the calling fun
               (print-message (format nil"  Vulcans do not seem to be affected.~%"))
               (skip-line)
               (print-message (format nil "Kirk-  \"Raauch!  Raauch!\"~%"))
-              (finish +death-ray+))
+              (finish 'death-ray-malfunction))
 
              ((<= r 0.75)
               (print-message (format nil "Sulu- \"Captain!  It's   --WHAT?!?!\"~%") :print-slowly t)
@@ -7369,7 +7377,7 @@ was an event that requires aborting the operation carried out by the calling fun
                :print-slowly t)
               (print-message (format nil "Scotty-  \"There are so many tribbles down here~%"))
               (print-message (format nil "  in Engineering, we can't move for 'em, Captain.\"~%"))
-              (finish +tribbles+))))))))
+              (finish 'death-ray-creates-tribbles))))))))
 
 (defun mine () ; C: mine(void)
   "Mine dilithium from a planet."
@@ -7416,7 +7424,6 @@ These exits occur when there is a supernova in the quadrant or a tractor beam gr
 The finish-reason determines the ending text if the captain is not successfully retrieved from
 the planet."
 
-  ;; TODO - set the output window when in curses mode?
   (clear-type-ahead-buffer)
   (when *landedp*
     (when (damagedp +transporter+)
@@ -7449,11 +7456,11 @@ the planet."
   (when *window-interface-p*
     (select-window *message-window*))
 
-  (quadrant-exit-while-on-planet +mining-party-nova+)
+  (quadrant-exit-while-on-planet 'nova-destroys-planet-while-landed)
   ;; TODO - is this the correct place for the shuttle craft check?
   ;; Check to see if captain in shuttle craft
   (when *in-shuttle-craft-p*
-    (finish +shuttle-super-nova+)) ;; C used Shuttle Tractor Beam but that code couldn't be reached
+    (finish 'super-nova-destroys-shuttle))
   (unless *all-done-p*
     ;; Inform captain of attempt to reach safety
     (skip-line)
@@ -7473,7 +7480,7 @@ the planet."
       (when (damagedp +warp-engines+)
         (skip-line)
         (print-message (format nil "Warp engines damaged.~%"))
-        (finish +destroyed-by-supernova+)
+        (finish 'destroyed-by-supernova)
         (return-from emergency-supernova-exit nil))
       (setf *warp-factor* (+ 6.0 (* 2.0 (random 1.0))))
       (print-message (format nil "Warp factor set to ~A~%" (truncate *warp-factor*)))
@@ -7491,12 +7498,12 @@ the planet."
         (when *all-done-p*
           (return-from emergency-supernova-exit nil))
         (skip-line)
-        ;; Not true in the case where the ship was blocked on the way out of the quadrant.
+        ;; TODO - Not true in the case where the ship was blocked on the way out of the quadrant.
         (print-message (format nil "Insufficient energy to leave quadrant.~%"))
-        (finish +destroyed-by-supernova+)
+        (finish 'destroyed-by-supernova)
         (return-from emergency-supernova-exit nil)))
     (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
-      (finish +won+)))) ; Supernova killed remaining enemies.
+      (finish 'won)))) ; Supernova killed remaining enemies.
 
 (defun orbit () ; C: orbit(void)
   "Enter standard orbit."
@@ -7642,9 +7649,8 @@ it's your problem."
            (setf found-empty-sector-p t)))
        (when (not (coordinate-p *ship-sector*))
          (skip-line)
-         ;; TODO - move this message to the finish function
          (print-message (format nil "You have been lost in space...~%"))
-         (finish +materialize+)
+         (finish 'failed-to-rematerialize)
          (return-from mayday nil))
        ;; Give starbase three chances to rematerialize starship
        (setf probf (expt (- 1.0 (expt 0.98 dest-dist)) 0.33333333))
@@ -7659,7 +7665,7 @@ it's your problem."
               ;; lost/destroyed and Spock isn't doing anything now. Fill the windows so the player
               ;; isn't left with a blank screen.
               (draw-windows)
-              (finish +materialize+)
+              (finish 'failed-to-rematerialize)
               (return-from mayday nil)))
          (print-message (format nil "~A attempt to re-materialize ~A "
                                 (cond
