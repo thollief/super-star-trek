@@ -4106,16 +4106,13 @@ is a string suitable for use with the format function."
 (define-constant +day-names+
     (list "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
 
-(define-constant +month-names+
-  (list "January" "February" "March" "April" "May" "June" "July" "August" "September" "October"
-        "November" "December"))
-
 (defun plaque () ; C: plaque(void)
-  "Emit winner's commemmorative plaque."
+  "Emit winner's commemmorative plaque.
 
-  ;; TODO - the original Fortran printed on 132 column fanfold, and subsequent versions printed on
-  ;;        8.5"x11" or A4 in portrait mode. All versions were nicely centered. One implementation
-  ;;        scrolled the ASCII art across the screen.
+The original Fortran printed on 132 column fanfold, and subsequent versions printed on
+8.5\"x11\" or A4 in portrait mode. All versions were nicely centered. One implementation
+scrolled the ASCII art across the screen. Just write it to a file and let the player decide
+what to do with it."
 
   (let (file
         winner)
@@ -4125,7 +4122,10 @@ is a string suitable for use with the format function."
     (scan-input)
     (setf file *input-item*)
     (print-prompt "Enter name to go on plaque (up to 30 characters): ")
-    (setf winner (read-line))
+    ;; TODO - need untokenized input in window mode
+    (scan-input)
+    (setf winner (format nil "~A~{ ~A~}" *input-item* *line-tokens*))
+    (setf winner (subseq winner 0 (min 30 (length winner))))
     (with-open-file (s file :direction :output :if-exists :rename)
       ;; --------DRAW ENTERPRISE PICTURE.
       (format s "                                            EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE~%")
@@ -4145,34 +4145,36 @@ is a string suitable for use with the format function."
       (format s "                                   EE  :                    EEEEEEEE~%")
       (format s "                                    EEEEEEEEEEEEEEEEEEEEEEE~%")
       (format s "~%~%")
-      (format s "~95:@<~A~>~%" "U. S. S. ENTERPRISE")
+      (format s "~95:@<U. S. S. ENTERPRISE~>~%")
       (format s "~%~%~%")
-      (format s "~95:@<~A~>~%~%" "For demonstrating outstanding ability as a starship captain")
-      (format s "~95:@<~A~>~%~%" "Starfleet Command bestows to you")
+      (format s "~95:@<For demonstrating outstanding ability as a starship captain~>~%~%")
+      (format s "~95:@<Starfleet Command bestows to you~>~%~%")
       (format s "~95:@<~A~>~%~%" winner)
-      (format s "~95:@<~A~>~%~%" "the rank of")
-      (format s "~95:@<~A~>~%~%" "\"Commodore Emeritus\"")
+      (format s "~95:@<the rank of~>~%~%")
+      (format s "~95:@<\"Commodore Emeritus\"~>~%~%")
       (cond
         ((= (skill-level-value *skill-level*) +expert+)
-         (format s "~95:@<~A~>~%~%" "Expert level"))
+         (format s "~95:@<Expert level~>~%~%"))
 
         ((= (skill-level-value *skill-level*) +emeritus+)
-         (format s "~95:@<~A~>~%~%" "Emeritus level"))
+         (format s "~95:@<Emeritus level~>~%~%"))
 
         (t
-         (format s "~95:@<~A~>~%~%" "Cheat level")))
+         (format s "~95:@<Cheat level~>~%~%")))
       (multiple-value-bind
             (second minute hour date month year day-of-week dst-p tz) (get-decoded-time)
         (setf second second) (setf minute minute) (setf hour hour) (setf day-of-week day-of-week)
         (setf dst-p dst-p) (setf tz tz)
-        (format s "~95:@<~A~>~%~%" (format nil "This day of ~A ~A, ~A" date (nth month +month-names+) year)))
-      (format s "~95:@<~A~>~%~%" (format nil "Your score:  ~D" *score*))
-      (format s "~95:@<~A~>~%~%" (format nil "Klingons per stardate:  ~,2F" (klingons-per-stardate))))))
+        (format s "~95:@<This day of ~A ~A, ~A~>~%~%"
+                date
+                (nth (1- month) (list "January" "February" "March" "April" "May" "June" "July"
+                                      "August" "September" "October" "November" "December"))
+                year))
+      (format s "~95:@<Your score:  ~D~>~%~%" *score*)
+      (format s "~95:@<Klingons per stardate:  ~,2F~>~%~%" (klingons-per-stardate)))))
 
 (defun finish (finish-reason) ; C: finish(FINTYPE ifin)
-  "End the game, with appropriate notfications.
-
-Here are the ways the game can end:
+  "End the game, with appropriate notfications. Here are the ways the game can end:
 
 won - All klingons have been destroyed before time runs out. The player wins.
 federation-resources-depleted - Time ran out with klingons remaining.
@@ -8120,6 +8122,7 @@ values, expecially number of entities in the game."
     (select-window *message-window*))
 
   (skip-line)
+  (clear-type-ahead-buffer)
   ;; Choose game type, length, skill level, and password
   (multiple-value-bind (game-type tournament-number) (get-game-type)
     (get-game-length)
