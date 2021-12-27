@@ -63,14 +63,15 @@ window."
 
 ;; TODO - C source also stores the input line in the replay file.
 (defun get-input-line () ; C: cgetline(char *line, int max)
-  "Get a line of input from the keyboard as a string. Remove leading and trailing spaces, and
-lowercase everything."
+  "Get a line of input from the keyboard as a string."
+
   (let (line)
     (if *window-interface-p*
         (progn
           ;; wgetstr and related ncurses functions from charms/ll don't seem to work. Simulate with wgetch.
           (do ((input-char 0 (wgetch *prompt-window*)))
-              ((= input-char 13))
+              ((= input-char 13)
+               line) ; return value
             ;; wgetch returns numeric character codes, accept the usual printable ASCII characters
             (when (and (>= input-char 32)
                        (<= input-char 126))
@@ -90,19 +91,22 @@ lowercase everything."
                   (setf line (subseq line 0 (- (length line) 1))))))
             (wrefresh *prompt-window*)))
         (progn ; assume line-by-line
-          (setf line (read-line)))) ; C: fgets(line, max, stdin) - input length isn't limited here, use read-char if needed
-    (setf line (string-downcase (string-trim " " line)))))
+          ;; input length isn't limited here, use read-char if needed
+          (setf line (read-line)))))) ; C: fgets(line, max, stdin)
 
 ;; TODO - scan should return the value scanned, not set a global, and unscan should accept a parameter
 ;;       of the item to unscan.
 (defun scan-input ()
   "Manage a list of input tokens, returning one token each time this function is called. If the
-list is empty then get input from the keyboard and split it on spaces to generate tokens. Return
-the first token and save the remainder for the next call. If the keyboard input didn't include
-any non-space characters then return nil."
+list is empty then get input from the keyboard, remove leading and trailing spaces, downcase
+everything, and then split it on spaces to generate tokens. Return the first token and save the
+remainder for the next call. If the keyboard input didn't include any non-space characters then
+return nil."
 
   (when (= (length *line-tokens*) 0)
-    (setf *line-tokens* (split-sequence #\SPACE (get-input-line) :remove-empty-subseqs t)))
+    (setf *line-tokens* (split-sequence #\SPACE
+                                        (string-downcase (string-trim " "(get-input-line)))
+                                        :remove-empty-subseqs t)))
   (let ((test-number nil))
     (setf *input-item* (pop *line-tokens*))
     (when *input-item*
@@ -4119,12 +4123,9 @@ what to do with it."
     (clear-type-ahead-buffer)
     (skip-line 2)
     (print-prompt "File or device name for your plaque: ")
-    (scan-input)
-    (setf file *input-item*)
+    (setf file (get-input-line))
     (print-prompt "Enter name to go on plaque (up to 30 characters): ")
-    ;; TODO - need untokenized input in window mode
-    (scan-input)
-    (setf winner (format nil "~A~{ ~A~}" *input-item* *line-tokens*))
+    (setf winner (get-input-line))
     (setf winner (subseq winner 0 (min 30 (length winner))))
     (with-open-file (s file :direction :output :if-exists :rename)
       ;; --------DRAW ENTERPRISE PICTURE.
@@ -8672,7 +8673,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
          (setf hit-me-p t)))
       ((string= command "warp")
        (set-warp-factor))
-      (t ; Unsuable input, print a list of valid commands.
+      (t ; Unusable input, print a list of valid commands.
        (display-commands commands)))
 
     ;; Give the game a turn after the player completes theirs: invoke scheduled events and give
