@@ -157,8 +157,12 @@ versions of Super Star Trek."
                (when print-slowly
                  (sleep 0.030))
                (if *window-interface-p*
-                   (progn
-                     (wprintw *current-window* (string c))
+                   ;; The curses wprintw function uses % to indicate format control characters for
+                   ;; C printf, so double them to print literal % symbols
+                   (let ((string-to-print (string c)))
+                     (when (string= string-to-print "%")
+                       (setf string-to-print "%%"))
+                     (wprintw *current-window* string-to-print)
                      (wrefresh *current-window*))
                    (progn
                      (princ c)
@@ -470,6 +474,8 @@ empty string if the planet class can't be determined."
      "Black hole")
     ((string= quadrant-entity +planet+)
      "Planet")
+    ((string= quadrant-entity +star+)
+     "Star")
     (t
      "unknown")))
 
@@ -1125,7 +1131,7 @@ affected."
       (progn
         ;; handle initial nova
         (setf (coord-ref *quadrant-contents* nova-sector) +empty-sector+)
-        (print-message (format nil "Star at sector ~A novas.~%"
+        (print-message (format nil "Star at ~A novas.~%"
                                (format-sector-coordinates nova-sector)))
         (setf (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))
               (1- (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
@@ -1162,8 +1168,7 @@ affected."
                 ((> adjacent-y (1+ (coordinate-y n-sector))))
               (setf adjacent-coord (make-coordinate :x adjacent-x :y adjacent-y))
               (when (and (valid-sector-p adjacent-x adjacent-y)
-                         (/= adjacent-x (coordinate-x n-sector))
-                         (/= adjacent-y (coordinate-y n-sector)))
+                         (not (coord-equal adjacent-coord n-sector)))
                 (cond
                   ;; Affect another star
                   ((string= (aref *quadrant-contents* adjacent-x adjacent-y) +star+)
@@ -1227,8 +1232,8 @@ affected."
                      (finish 'ship-destroyed-by-nova)
                      (return-from nova nil))
                    ;; add in course nova contributes to kicking starship
-                   (setf change-x (+ change-x (- (coordinate-x *ship-sector*) adjacent-x)))
-                   (setf change-y (+ change-y (- (coordinate-y *ship-sector*) adjacent-y)))
+                   (setf change-x (+ change-x (- (coordinate-x *ship-sector*) (coordinate-x n-sector))))
+                   (setf change-y (+ change-y (- (coordinate-y *ship-sector*) (coordinate-y n-sector))))
                    (setf nova-pushes (1+ nova-pushes)))
                   ;; Kill klingon
                   ((string= (aref *quadrant-contents* adjacent-x adjacent-y) +klingon+)
@@ -1280,7 +1285,7 @@ affected."
                    ;; +black-hole+
                    ;; +tholian+
                    ;; +tholian-web+
-                   )))))))))
+                   nil)))))))))
 
 (defun get-random-star ()
   "Get the sector coordinates of a random star in the current quadrant."
@@ -2330,15 +2335,16 @@ There is no line 10.
         (skip-line)
         (game-status 1)))
   (when (= line-to-print 8)
-    (print-out (format nil "~34@<Shields ~A ~A% ~,1F units~>"
+    (print-out (format nil "~34@<Shields ~A, ~D%, ~,1F units~;~>"
                        (cond
                          ((damagedp +shields+)
-                          "DAMAGED,")
+                          "DAMAGED")
                          (*shields-are-up-p*
-                          "UP,")
+                          "UP")
                          ((not *shields-are-up-p*)
-                          "DOWN,"))
-                       (truncate (+ (/ (* 100.0 *shield-energy*) *initial-shield-energy*) 0.5))
+                          "DOWN"))
+                       ;;(truncate (+ (/ (* 100.0 *shield-energy*) *initial-shield-energy*) 0.5))
+                       (round (/ (* 100.0 *shield-energy*) *initial-shield-energy*))
                        *shield-energy*))
     (if *window-interface-p*
         (skip-line)
@@ -3346,8 +3352,8 @@ handling the result. Return the amount of damage if the player ship was hit."
                                               (format-sector-coordinates torpedo-sector)))
                        (print-message (format nil "   torpedo neutralized.~%")))
                      ;; Hit a regular enemy
-                     ;; TODO - during testing a torpedo destroyed a klingon but the Klingon was not removed
-                     ;;        from the SR scan. The SR scan showed a K but the enemy
+                     ;; TODO - during testing a torpedo destroyed a klingon but the Klingon was
+                     ;;        not removed from the SR scan. The SR scan showed a K but the enemy
                      ;;        was treated as Unknown.
                      (do ((enemy-index 0 (1+ enemy-index)) ; find the enemy
                           enemy-energy
@@ -7754,7 +7760,7 @@ it's your problem."
     (return-from use-crystals nil))
   (when (>= *ship-energy* 1000.0)
     (print-message (format nil "Spock-  \"Captain, Starfleet Regulations prohibit such an operation~%"))
-    (print-message (format nil "  except when Condition Yellow exists.~%"))
+    (print-message (format nil "  except when Condition Yellow exists due to low energy supply.~%"))
     (return-from use-crystals nil))
   (print-message (format nil "Spock- \"Captain, I must warn you that loading~%"))
   (print-message (format nil "  raw dilithium crystals into the ship's power~%"))
