@@ -16,8 +16,3 @@
     :build-operation "asdf:program-op"
     :build-pathname "sst"
     :entry-point "sst:sst")
-
-;;    :components ((:file "packages")
-;;                 (:file "macros" :depends-on ("packages"))
-;;                 (:file "hello" :depends-on ("macros")))
-
