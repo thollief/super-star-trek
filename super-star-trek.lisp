@@ -228,7 +228,7 @@ can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
 (defun print-stars ()
   "Print a line of stars."
 
-  (print-message (format nil "******************************************************~%")
+  (print-message (format nil "************************************************************~%")
                  :print-slowly t))
 
 (defun huh () ; C: huh(void)
@@ -384,27 +384,6 @@ coordinates or nil."
   "Write a stardate with one decimal point."
 
   (format nil "~,1,,,F" d))
-
-(define-constant +short-game+ 1)
-(define-constant +medium-game+ 2)
-(define-constant +long-game+ 4)
-(defstruct game-length
-  "Player's selection of game length."
-
-  value ; Numeric values 1, 2, or 4. Used to initialize gameplay parameters.
-  label) ; The textual representation of the game length: short, medium, long
-
-(define-constant +novice+ 1) ; C: skill, SKILL_NOVICE = 1
-(define-constant +fair+ 2) ; C: skill, SKILL_FAIR = 2
-(define-constant +good+ 3) ; C: skill, SKILL_GOOD = 3
-(define-constant +expert+ 4) ; C: skill, SKILL_EXPERT = 4
-(define-constant +emeritus+ 5) ; C: skill, SKILL_EMERITUS = 5
-(defstruct skill-level
-  "Player's selection of game difficulty. Skill levels are ordered, each higher
-than the previous."
-
-  value ; Numeric skill level used to initialize gameplay parameters
-  label) ; The textual representaion of the skill level: novice, fair, good, expert, emeritus
 
 (define-constant +class-m+ 1)
 (define-constant +class-n+ 2)
@@ -612,8 +591,27 @@ be tracked."
 
 ;; User-selectable game parameters.
 (defparameter *tournament-number* nil "Tournament number, or nil if regular game.") ; C: tourn
-(defparameter *game-length* nil "A game-length struct.") ; C: length
-(defparameter *skill-level* nil "A skill-level struct") ; C: skill
+(defparameter *game-length-values* (list
+                                    (cons "short" 1)
+                                    (cons "medium" 2)
+                                    (cons "long" 4))
+  "Numeric values for game lengths used to intialize parameters in new games.")
+(defparameter *game-length* nil
+  "A string containing player's selection of game length.") ; C: length
+(define-constant +novice+ 1) ; C: skill, SKILL_NOVICE = 1
+(define-constant +fair+ 2) ; C: skill, SKILL_FAIR = 2
+(define-constant +good+ 3) ; C: skill, SKILL_GOOD = 3
+(define-constant +expert+ 4) ; C: skill, SKILL_EXPERT = 4
+(define-constant +emeritus+ 5) ; C: skill, SKILL_EMERITUS = 5
+(defparameter *skill-level-labels* (list
+                                    (cons +novice+ "novice")
+                                    (cons +fair+ "fair")
+                                    (cons +good+ "good")
+                                    (cons +expert+ "expert")
+                                    (cons +emeritus+ "emeritus"))
+  "Labels for skill levels.")
+(defparameter *skill-level* nil
+  "A number representing the player's selection of skill level.") ; C: skill
 (defparameter *self-destruct-password* nil) ; C: passwd[10]
 
 ;; The Enterprise
@@ -1568,8 +1566,7 @@ Return true on successful move."
   (let ((avoidp (or (< (/ (+ (- *initial-commanders* (length *commander-quadrants*))
                              (- *initial-klingons* *remaining-klingons*))
                           (- (+ *stardate* 0.01) *initial-stardate*))
-                       (* 0.1 (skill-level-value *skill-level*)
-                          (+ (skill-level-value *skill-level*) 1.0)))
+                       (* 0.1 *skill-level* (+ *skill-level* 1.0)))
                     (< (- *stardate* *initial-stardate*) 3.0)))
         delta-x delta-y)
     (if (and (not *super-commander-attack-enterprise-p*)
@@ -2591,7 +2588,7 @@ Long-range sensors can scan all adjacent quadrants."
   "Apply a critical hit."
 
   ;; a critical hit occured
-  (when (>= hit (* (- 275.0 (* 25.0 (skill-level-value *skill-level*)) (+ 1.0 (* 0.5 (random 1.0))))))
+  (when (>= hit (* (- 275.0 (* 25.0 *skill-level*) (+ 1.0 (* 0.5 (random 1.0))))))
     (print-message (format nil "***CRITICAL HIT--~%"))
     ;; Select devices and cause damage
     (do ((hit-count 0 (1+ hit-count)) ; C: loop1 (really?)
@@ -3134,7 +3131,7 @@ is a function of that Klingon's remaining power, our power, etc."
        ;; Check out that Klingon
        (setf k-coord (aref *klingon-sectors* klingon-index))
        ;; The algorithm isn't that great and could use some more intelligent design
-       ;; (setf x (+ 300 (* 25 (skill-level-value *skill-level*)))) - just use ship energy for now
+       ;; (setf x (+ 300 (* 25 *skill-level*))) - just use ship energy for now
        ;; Multiplier would originally have been equivalent of 1.4, but we want the command to work more often, more humanely
        (setf x (* (/ *ship-energy* (* (aref *klingon-energy* klingon-index) *enemies-here*)) 2.5))
        (if (<= x (* (random 1.0) 100))
@@ -4101,9 +4098,9 @@ is a string suitable for use with the format function."
     (score-single "~52<        Penalty for getting yourself killed~;~>~8@A~%" -200))
   (when *game-won-p*
     (print-out (format nil "~52<        Bonus for winning ~A game~;~>~8@A~%"
-                       (string-capitalize (skill-level-label *skill-level*))
-                       (* 100 (skill-level-value *skill-level*))))
-    (setf *score* (+ *score* (* 100 (skill-level-value *skill-level*)))))
+                       (string-capitalize (rest (assoc *skill-level* *skill-level-labels*)))
+                       (* 100 *skill-level*)))
+    (setf *score* (+ *score* (* 100 *skill-level*))))
   (skip-line)
   (print-out (format nil "~52<TOTAL SCORE~>~8@A~%" (round *score*))))
 
@@ -4154,10 +4151,10 @@ what to do with it."
       (format s "~95:@<the rank of~>~%~%")
       (format s "~95:@<\"Commodore Emeritus\"~>~%~%")
       (cond
-        ((= (skill-level-value *skill-level*) +expert+)
+        ((= *skill-level* +expert+)
          (format s "~95:@<Expert level~>~%~%"))
 
-        ((= (skill-level-value *skill-level*) +emeritus+)
+        ((=  *skill-level* +emeritus+)
          (format s "~95:@<Emeritus level~>~%~%"))
 
         (t
@@ -4243,23 +4240,24 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
                    ;; killsPerDate >= RateMax
                    ;; TODO - for symmetry, could define an (initial-enemies) function, not sure it's needed
                    (>= (/ (- (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)
-                             (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*))
+                             (+ *remaining-klingons*
+                                (length *commander-quadrants*) *remaining-super-commanders*))
                           (- *stardate* *initial-stardate*))
-                       (+ (* 0.1 (skill-level-value *skill-level*) (+ (skill-level-value *skill-level*) 1.0))
+                       (+ (* 0.1 *skill-level* (+ *skill-level* 1.0))
                           0.1
                           (* 0.008 bad-points))))
            (skip-line)
            (print-message (format nil "In fact, you have done so well that Starfleet Command~%"))
            (cond
-             ((= (skill-level-value *skill-level*) +novice+)
+             ((= *skill-level* +novice+)
               (print-message (format nil "promotes you one step in rank from \"Novice\" to \"Fair\".~%")))
-             ((= (skill-level-value *skill-level*) +fair+)
+             ((= *skill-level* +fair+)
               (print-message (format nil "promotes you one step in rank from \"Fair\" to \"Good\".~%")))
-             ((= (skill-level-value *skill-level*) +good+)
+             ((= *skill-level* +good+)
               (print-message (format nil "promotes you one step in rank from \"Good\" to \"Expert\".~%")))
-             ((= (skill-level-value *skill-level*) +expert+)
+             ((= *skill-level* +expert+)
               (print-message (format nil "promotes you to Commodore Emeritus.~%")))
-             ((= (skill-level-value *skill-level*) +emeritus+)
+             ((= *skill-level* +emeritus+)
               (print-message "Computer-  ")
               (print-message (format nil "ERROR-ERROR-ERROR-ERROR~%") :print-slowly t)
               (skip-line)
@@ -4278,7 +4276,7 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
                :print-slowly t)
               (skip-line)
               (print-message (format nil "Now you can retire and write your own Star Trek game!~%")))))
-           (when (>= (skill-level-value *skill-level*) +expert+)
+           (when (>= *skill-level* +expert+)
              (print-prompt "Would you like to save your Commodore Emeritus Citation? ")
              (clear-type-ahead-buffer)
              (when (get-y-or-n-p)
@@ -4510,45 +4508,55 @@ of the entity."
 ship, and Klingon power."
 
   (let ((c (drop-entity-in-sector +klingon+)))
-  (return-from drop-klingon-in-sector (values c
-                                              (distance *ship-sector* c)
-                                              (+ (* (random 1.0) 150.0) 300.0 (* 25.0 (skill-level-value *skill-level*))))))) ; Rand()*150.0 +300.0 +25.0*game.skill
+    (return-from drop-klingon-in-sector
+      (values c
+              (distance *ship-sector* c)
+              (+ (* (random 1.0) 150.0) 300.0
+                 (* 25.0 *skill-level*)))))) ; Rand()*150.0 +300.0 +25.0*game.skill
 
 (defun drop-commander-in-sector ()
   "Drop a new Commander into the current quadrant. Return the sector coordinates, distance from the
 ship, and Commander power."
 
   (let ((c (drop-entity-in-sector +commander+)))
-  (return-from drop-commander-in-sector (values c
-                                                (distance *ship-sector* c)
-                                                (+ 950.0 (* (random 1.0) 400.0) (* 50.0 (skill-level-value *skill-level*))))))) ; 950.0+400.0*Rand()+50.0*game.skill
+    (return-from drop-commander-in-sector
+      (values c
+              (distance *ship-sector* c)
+              (+ 950.0 (* (random 1.0) 400.0)
+                 (* 50.0 *skill-level*)))))) ; 950.0+400.0*Rand()+50.0*game.skill
 
 (defun drop-super-commander-in-sector ()
   "Drop a new Super-commander into the current quadrant. Return the sector coordinates, distance
 from the ship, and Super-commander power."
 
   (let ((c (drop-entity-in-sector +super-commander+)))
-  (return-from drop-super-commander-in-sector (values c
-                                                      (distance *ship-sector* c)
-                                                      (+ 1175.0 (* (random 1.0) 400.0) (* 125.0 (skill-level-value *skill-level*))))))) ; 1175.0 + 400.0*Rand() + 125.0*game.skill
+    (return-from drop-super-commander-in-sector
+      (values c
+              (distance *ship-sector* c)
+              (+ 1175.0 (* (random 1.0) 400.0)
+                 (* 125.0 *skill-level*)))))) ; 1175.0 + 400.0*Rand() + 125.0*game.skill
 
 (defun drop-romulan-in-sector ()
   "Drop a new Romulan into the current quadrant. Return the sector coordinates, distance from the
 ship, and Romulan power."
 
   (let ((c (drop-entity-in-sector +romulan+)))
-  (return-from drop-romulan-in-sector (values c
-                                              (distance *ship-sector* c)
-                                              (+ (* (random 1.0) 400.0) 450.0 (* 50.0 (skill-level-value *skill-level*))))))) ; Rand()*400.0 + 450.0 + 50.0*game.skill
+    (return-from drop-romulan-in-sector
+      (values c
+              (distance *ship-sector* c)
+              (+ (* (random 1.0) 400.0) 450.0
+                 (* 50.0 *skill-level*)))))) ; Rand()*400.0 + 450.0 + 50.0*game.skill
 
 (defun drop-space-thing-in-sector ()
   "Drop a Space Thing into the current quadrant. Return the sector coordinates, distance from the
 ship, and Thing power."
 
   (let ((c (drop-entity-in-sector +thing+)))
-  (return-from drop-space-thing-in-sector (values c
-                                                  (distance *ship-sector* c)
-                                                  (+ (* (random 1.0) 6000.0) 500.0 (* 250.0 (skill-level-value *skill-level*))))))) ; Rand()*6000.0 +500.0 +250.0*game.skill
+    (return-from drop-space-thing-in-sector
+      (values c
+              (distance *ship-sector* c)
+              (+ (* (random 1.0) 6000.0) 500.0
+                 *skill-level*))))) ; Rand()*6000.0 +500.0 +250.0*game.skill
 
 (defun drop-tholian-in-sector ()
   "Drop a Tholian into the current quadrant. Tholians only occupy the perimeter of a quadrant.
@@ -4559,9 +4567,11 @@ Return the sector coordinates, distance from the ship, and Tholian power."
       (sector-ok-p
        (setf (aref *quadrant-contents* x y) +tholian+)
        (setf c (make-coordinate :x x :y y))
-       (return-from drop-tholian-in-sector (values c
-                                                   (distance *ship-sector* c)
-                                                   (+ (* (random 1.0) 400.0) 100.0 (* 25.0 (skill-level-value *skill-level*)))))) ; Rand()*400.0 +100.0 +25.0*game.skill
+       (return-from drop-tholian-in-sector
+         (values c
+                 (distance *ship-sector* c)
+                 (+ (* (random 1.0) 400.0) 100.0
+                    (* 25.0 *skill-level*))))) ; Rand()*400.0 +100.0 +25.0*game.skill
     (if (> (random 1.0) 0.5)
         (setf x (- +quadrant-size+ 1))
         (setf x 0))
@@ -4741,9 +4751,12 @@ player has reached a base by abandoning ship or using the SOS command."
         (print-message (format nil "    Please examine your short-range scan.\"~%"))))
 
     ;; Decide if quadrant needs a Tholian
-    (when (or (and (< (skill-level-value *skill-level*) +good+) (<= (random 1.0) 0.02)) ; Lighten up if skill is low
-              (and (= (skill-level-value *skill-level*) +good+) (<= (random 1.0) 0.05))
-              (and (> (skill-level-value *skill-level*) +good+) (<= (random 1.0) 0.08)))
+    (when (or (and (< *skill-level* +good+)
+                   (<= (random 1.0) 0.02)) ; Lighten up if skill is low
+              (and (= *skill-level* +good+)
+                   (<= (random 1.0) 0.05))
+              (and (> *skill-level* +good+)
+                   (<= (random 1.0) 0.08)))
       (setf *tholians-here* 1)
       (1+ *enemies-here*)
       (multiple-value-bind (coordinates distance power) (drop-tholian-in-sector)
@@ -5267,7 +5280,7 @@ retreat, especially at high skill levels.
             ;; Decide whether to advance, retreat, or hold position
             (let (enemy-multiplier) ; C: nbaddys
               ;; This should probably be just game.comhere + game.ishere
-              (if (>= (skill-level-value *skill-level*) +expert+)
+              (if (>= *skill-level* +expert+)
                   (setf enemy-multiplier (truncate (/ (+ (* *commanders-here* 2)
                                                          (* *super-commanders-here* 2)
                                                          (* *klingons-here* 1.23)
@@ -5297,16 +5310,15 @@ retreat, especially at high skill levels.
                   (when (> forces 1000.0) ; Very strong -- move in for kill
                     (setf motion (+ (* (- 1.0 (expt (random 1.0) 2)) enemy-distance) 1.0)))
                   (when *dockedp* ; Protected by base -- back off!
-                    (setf motion (- motion (* (skill-level-value *skill-level*)
-                                              (- 2.0 (expt (random 1.0) 2))))))))
+                    (setf motion (- motion (* *skill-level* (- 2.0 (expt (random 1.0) 2))))))))
             ;; Don't move if no motion
             (when (= motion 0)
               (return-from move-one-enemy nil))
             ;; Limit motion according to skill
-            (when (> (abs motion) (skill-level-value *skill-level*))
+            (when (> (abs motion) *skill-level*)
               (if (< motion 0)
-                  (setf motion (- (skill-level-value *skill-level*)))
-                  (setf motion (skill-level-value *skill-level*)))))))
+                  (setf motion (- *skill-level*))
+                  (setf motion *skill-level*))))))
     ;; Calculate preferred number of steps
     (let (number-of-steps ; C: nsteps
           maximum-distance ; C: mdist, Nearest integer distance
@@ -5443,7 +5455,7 @@ retreat, especially at high skill levels.
       (setf enemy-sector (aref *klingon-sectors* i))))
   ;; If skill level is high, move other Klingons and Romulans too!
   ;; Move these last so they can base their actions on what the commander(s) do.
-  (when (>= (skill-level-value *skill-level*) +expert+)
+  (when (>= *skill-level* +expert+)
     (do ((i 0 (1+ i))
          enemy-sector)
         ((or (>= i *enemies-here*)
@@ -5478,7 +5490,7 @@ the player completes their turn."
           (when (and (or (and (or (> *commanders-here* 0)
                                   (> *super-commanders-here* 0))
                               (not *just-in-p*))
-                         (= (skill-level-value *skill-level*) +emeritus+))
+                         (= *skill-level* +emeritus+))
                      torpedoes-ok-p)
             (move-enemies))
           ;; If no enemies remain after movement, we're done
@@ -5572,7 +5584,7 @@ the player completes their turn."
                                                     (- (coordinate-x enemy-sector) (coordinate-x *ship-sector*)))))
                       (print-message "***TORPEDO INCOMING")
                       (unless (damagedp +short-range-sensors+)
-                        (if (<= (skill-level-value *skill-level*) +fair+)
+                        (if (<= *skill-level* +fair+)
                             (print-message (format nil " From ~A at ~A  ~%"
                                                    (letter-to-name enemy)
                                                    (format-sector-coordinates enemy-sector)))
@@ -5622,11 +5634,11 @@ the player completes their turn."
                     (print-message (format nil "~D unit hit" (truncate hit)))
                     (when (or (and (damagedp +short-range-sensors+)
                                    (eql weapon 'phasers))
-                              (<= (skill-level-value *skill-level*) +fair+))
+                              (<= *skill-level* +fair+))
                       (print-message (format nil " on the ~A" (format-ship-name))))
                     (when (and (not (damagedp +short-range-sensors+))
                                (eql weapon 'phasers))
-                      (if (<= (skill-level-value *skill-level*) +fair+)
+                      (if (<= *skill-level* +fair+)
                           (print-message (format nil " from ~A at ~A" (letter-to-name enemy)
                                                  (format-sector-coordinates enemy-sector)))
                           (print-message (format nil " from ~A at ~A~%" (letter-to-name enemy)
@@ -5723,7 +5735,7 @@ can occur."
                                                          2.0)))
           ;; Stas Sergeev added the condition that attacks only happen
           ;; if Klingons are present and your skill is good.
-          (when (and (> (skill-level-value *skill-level*) +good+)
+          (when (and (> *skill-level* +good+)
                      (> *klingons-here* 0) ; Romulans don't get another attack
                      (not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))))
             (attack-player))
@@ -5774,7 +5786,7 @@ can occur."
           (skip-line)
           (print-message (format nil "Entering ~A.~%" (format-quadrant-coordinates *ship-quadrant*)))
           (new-quadrant :show-thing nil)
-          (when (> (skill-level-value *skill-level*) +novice+)
+          (when (> *skill-level* +novice+)
             (attack-player)))
         (return-from move-ship-within-quadrant t))
       ;; Object encountered in flight path
@@ -6738,8 +6750,8 @@ quadrant experiencing a supernova)."
 
   (skip-line)
   (print-message (format nil "You are playing a ~A ~A game.~%"
-                         (game-length-label *game-length*)
-                         (skill-level-label *skill-level*)))
+                         *game-length*
+                         (rest (assoc *skill-level* *skill-level-labels*))))
   (when *tournament-number*
     (print-message (format nil "This is tournament game ~A.~%" *tournament-number*)))
   (print-message (format nil "Your secret password is \"~A\"~%" *self-destruct-password*))
@@ -6759,7 +6771,7 @@ quadrant experiencing a supernova)."
 
     (t
      (print-message (format nil ".~%"))))
-  (when (> (skill-level-value *skill-level*) +fair+)
+  (when (> *skill-level* +fair+)
     (print-message (format nil "The Super Commander has ~Abeen destroyed.~%"
                            (if (> *remaining-super-commanders* 0) "not " ""))))
   (if (/= *initial-bases* (length *base-quadrants*))
@@ -7181,7 +7193,7 @@ was an event that requires aborting the operation carried out by the calling fun
   (when *window-interface-p*
     (select-window *message-window*))
 
-  (let ((energy-needed (+ (* 50 (skill-level-value *skill-level*)) (/ *height-of-orbit* 100.0))))
+  (let ((energy-needed (+ (* 50 *skill-level*) (/ *height-of-orbit* 100.0))))
     (skip-line)
     (when (damagedp +transporter+)
       (print-message (format nil "Transporter damaged.~%"))
@@ -8055,47 +8067,30 @@ Return game type, tournament number, and whether or not this is a restored game.
        (clear-type-ahead-buffer)))))
 
 (defun get-game-length () ; C: choose()
+  "A game parameter used as a multiplier for some game settings."
 
-  (do ((g-length nil))
-      (g-length
-       (setf *game-length* (make-game-length :label g-length))
-       (cond
-         ((string= g-length "short")
-          (setf (game-length-value *game-length*) +short-game+))
-         ((string= g-length "medium")
-          (setf (game-length-value *game-length*) +medium-game+))
-         ((string= g-length "long")
-          (setf (game-length-value *game-length*) +long-game+))))
+  (do ((game-length nil))
+      (game-length
+       (setf *game-length* game-length))
     (when (= (length *line-tokens*) 0)
       (print-prompt "Would you like a Short, Medium, or Long game? "))
     (scan-input)
-    (setf g-length (match-token *input-item* (list "short" "medium" "long")))
-    (unless g-length
+    (setf game-length (match-token *input-item* (list "short" "medium" "long")))
+    (unless game-length
       (when *input-item*
         (print-message (format nil "What is \"~A\"?~%" *input-item*)))
       (clear-type-ahead-buffer))))
 
 (defun get-skill-level () ; C: choose()
 
-  (do ((game-skill nil))
-      (game-skill
-       (setf *skill-level* (make-skill-level :label game-skill))
-       (cond
-         ((string= game-skill "novice")
-          (setf (skill-level-value *skill-level*) +novice+))
-         ((string= game-skill "fair")
-          (setf (skill-level-value *skill-level*) +fair+))
-         ((string= game-skill "good")
-          (setf (skill-level-value *skill-level*) +good+))
-         ((string= game-skill "expert")
-          (setf (skill-level-value *skill-level*) +expert+))
-         ((string= game-skill "emeritus")
-          (setf (skill-level-value *skill-level*) +emeritus+))))
+  (do ((skill-level nil))
+      (skill-level
+       (setf *skill-level* (first (rassoc skill-level *skill-level-labels* :test #'string=))))
     (when (= (length *line-tokens*) 0)
       (print-prompt "Are you a Novice, Fair, Good, Expert, or Emeritus player? "))
     (scan-input)
-    (setf game-skill (match-token *input-item* (list "novice" "fair" "good" "expert" "emeritus")))
-    (unless game-skill
+    (setf skill-level (match-token *input-item* (list "novice" "fair" "good" "expert" "emeritus")))
+    (unless skill-level
       (when *input-item*
         (print-message (format nil "What is \"~A\"?~%" *input-item*)))
       (clear-type-ahead-buffer))))
@@ -8134,19 +8129,19 @@ values, expecially number of entities in the game."
       (when *tournament-number*
         (setf *random-state* (sb-ext:seed-random-state *tournament-number*)))
       (setf *self-destruct-password* game-password))
-    (setf *damage-factor* (* 0.5 (skill-level-value *skill-level*)))
+    (setf *damage-factor* (* 0.5 *skill-level*))
     (setf *initial-bases* (max (+ (random +max-bases+) 1) +min-bases+))
     (setf *initial-planets* (+ (random (- +max-uninhabitable-planets+ +min-uninhabitable-planets+))
                                +min-uninhabitable-planets+
                                +habitable-planets+))
-    (setf *initial-romulans* (* (+ (random 1) 2) (skill-level-value *skill-level*)))
+    (setf *initial-romulans* (* (+ (random 1) 2) *skill-level*))
     (setf *remaining-romulans* *initial-romulans*)
     (setf *cloaking-violations* 0)
-    (setf *initial-time* (* 7.0 (game-length-value *game-length*)))
+    (setf *initial-time* (* 7.0 (rest (assoc *game-length* *game-length-values* :test #'string=))))
     (setf *remaining-time* *initial-time*)
     (setf *initial-klingons*  (truncate (+ (* 2.0 *initial-time*
-                                              (- (+ (skill-level-value *skill-level*) 1)  (random 1))
-                                              (skill-level-value *skill-level*)
+                                              (- (+ *skill-level* 1)  (random 1))
+                                              *skill-level*
                                               0.1)
                                            0.15)))
     (setf *remaining-klingons* *initial-klingons*)
@@ -8154,9 +8149,9 @@ values, expecially number of entities in the game."
     (when (> *initial-klingons* 50) ; That's a lot of klingons, give the player another base
       (setf *initial-bases* (1+ *initial-bases*)))
     (setf *initial-commanders* (min +max-commanders-per-game+
-                                    (+ (skill-level-value *skill-level*)
+                                    (+ *skill-level*
                                        (truncate (* 0.0626 *initial-klingons* (random 1.0))))))
-    (if (> (skill-level-value *skill-level*) +fair+) ; higher skill levels get a super-commander
+    (if (> *skill-level* +fair+) ; higher skill levels get a super-commander
         (setf *initial-super-commanders* 1)
         (setf *initial-super-commanders* 0))
     (setf *remaining-super-commanders* *initial-super-commanders*)
@@ -8236,7 +8231,7 @@ values, expecially number of entities in the game."
     (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*))) ; C: expran(0.3*game.intime)
     (when (> *remaining-super-commanders* 0)
       (schedule-event +move-super-commander+ 0.2777))
-    (when (>= (skill-level-value *skill-level*) +good+)
+    (when (>= *skill-level* +good+)
       (schedule-event +distress-call-from-inhabited-world+ (expran (+ 1.0 *initial-time*)))) ; C: expran(1.0 + game.intime)
 
     ;; Initialize the starchart
@@ -8305,7 +8300,9 @@ values, expecially number of entities in the game."
 
     ;; Put ordinary Klingon Battle Cruisers in the galaxy
     (let ((klingons-remaining *initial-klingons*)
-          (klumper (+ (* 0.25 (skill-level-value *skill-level*) (- 9.0 (game-length-value *game-length*))) 1.0)))
+          (klumper (+ (* 0.25 *skill-level*
+                         (- 9.0 (rest (assoc *game-length* *game-length-values* :test #'string=))))
+                      1.0)))
       (when (> klumper +max-klingons-per-quadrant+)
         (setf klumper +max-klingons-per-quadrant+))
       (do (random-number klump)
@@ -8414,7 +8411,7 @@ values, expecially number of entities in the game."
 
     ;; Introduce the player to the current situation.
     (skip-line 2)
-    (if (= (skill-level-value *skill-level*) +novice+)
+    (if (= *skill-level* +novice+)
         (progn
           (print-message (format nil "It is stardate ~A. The Federation is being attacked by~%"
                                  (format-stardate *stardate*)))
