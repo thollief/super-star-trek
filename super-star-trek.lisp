@@ -1046,50 +1046,29 @@ move that distance."
      (print-message (format nil "No Starbase is currently under attack.~%")))))
 
 (defun update-condition () ; C: void newcnd(void)
-  "Update our alert status."
+  "Update our alert status to one of Green, Yellow, or Red. Yellow supercedes Green and Red
+supercedes Yellow."
 
-  (setf *condition* +green-status+)
-  (when (or (< *ship-energy* 1000.0)
-            (> (damaged-device-count) 0))
-    (setf *condition* +yellow-status+))
-  (when (or (> (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
-            (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0))
-    (setf *condition* +red-status+))
+  (cond
+    ;; Enemies present - always condition Red regardless of other factors
+    ((or (> (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
+         (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0))
+     (setf *condition* +red-status+))
+    ;; Energy low - always condition Yellow
+    ((< *ship-energy* 1000.0)
+     (setf *condition* +yellow-status+))
+    ;; The Experimental Death Ray isn't an essential ship system
+    ((and (= (damaged-device-count) 1)
+          (damagedp +death-ray+))
+     (setf *condition* +green-status+))
+
+    ((> (damaged-device-count) 0)
+     (setf *condition* +yellow-status+))
+
+    (t
+     (setf *condition* +green-status+)))
   (when (not *alivep*)
     (setf *condition* +dead+)))
-
-(defun sector-scan (good-scan-p i j) ; C: static void sectscan(int goodScan, int i, int j)
-  "Light up an individual dot in a sector."
-
-  ;; Always show the sectors immediately adjacent to the ship
-  (if (or good-scan-p
-          (and (<= (abs (- i (coordinate-x *ship-sector*))) 1)
-               (<= (abs (- j (coordinate-y *ship-sector*))) 1)))
-      (progn
-        (when (or (string= (aref *quadrant-contents* i j) +materialize-1+)
-                  (string= (aref *quadrant-contents* i j) +materialize-2+)
-                  (string= (aref *quadrant-contents* i j) +materialize-3+)
-                  (string= (aref *quadrant-contents* i j) +enterprise+)
-                  (string= (aref *quadrant-contents* i j) +faerie-queene+))
-          (cond
-            ((string= *condition* +red-status+)
-             (textcolor +red+))
-            ((string= *condition* +yellow-status+)
-             (textcolor +yellow+))
-            ((string= *condition* +green-status+)
-             (textcolor +green+))
-            (*dockedp*
-             (textcolor +cyan+))
-            ((string= *condition* +dead+)
-             (textcolor +brown+))
-            (t
-             (textcolor +default-color+)))
-          (when (string= (aref *quadrant-contents* i j) *ship*)
-            (highvideo)))
-        (print-out (format nil "~A" (aref *quadrant-contents* i j)))
-        (textcolor +default-color+)
-        (print-out " "))
-      (print-out "  ")))
 
 (defun update-chart (x y) ; C: rechart_quad(x, y), more or less
   "Update the star chart page at quadrant coordinate x, y using galaxy data."
@@ -2280,10 +2259,9 @@ There is no line 10.
 "
 
   (when (= line-to-print 1)
+    ;; TODO - update the player condition every turn, not only when checking status
+    (update-condition)
     (print-out "Condition ")
-    (when *dockedp*
-      ;; TODO - update the player condition every turn, not only when checking status
-      (update-condition))
     (print-out *condition*)
     (when (> (damaged-device-count) 0)
       (print-out (format nil ", ~A DAMAGE~:@(~:P~)" (damaged-device-count))))
@@ -2394,6 +2372,39 @@ range scan."
     (game-status 2)
     (game-status 3)))
 
+(defun sector-scan (i j) ; C: static void sectscan(int goodScan, int i, int j)
+  "Light up an individual dot in a sector."
+
+  ;; Always show the sectors immediately adjacent to the ship
+  (if (or (not (damagedp +short-range-sensors+))
+          (and (<= (abs (- i (coordinate-x *ship-sector*))) 1)
+               (<= (abs (- j (coordinate-y *ship-sector*))) 1)))
+      (progn
+        (when (or (string= (aref *quadrant-contents* i j) +materialize-1+)
+                  (string= (aref *quadrant-contents* i j) +materialize-2+)
+                  (string= (aref *quadrant-contents* i j) +materialize-3+)
+                  (string= (aref *quadrant-contents* i j) +enterprise+)
+                  (string= (aref *quadrant-contents* i j) +faerie-queene+))
+          (cond
+            ((string= *condition* +red-status+)
+             (textcolor +red+))
+            ((string= *condition* +yellow-status+)
+             (textcolor +yellow+))
+            ((string= *condition* +green-status+)
+             (textcolor +green+))
+            (*dockedp*
+             (textcolor +cyan+))
+            ((string= *condition* +dead+)
+             (textcolor +brown+))
+            (t
+             (textcolor +default-color+)))
+          (when (string= (aref *quadrant-contents* i j) *ship*)
+            (highvideo)))
+        (print-out (format nil "~A" (aref *quadrant-contents* i j)))
+        (textcolor +default-color+)
+        (print-out " "))
+      (print-out "  ")))
+
 (defun short-range-scan ()
 
     (if *window-interface-p*
@@ -2404,36 +2415,30 @@ range scan."
             (skip-line)))
       (skip-line))
 
-  (let ((good-scan-p t))
-    (if (damagedp +short-range-sensors+)
-        ;; Allow base's sensors if docked
-        (if (not *dockedp*)
-            (progn
-              (print-out (format nil "  S.R. SENSORS DAMAGED!~%"))
-              (setf good-scan-p nil))
-            (print-out (format nil " [Using Base's sensors]~%")))
-        (print-out (format nil "     SHORT-RANGE SCAN~%")))
-    (when good-scan-p
-      (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
-      (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
-    (print-out (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
-    (when (not *dockedp*)
-      (update-condition))
-    (do ((i 0 (1+ i)))
-        ((>= i +quadrant-size+))
-      (print-out (format nil "~2@A " (1+ i)))
-      (do ((j 0 (1+ j)))
-          ((>= j +quadrant-size+))
-        (sector-scan good-scan-p i j))
-      (if *window-interface-p*
-          (skip-line)
-          (progn
-            (print-out " ")
-            (ship-status (1+ i)))))))
+  (if (not (damagedp +short-range-sensors+))
+      (progn
+        (print-out (format nil "     SHORT-RANGE SCAN~%"))
+        (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
+        (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
+      (if *dockedp*
+          (print-out (format nil " [Using Base's sensors]~%"))
+          (print-out (format nil "  S.R. SENSORS DAMAGED!~%"))))
+  (print-out (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
+  (do ((i 0 (1+ i)))
+      ((>= i +quadrant-size+))
+    (print-out (format nil "~2@A " (1+ i)))
+    (do ((j 0 (1+ j)))
+        ((>= j +quadrant-size+))
+      (sector-scan i j))
+    (if *window-interface-p*
+        (skip-line)
+        (progn
+          (print-out " ")
+          (ship-status (1+ i))))))
 
 (defun long-range-scan ()
-  "Scan the galaxy using long-range sensors and update the star chart. Display the results of the scan.
-Long-range sensors can scan all adjacent quadrants."
+  "Scan the galaxy using long-range sensors and update the star chart. Display the results of the
+scan. Long-range sensors can scan all adjacent quadrants."
 
   (if *window-interface-p*
       (if *long-range-scan-window*
@@ -2466,7 +2471,7 @@ Long-range sensors can scan all adjacent quadrants."
           (skip-line)))
       (print-out (format nil "SENSORS DAMAGED~%"))))
 
-(defun draw-windows () ; C: void drawmaps(void)
+(defun update-windows () ; C: void drawmaps(void)
   "Perform the automatic display updates available to curses-enabled terminals."
 
   (when *window-interface-p*
@@ -2575,7 +2580,8 @@ Long-range sensors can scan all adjacent quadrants."
            ;;        preserves the special location (last item in the array) of the Tholian
            (do ((j i (1+ j))) ; shift all elements towards the start of the array
                ((>= j *enemies-here*))
-             (setf (aref *quadrant-enemies* j) (aref *quadrant-enemies* (1+ j)))))))))
+             (setf (aref *quadrant-enemies* j) (aref *quadrant-enemies* (1+ j))))))))
+  (update-condition))
 
 (defun apply-critical-hit (hit) ; C: void fry(double hit)
   "Apply a critical hit."
@@ -4183,6 +4189,7 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
 "
 
   (when *window-interface-p*
+    (update-windows)
     (select-window *message-window*))
 
   (setf *all-done-p* t)
@@ -5821,7 +5828,7 @@ can occur."
         (setf (enemy-average-distance (aref *quadrant-enemies* m))
               (enemy-distance (aref *quadrant-enemies* m)))))
     (update-condition)
-    (draw-windows)))
+    (update-windows)))
 
 (defun get-probe-course-and-distance () ; C: oid getcd(bool isprobe, int akey), for the probe
   "Get course direction and distance for moving the probe.
@@ -7581,7 +7588,7 @@ it's your problem."
               ;; Don't call the sensor scan even if in curses mode. The ship has been
               ;; lost/destroyed and Spock isn't doing anything now. Fill the windows so the player
               ;; isn't left with a blank screen.
-              (draw-windows)
+              (update-windows)
               (finish 'failed-to-rematerialize)
               (return-from mayday nil)))
          (print-message (format nil "~A attempt to re-materialize ~A "
@@ -8422,7 +8429,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ((or *all-done-p*
            exit-game-p))
     (when *window-interface-p*
-      (draw-windows)
+      (update-windows)
       (select-window *message-window*))
     (skip-line)
     (restart-message-window-paging)
