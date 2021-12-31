@@ -9,13 +9,17 @@
 ;;;;    digit, display 2 rows of digits per quadrant. 1 row: natural features stars, planets,
 ;;;;    supernova, 2nd row enemies, starbases, inhabited planets? Would like to preserve
 ;;;;    compatibility with glass terminals.
+;;;; 3. Star chart could show quadrants having a planet under attack
+;;;; 3. Start chart could how quadrants having a base under attack
+;;;; 3. Start chart could show qaudrants in color, ship quadrant in green, supernova quadrants in
+;;;;    red, quadrants under some kind of attack in yellow, quadrants containing a planet with
+;;;;    dilithim crystals in blue. Same colors as SR scan but with different meanings
 ;;;; 4. The todo list from the sst2k github repository (grabbed in June 2021):
 ;;;;    Short-term items:
 ;;;;    * Adjust the sst.spec wrt the build system changes
 ;;;;    * Complete, polish, improve, complete, polish, improve the
 ;;;;      gettextization and the translation! Right now it just sucks.
 ;;;;    * Add the attacked inhabited planets to the status report
-;;;;    * Status display should update after kills so Klingons Left is correct.
 ;;;;    Long-term items:
 ;;;;    * Wrap a GUI around it.
 ;;;;    * Wandering planet-killer as in "The Doomsday Machine";
@@ -38,13 +42,16 @@
 
 ;;;; TODO - Does the transporter work while cloaked? Can the ship be cloaked while in orbit?
 ;;;; TODO - Can the capture mechanic be enhanced by carefully damaging opponents? "Thrash them to
-;;;;        within an inch of their lives", that is use enough phaser energy to weaken them to the point
-;;;;        of not being able to fight back.
-;;;; TODO - are enemies that run away limited by their current energy value? That is, do they use energy
-;;;;        to move? If yes, then getting hit hard enough could prevent them from running away to another
-;;;;        quadrant and make them easier to capture. This could also be added to the enemy AI - run away
-;;;;        if there is just enough energy to do so, because enemies automatically regain full power when
-;;;;        not in the current quadrant.
+;;;;        within an inch of their lives", that is use enough phaser energy to weaken them to
+;;;;        the point of not being able to fight back.
+;;;; TODO - are enemies that run away limited by their current energy value? That is, do they use
+;;;;        energy to move? If yes, then getting hit hard enough could prevent them from running
+;;;;        away to another quadrant and make them easier to capture. This could also be added to
+;;;;        the enemy AI - run away if there is just enough energy to do so, because enemies
+;;;;        automatically regain full power when not in the player quadrant.
+;;;; TODO - Do bases have long-range sensors? Why wouldn't they? If yes, then surely they would
+;;;;        share their information with the ship, assuming the subspace radio is working. This
+;;;;        would change game play a lot - less need to run around the galaxy finding klingons.
 
 ;; TODO - delete these lines. But, write a shell script or something to make sure quicklisp has the
 ;;        latest versions of packages? Add to sst.asd?
