@@ -294,9 +294,10 @@ coordinates."
        (>= y 0)
        (< y +galaxy-size+)))
 
-;; TODO - should this take a coordinate struct as a parameter? Sometimes we have structs, sometimes we have a pair of scalars
-;;        write a version that takes the coordinate struct and unpacks it to use the pair of scalar's version, or
-;;        figure out how to write a macro similar to coord-ref
+;; TODO - should this take a coordinate struct as a parameter? Sometimes we have structs,
+;;        sometimes we have a pair of scalars. Write a version that takes the coordinate struct
+;;        and unpacks it to use the pair of scalar's version, or figure out how to write a macro
+;;        similar to coord-ref
 (defun valid-sector-p (x y) ; C: VALID_SECTOR(x, y)
   "Return true if the sector coordinates are valid. These are array indices, not player
 coordinates."
@@ -424,10 +425,11 @@ empty string if the planet class can't be determined."
   "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; Characters displayed for game entities in short range scans
-;; TODO - are probes visible in short range scans? Should they be? They move fast so they might
-;;        not be visible for long enough to make a difference. At least for the period of time
-;;        between "launch probe" and some other command that uses time the probe could be
-;;        visible. Use the "^" symbol?
+;; TODO - Make probes visible in short range scans. When you launch a probe and the move to the
+;;        qaudrant where it is reported to be then it should be visible. Use the "^" symbol.
+;;        This means giving the probe a sector coordinate, too, and handling it when displaying
+;;        a short range scan. Being small, probes can be in the same sector as another object and
+;;        the other object will be displayed on the SR scan.
 ;; C: typedef enum {} feature
 (define-constant +romulan+ "R") ; C: IHR
 (define-constant +klingon+ "K") ; C: IHK
@@ -8441,6 +8443,12 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (clear-type-ahead-buffer)
     (scan-input)
     (setf command (match-token *input-item* commands)) ; TODO - fix match-token to ignore all previous input on -1
+    ;; In windowed mode commands aren't echoed automatically so do it manually
+    (when *window-interface-p*
+      (print-message (format nil "~A" *input-item*))
+      (dolist (token *line-tokens*)
+        (print-message (format nil " ~A" token)))
+      (print-message (format nil "~%~%")))
     ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak
     (cond
       ((string= command "abandon")
