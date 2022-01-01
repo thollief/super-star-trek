@@ -650,13 +650,11 @@ be tracked."
 (defparameter *dilithium-crystals-on-board-p* nil) ; C: icrystl
 (defparameter *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
 
-;; TODO - dead seems to be the same as (not *alivep*)
-(defparameter *condition* nil "red, yellow, green, dead") ; C: condition
+(defparameter *condition* nil "red, yellow, green") ; C: condition
 ;; Values for *condition*
 (define-constant +green-status+ "GREEN") ; C: IHGREEN
 (define-constant +yellow-status+ "YELLOW") ; C: IHYELLOW
 (define-constant +red-status+ "RED") ; C: IHRED
-(define-constant +dead+ "DEAD")
 
 ;; TODO - decide if orbital cloaking is possible
 (defparameter *dockedp* nil) ; a possible flight condition
@@ -742,7 +740,6 @@ greater or lesser."
 the same as being on a planet.") ; C: iscraft
 (defparameter *shuttle-craft-quadrant* nil "The quadrant coordinates of the shuttle craft. They are
 the same as the ship if the shuttle craft location is on-ship.")
-;; TODO - alivep and condition = dead are two ways of saying the same thing....
 (defparameter *alivep* t "The player is alive (not killed)") ; C: alive
 (defparameter *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
 
@@ -1069,9 +1066,7 @@ supercedes Yellow."
      (setf *condition* +yellow-status+))
 
     (t
-     (setf *condition* +green-status+)))
-  (when (not *alivep*)
-    (setf *condition* +dead+)))
+     (setf *condition* +green-status+))))
 
 (defun update-chart (x y) ; C: rechart_quad(x, y), more or less
   "Update the star chart page at quadrant coordinate x, y using galaxy data."
@@ -2408,7 +2403,7 @@ range scan."
              (textcolor +yellow+))
             ((string= *condition* +green-status+)
              (textcolor +green+))
-            ((string= *condition* +dead+)
+            ((not *alivep*))
              (textcolor +brown+))
             (t
              (textcolor +default-color+)))
