@@ -2824,7 +2824,8 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
       (when (<= *ship-energy* 200.0)
         (print-message (format nil "Insufficient energy to activate high-speed shield control.~%"))
         (return-from fire-phasers nil))
-      (print-message (format nil "Weapons Officer Sulu-  \"High-speed shield control enabled, sir.\"~%"))
+      (print-message
+       (format nil "Weapons Officer Sulu-  \"High-speed shield control enabled, sir.\"~%"))
       (setf shield-control-available-p t))
     (setf available-energy (if shield-control-available-p (- *ship-energy* 200) *ship-energy*))
     ;; Here are valid forms of the phaser command. n (for "no") is optional, # is a number. "n" can
@@ -5499,8 +5500,9 @@ the player completes their turn."
                        ;; Shields fully protect ship
                        (print-message "Enemy attack reduces shield strength to "))
                    (print-message (format nil "~D%,   torpedoes left ~D~%"
-                                      (* 100.0 (/ *shield-energy* *initial-shield-energy*))
-                                      *torpedoes*))
+                                          (truncate (* 100 (/ *shield-energy*
+                                                              *initial-shield-energy*)))
+                                          *torpedoes*))
                    ;; Check if anyone was hurt
                    (when (or (>= hit-max 200)
                              (>= hit-total 500))
@@ -8334,7 +8336,7 @@ values, expecially number of entities in the game."
     (print-message (format nil "The Enterprise is currently in ~A ~A~%"
                            (format-quadrant-coordinates *ship-quadrant*)
                            (format-sector-coordinates *ship-sector*)))
-    (print-message "~%Good Luck!")
+    (print-message (format nil "~%Good Luck!"))
     (when (> *remaining-super-commanders* 0)
       (print-message " YOU'LL NEED IT."))
     (skip-line 2)
@@ -8442,14 +8444,12 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (print-prompt "COMMAND: ")
     (clear-type-ahead-buffer)
     (scan-input)
-    (setf command (match-token *input-item* commands)) ; TODO - fix match-token to ignore all previous input on -1
+    ;; TODO - fix match-token to ignore all previous input on -1
+    (setf command (match-token *input-item* commands))
+    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak
     ;; In windowed mode commands aren't echoed automatically so do it manually
     (when *window-interface-p*
-      (print-message (format nil "~A" *input-item*))
-      (dolist (token *line-tokens*)
-        (print-message (format nil " ~A" token)))
-      (print-message (format nil "~%~%")))
-    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak
+      (print-message (format nil "~A~{ ~A~}~%~%" *input-item* *line-tokens*)))
     (cond
       ((string= command "abandon")
        (abandon-ship))
