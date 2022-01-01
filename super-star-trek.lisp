@@ -426,7 +426,7 @@ empty string if the planet class can't be determined."
 
 ;; Characters displayed for game entities in short range scans
 ;; TODO - Make probes visible in short range scans. When you launch a probe and the move to the
-;;        qaudrant where it is reported to be then it should be visible. Use the "^" symbol.
+;;        qaudrant where it is reported to be then it should be visible.
 ;;        This means giving the probe a sector coordinate, too, and handling it when displaying
 ;;        a short range scan. Being small, probes can be in the same sector as another object and
 ;;        the other object will be displayed on the SR scan.
@@ -451,6 +451,7 @@ empty string if the planet class can't be determined."
 (define-constant +materialize-2+ "o") ; C: IHMATER1
 (define-constant +materialize-3+ "0") ; C: IHMATER2
 (define-constant +reserved+ "X")
+(define-constant +probe+ "^")
 
 (defun letter-to-name (quadrant-entity)
   "Convert a single letter quadrant entity to a string for display."
@@ -2390,12 +2391,13 @@ range scan."
           (cond
             ((string= *condition* +red-status+)
              (textcolor +red+))
+            ;; If docked then Condition Yellow is less serious than when not docked
+            (*dockedp*
+             (textcolor +cyan+))
             ((string= *condition* +yellow-status+)
              (textcolor +yellow+))
             ((string= *condition* +green-status+)
              (textcolor +green+))
-            (*dockedp*
-             (textcolor +cyan+))
             ((string= *condition* +dead+)
              (textcolor +brown+))
             (t
@@ -8446,10 +8448,11 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (scan-input)
     ;; TODO - fix match-token to ignore all previous input on -1
     (setf command (match-token *input-item* commands))
-    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak
     ;; In windowed mode commands aren't echoed automatically so do it manually
     (when *window-interface-p*
-      (print-message (format nil "~A~{ ~A~}~%~%" *input-item* *line-tokens*)))
+      (print-message (format nil "Stardate ~A: ~A~{ ~A~}~%~%"
+                             (format-stardate *stardate*) command *line-tokens*)))
+    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak mayday
     (cond
       ((string= command "abandon")
        (abandon-ship))
@@ -8496,7 +8499,6 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (display-online-help))
       ((string= command "impulse")
        (move-under-impulse-power))
-      ;; TODO - add load command
       ((string= command "lrscan")
        (long-range-scan))
       ((string= command "mayday") ; Call for help
@@ -8534,7 +8536,6 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (wait)
        (when *action-taken-p*
          (setf hit-me-p t)))
-      ;; TODO - add save command
       ((string= command "score")
        (score))
       ((string= command "sensors")
