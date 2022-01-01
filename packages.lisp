@@ -10,15 +10,12 @@
 ;;;;    supernova, 2nd row enemies, starbases, inhabited planets? Would like to preserve
 ;;;;    compatibility with glass terminals.
 ;;;; 3. Star chart could show quadrants having a planet under attack
-;;;; 3. Start chart could how quadrants having a base under attack
-;;;; 3. Start chart could show qaudrants in color, ship quadrant in green, supernova quadrants in
+;;;; 3. Star chart could show quadrants having a base under attack
+;;;; 3. Star chart could show qaudrants in color, ship quadrant in green, supernova quadrants in
 ;;;;    red, quadrants under some kind of attack in yellow, quadrants containing a planet with
 ;;;;    dilithim crystals in blue. Same colors as SR scan but with different meanings
 ;;;; 4. The todo list from the sst2k github repository (grabbed in June 2021):
 ;;;;    Short-term items:
-;;;;    * Adjust the sst.spec wrt the build system changes
-;;;;    * Complete, polish, improve, complete, polish, improve the
-;;;;      gettextization and the translation! Right now it just sucks.
 ;;;;    * Add the attacked inhabited planets to the status report
 ;;;;    Long-term items:
 ;;;;    * Wrap a GUI around it.
@@ -29,8 +26,7 @@
 ;;;;    * There is a small probility that a nova event will leave a black hole.
 ;;;;    * Multiple laser banks and beam spreading.
 ;;;; 5. Black holes can warp you to another location in the galaxy
-;;;; 5. S-lang instead of ncurses?
-;;;; 7. Add an undock command?
+;;;; 7. Add an undock command
 
 ;;;; TODO - add quadrants to events - every event occurs in a quadrant
 ;;;; TODO - bsdtrek mentioned boarding parties to capture a klingon, klingons could try it too
