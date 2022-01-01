@@ -2403,7 +2403,7 @@ range scan."
              (textcolor +yellow+))
             ((string= *condition* +green-status+)
              (textcolor +green+))
-            ((not *alivep*))
+            ((not *alivep*)
              (textcolor +brown+))
             (t
              (textcolor +default-color+)))
