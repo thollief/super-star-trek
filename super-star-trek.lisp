@@ -4689,10 +4689,10 @@ player has reached a base by abandoning ship or using the SOS command."
         ((> i (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
       (drop-entity-in-sector +star+))
 
-    ;; Check for Romulan Neutral Zone: Romulans present and no Klingons.
-    ;; TODO - does it make sense to have RNZ when a base is present?
+    ;; Check for Romulan Neutral Zone: Romulans present, no Klingons, and no starbases.
     (when (and (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0)
-               (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0))
+               (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
+               (= (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 0))
       (setf *romulan-neutral-zone-p* t)
       (when (not (damagedp +subspace-radio+))
         (print-message (format nil "~%LT. Uhura- \"Captain, an urgent message.~%"))
@@ -5401,9 +5401,7 @@ retreat, especially at high skill levels.
 (defun move-enemies () ; C: void moveklings(void)
   "Klingon and Romulan tactical movement, that is, movement within the current quadrant."
 
-  ;; TODO - could/should these (when) expressions be replaced with a macro?
   ;; Figure out which Klingon is the commander (or Supercommander) and do the move
-  ;; TODO - this loop assumes only one commander per quadrant, is that always true?
   (when (> *commanders-here* 0)
     (do ((i 0 (1+ i))
          enemy-sector)
@@ -5865,7 +5863,6 @@ displayed y - x, where +y is downward!"
       (scan-input)
       (if (numberp *input-item*) ; No input (<enter> key only) will loop
           (progn
-            ;; TODO - short form of the command doesn't assume quadrant destination
             (print-message (format nil "Manual navigation assumed.~%")) ; Per the original docs
             (setf navigation-mode 'manual))
           (when *input-item*
@@ -6235,7 +6232,6 @@ quadrant experiencing a supernova)."
 
     (execute-warp-move course distance)))
 
-;; TODO - make the prompted interface for this function more similar to the typed command
 (defun launch-probe () ; C: probe(void)
   "Launch deep-space probe."
 
@@ -6610,6 +6606,9 @@ quadrant experiencing a supernova)."
 ;; TODO - The chart command can (should) do an implicit call to srscan or lrscan
 ;; TODO - The chart command can (should) update from starbase records when docked
 ;; TODO - The chart command can (should) do an implicit update from dsradio messages
+;; TODO - If bases have long-range sensors and a subspace radio then the ship should
+;;        already have general information about all sectors adjacent to a base. How
+;;        hard do we want to lean on the fiction at the cost of game play?
 (defun chart () ; C: chart(void), and TODO - bring in the contents of makechart()
   "Display the start chart."
 
@@ -6659,6 +6658,7 @@ quadrant experiencing a supernova)."
       (skip-line))))
 
 ;; TODO - make this a device status report. Show repair time of 0 when a device is not damaged.
+;;        Could use green/yellow/red highlighting for a fancy effect.
 ;;        The goal is to have a continuously updated console showing device status.
 (defun damage-report () ; C: damagereport(void)
   "List damaged devices and repair times for each."
@@ -7495,14 +7495,11 @@ the planet."
      (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
        (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
                               (format-quadrant-coordinates *ship-quadrant*)))
-       ;; TODO - use pretty print justification
        (print-message (format nil "~%         Planet at ~A is of class ~A.~%"
                               (format-sector-coordinates *current-planet*)
                               (format-planet-class (planet-class pl))))
        (when (shuttle-landed-p *ship-quadrant*)
-         ;; TODO - use pretty print justification
          (print-message (format nil "         Sensors show Galileo still on surface.~%")))
-       ;; TODO - use pretty print justification
        (print-message "         Readings indicate")
        (when (not (eql (planet-crystals pl) 'present))
          (print-message " no"))
