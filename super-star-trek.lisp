@@ -421,7 +421,7 @@ empty string if the planet class can't be determined."
     (t
      "")))
 
-(defparameter *planet-information* nil
+(defparameter *planets* nil
   "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; Characters displayed for game entities in short range scans
@@ -527,7 +527,7 @@ be tracked."
   (destroyed-stars 0) ; C: starkl
   (destroyed-inhabited-planets 0) ; C: nworldkl
   (destroyed-uninhabited-planets 0) ; C: nplankl
-  (planet-information ()) ; C: planets
+  (planets ()) ; C: planets
   (stardate 0.0) ; C: double date
   shuttle-craft-location
   shuttle-craft-quadrant
@@ -760,7 +760,7 @@ the same as the ship if the shuttle craft location is on-ship.")
   (setf *destroyed-stars* (snapshot-destroyed-stars *snapshot*))
   (setf *destroyed-inhabited-planets* (snapshot-destroyed-inhabited-planets *snapshot*))
   (setf *destroyed-uninhabited-planets* (snapshot-destroyed-uninhabited-planets *snapshot*))
-  (setf *planet-information* (snapshot-planet-information *snapshot*))
+  (setf *planets* (snapshot-planets *snapshot*))
   (setf *stardate* (snapshot-stardate *snapshot*))
   (setf *shuttle-craft-location* (snapshot-shuttle-craft-location *snapshot*))
   (setf *shuttle-craft-quadrant* (snapshot-shuttle-craft-quadrant *snapshot*))
@@ -1178,9 +1178,9 @@ affected."
                    (print-message (format nil "Planet at ~A destroyed.~%"
                                           (format-sector-coordinates adjacent-coord)))
                    ;; Update the planet struct to show planet is destroyed, then put it back in the alist
-                   (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                   (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                      (setf (planet-destroyedp p) t)
-                     (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+                     (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) p))
                    (setf *planet-coord* nil)
                    (setf *current-planet* nil)
                    (when *landedp*
@@ -1359,10 +1359,10 @@ affected."
   (decf *remaining-romulans* (quadrant-romulans (coord-ref *galaxy* nova-quadrant)))
   (setf (quadrant-romulans (coord-ref *galaxy* nova-quadrant)) 0)
   ;; Destroy planet if there is one
-  (let ((p (rest (assoc nova-quadrant *planet-information* :test #'coord-equal))))
+  (let ((p (rest (assoc nova-quadrant *planets* :test #'coord-equal))))
     (when p ; p should be nil if there is no planet in the quadrant
       (setf (planet-destroyedp p) t)
-      (rplacd (assoc nova-quadrant *planet-information* :test #'coord-equal) p)))
+      (rplacd (assoc nova-quadrant *planets* :test #'coord-equal) p)))
   ;; Destroy any base in supernovaed quadrant
   (setf *base-quadrants* (remove nova-quadrant *base-quadrants* :test #'coord-equal))
   ;; mark supernova in galaxy and in star chart
@@ -1521,12 +1521,12 @@ Return true on successful move."
     (update-condition)
     (sort-klingons))
   ;; Check for a helpful planet
-  (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal))))
+  (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planets* :test #'coord-equal))))
     (when (and helpful-planet
                (eql (planet-crystals helpful-planet) 'present))
       ;; Destroy the planet
       (setf (planet-destroyedp helpful-planet) t)
-      (rplacd (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal) helpful-planet)
+      (rplacd (assoc *super-commander-quadrant* *planets* :test #'coord-equal) helpful-planet)
       (when (and (not *cloakedp*)
                  (or *dockedp*
                      (not (damagedp +subspace-radio+))))
@@ -1779,7 +1779,7 @@ tractor-beamed the ship then the other will not."
       (when (and *window-interface-p*
                  (aref repaired-devices +short-range-sensors+)
                  *current-planet*
-                 (not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
+                 (not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))))
         (sensor)))
     ;; Time was spent so subtract it from the operation time being handled by this invocation
     (decf *time-taken-by-current-operation* execution-time)
@@ -1796,7 +1796,7 @@ tractor-beamed the ship then the other will not."
            ((>= x +galaxy-size+)
             (when (> galaxy-star-count 0) ; If something to supernova exists
               ;; Logic changed here so that we won't favor quadrants in top left of universe.
-              (setf star-to-supernova (random galaxy-star-count))
+              (setf star-to-supernova (1+ (random (1- galaxy-star-count)))) ; Random can be 0
               (do ((supernova-q (make-coordinate))
                    (supernova-s nil)
                    (i 0 (1+ i)))
@@ -1900,7 +1900,7 @@ tractor-beamed the ship then the other will not."
                                        :destroyed-stars *destroyed-stars*
                                        :destroyed-inhabited-planets *destroyed-inhabited-planets*
                                        :destroyed-uninhabited-planets *destroyed-uninhabited-planets*
-                                       :planet-information *planet-information*
+                                       :planets *planets*
                                        :stardate *stardate*
                                        :shuttle-craft-location *shuttle-craft-location*
                                        :shuttle-craft-quadrant *shuttle-craft-quadrant*
@@ -2058,7 +2058,7 @@ tractor-beamed the ship then the other will not."
              (incf *destroyed-stars* (quadrant-stars (coord-ref *galaxy* *probe-reported-quadrant*)))
              (incf *destroyed-bases* (quadrant-starbases (coord-ref *galaxy* *probe-reported-quadrant*)))
              ;; TODO inhabited worlds are not counted but should be
-             (when (assoc *probe-reported-quadrant* *planet-information* :test #'coord-equal) ; non-nil if planet exists
+             (when (assoc *probe-reported-quadrant* *planets* :test #'coord-equal) ; non-nil if planet exists
                (setf *destroyed-uninhabited-planets* (1+ *destroyed-uninhabited-planets*)))
              (setf *probe-reported-quadrant* nil)
              (when (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
@@ -2081,7 +2081,7 @@ tractor-beamed the ship then the other will not."
               (setf *conquest-quadrant* candidate-quadrant))
            (setf candidate-quadrant (get-random-quadrant))
            (setf candidate-planet
-                 (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
+                 (rest (assoc candidate-quadrant *planets* :test #'coord-equal)))
            (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
                         candidate-planet
                         (not (planet-inhabitedp candidate-planet))
@@ -2093,7 +2093,7 @@ tractor-beamed the ship then the other will not."
            ;; got one!!  Schedule its enslavement
            (schedule-event +inhabited-world-is-enslaved+ (expran *initial-time*))
            (setf (planet-status candidate-planet) 'distressed)
-           (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+           (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
                    candidate-planet)
            ;; tell the captain about it if we can
            (when (and (not *cloakedp*)
@@ -2112,13 +2112,13 @@ tractor-beamed the ship then the other will not."
 
        (unschedule +inhabited-world-is-enslaved+)
        (let ((conquest-planet
-               (rest (assoc *conquest-quadrant* *planet-information* :test #'coord-equal))))
+               (rest (assoc *conquest-quadrant* *planets* :test #'coord-equal))))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
          ;; see if current distress call still active
          (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
              (progn
                (setf (planet-status conquest-planet) 'enslaved)
-               (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+               (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
                        conquest-planet)
                ;; play stork and schedule the first baby
                (schedule-event +klingons-build-ship-in-enslaved-system+
@@ -2133,13 +2133,13 @@ tractor-beamed the ship then the other will not."
                           (format-quadrant-coordinates *conquest-quadrant*)))))
              (progn
                (setf (planet-status *conquest-quadrant*) 'secure)
-               (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+               (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
                        conquest-planet)
                (setf *conquest-quadrant* nil)))))
       ;; Klingon reproduces
       ((= event-code +klingons-build-ship-in-enslaved-system+)
        (let ((conquest-planet
-               (rest (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)))
+               (rest (assoc *conquest-quadrant* *planets* :test #'coord-equal)))
              (build-quadrant nil))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
          ;; see if current distress call still active
@@ -2201,7 +2201,7 @@ tractor-beamed the ship then the other will not."
                                (format-quadrant-coordinates build-quadrant))))))))
            (progn
              (setf (planet-status conquest-planet) 'secure)
-             (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
+             (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
                      conquest-planet)
              (setf *conquest-quadrant* nil))))))))
 
@@ -2333,7 +2333,7 @@ There is no line 10.
         (skip-line)
         (game-status 3)))
   (when (= line-to-print 11)
-    (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+    (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
       (if (and p ; p is nil when there is no planet in the quadrant
                (not (planet-inhabitedp p)))
           (print-out (format nil "Major system ~A~%" (planet-name p)))
@@ -3427,9 +3427,9 @@ handling the result. Return the amount of damage if the player ship was hit."
                  (print-message (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
                                         (format-sector-coordinates torpedo-sector)))
                  (setf *destroyed-uninhabited-planets* (1+ *destroyed-uninhabited-planets*))
-                 (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                 (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                    (setf (planet-destroyedp p) t)
-                   (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+                   (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) p))
                  (setf *planet-coord* nil)
                  (setf *current-planet* nil)
                  (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
@@ -3440,9 +3440,9 @@ handling the result. Return the amount of damage if the player ship was hit."
                  (print-message (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
                                         (format-sector-coordinates torpedo-sector)))
                  (setf *destroyed-inhabited-planets* (1+ *destroyed-inhabited-planets*))
-                 (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                 (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                    (setf (planet-destroyedp p) t)
-                   (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+                   (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) p))
                  (setf *planet-coord* nil)
                  (setf *current-planet* nil)
                  (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
@@ -4680,9 +4680,9 @@ player has reached a base by abandoning ship or using the SOS command."
       (setf *base-sector* (drop-entity-in-sector +starbase+)))
 
     ;; If quadrant needs a planet then put it in
-    (when (assoc *ship-quadrant* *planet-information* :test #'coord-equal) ; non-nil when planet exists
+    (when (assoc *ship-quadrant* *planets* :test #'coord-equal) ; non-nil when planet exists
       (setf *planet-coord* *ship-quadrant*)
-      (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+      (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
         (if (planet-inhabitedp p)
             (setf *current-planet* (drop-entity-in-sector +world+))
             (setf *current-planet* (drop-entity-in-sector +planet+)))))
@@ -4825,7 +4825,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
          ;; Before the introduction of inhabited planets the message was
          ;; "Remainder of ship's complement beam down"
          ;; "to nearest habitable planet."
-         (let ((p (first (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))) ; non-nil if planet exists
+         (let ((p (first (assoc *ship-quadrant* *planets* :test #'coord-equal)))) ; non-nil if planet exists
            (if (and p
                     (not (damagedp +transporter+)))
                (print-message (format nil "Remainder of ship's complement beam down to ~A.~%"
@@ -5773,8 +5773,8 @@ can occur."
       (when (string/= (coord-ref *quadrant-contents* s-coord) +empty-sector+)
         (setf distance (/ (distance *ship-sector* s-coord) (* +quadrant-size+ 1.0)))
         (cond
+          ;; Ram enemy ship
           ((or (string= (coord-ref *quadrant-contents* s-coord) +tholian+) ; Ram a Tholian
-               ;; Ram enemy ship
                (string= (coord-ref *quadrant-contents* s-coord) +klingon+)
                (string= (coord-ref *quadrant-contents* s-coord) +commander+)
                (string= (coord-ref *quadrant-contents* s-coord) +super-commander+)
@@ -5833,11 +5833,7 @@ can occur."
         (setf (enemy-distance (aref *quadrant-enemies* m)) final-distance))
       (sort-klingons)
       (when (not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*)))
-        (attack-player))
-      (do ((m 0 (1+ m)))
-          ((>= m *enemies-here*))
-        (setf (enemy-average-distance (aref *quadrant-enemies* m))
-              (enemy-distance (aref *quadrant-enemies* m)))))
+        (attack-player)))
     (update-condition)
     (update-windows)))
 
@@ -6953,8 +6949,9 @@ sectors on the short-range scan even when short-range sensors are out."
           (setf *window-interface-p* nil))))
 
   ;; DEBUG - force line-by-line mode
-  ;;(endwin)
-  ;;(setf *window-interface-p* nil)
+  ;;(when *window-interface-p*
+  ;;  (endwin)
+  ;;  (setf *window-interface-p* nil))
 
   (when *window-interface-p*
      (keypad *stdscr* true) ; Assume the terminal has a keypad and function keys
@@ -7058,7 +7055,7 @@ was an event that requires aborting the operation carried out by the calling fun
          *dockedp*)
      (print-message (format nil "Shuttle craft cannot pass through shields.~%")))
 
-    ((not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+    ((not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
      (print-message (format nil "Spock-  \"Captain, we have no information on this planet~%"))
      (print-message (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
      (print-message (format nil "  you may not fly down.\"~%")))
@@ -7100,9 +7097,9 @@ was an event that requires aborting the operation carried out by the calling fun
                (print-message (format nil "shuttle craft for the trip back to the Enterprise.~%"))
                (print-message (format nil "~%The short hop begins . . .~%"))
                (skip-line 2)
-               (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+               (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                  (setf (planet-knownp pl) t)
-                 (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
+                 (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) pl))
                (setf *in-shuttle-craft-p* t)
                (setf *landedp* nil)
                (when (consume-time)
@@ -7155,13 +7152,13 @@ was an event that requires aborting the operation carried out by the calling fun
     (when *shields-are-up-p*
       (print-message (format nil "Impossible to transport through shields.~%"))
       (return-from beam nil))
-    (when (not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+    (when (not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
       (print-message (format nil "Spock-  \"Captain, we have no information on this planet~%"))
       (print-message (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
       (print-message (format nil "  you may not go down.\"~%"))
       (return-from beam nil))
     (when (and (not *landedp*)
-               (eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
+               (eql (planet-crystals (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))
                     'absent))
       (print-message (format nil "Spock-  \"Captain, I fail to see the logic in~%"))
       (print-message (format nil "  exploring a planet with no dilithium crystals.~%"))
@@ -7338,10 +7335,10 @@ was an event that requires aborting the operation carried out by the calling fun
     ((not *landedp*)
      (print-message (format nil "Mining party not on planet.~%")))
 
-    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'mined)
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))) 'mined)
      (print-message (format nil "This planet has already been mined for dilithium.~%")))
 
-    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'absent)
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))) 'absent)
      (print-message (format nil "No dilithium crystals on this planet.~%")))
 
     (*miningp*
@@ -7355,12 +7352,12 @@ was an event that requires aborting the operation carried out by the calling fun
     (t
      (setf *time-taken-by-current-operation*
            (* (+ 0.1 (* 0.2 (random 1.0)))
-              (planet-class (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
+              (planet-class (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))))
      (unless (consume-time)
        (print-message (format nil "~%Mining operation complete.~%"))
-       (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+       (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
          (setf (planet-crystals pl) 'mined)
-         (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
+         (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) pl))
        (setf *miningp* t)
        (setf *action-taken-p* t)))))
 
@@ -7500,7 +7497,7 @@ the planet."
      (print-message (format nil "Spock- \"No planet in this quadrant, Captain.\"~%")))
 
     (t ; Go ahead and scan even if the planet has been scanned before
-     (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+     (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
        (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
                               (format-quadrant-coordinates *ship-quadrant*)))
        (print-message (format nil "~%         Planet at ~A is of class ~A.~%"
@@ -7513,7 +7510,7 @@ the planet."
          (print-message " no"))
        (print-message (format nil " dilithium crystals present.\"~%"))
        (setf (planet-knownp pl) t)
-       (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl)))))
+       (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) pl)))))
 
 (defun mayday () ; C: mayday(void)
   "Yell for help from nearest starbase. There's more than one way to move in this game!
@@ -7647,7 +7644,7 @@ it's your problem."
       (print-out (format nil "Spock-  \"Planet report follows, Captain.\"~%~%")))
   (let ((one-planet-knownp-p nil)
         pl)
-    (dolist (p-cons *planet-information*)
+    (dolist (p-cons *planets*)
       (setf pl (rest p-cons))
       (unless (planet-destroyedp pl)
         (when (and (planet-knownp pl)
@@ -7753,7 +7750,7 @@ it's your problem."
     (setf *destroyed-stars* (read s))
     (setf *destroyed-inhabited-planets* (read s))
     (setf *destroyed-uninhabited-planets* (read s))
-    (setf *planet-information* (read s))
+    (setf *planets* (read s))
     (setf *stardate* (read s))
     (setf *base-quadrants* (read s))
     (setf *commander-quadrants* (read s))
@@ -7876,7 +7873,7 @@ loop, in effect continuously saving the current state of the game."
     (print *destroyed-stars* s)
     (print *destroyed-inhabited-planets* s)
     (print *destroyed-uninhabited-planets* s)
-    (print *planet-information* s)
+    (print *planets* s)
     (print *stardate* s)
     (print *base-quadrants* s)
     (print *commander-quadrants* s)
@@ -8260,14 +8257,14 @@ values, expecially number of entities in the game."
       (incf (quadrant-klingons (coord-ref *galaxy* c-coord)) 1))
 
     ;; Put planets in the galaxy, one planet per quadrant whether inhabited or uninhabited
-    (setf *planet-information* ())
+    (setf *planets* ())
     (do ((i 0 (1+ i))
          pl
          q)
         ((>= i *initial-planets*))
       (setf pl (make-planet))
       (do ((q-coord (get-random-quadrant) (get-random-quadrant)))
-          ((not (assoc q-coord *planet-information* :test #'coord-equal)) ; nil when planet does not exist
+          ((not (assoc q-coord *planets* :test #'coord-equal)) ; nil when planet does not exist
            (setf (planet-quadrant pl) q-coord)
            (setf q q-coord))) ; dumb code alert!
       (if (< i +habitable-planets+)
@@ -8293,7 +8290,7 @@ values, expecially number of entities in the game."
             (setf (planet-name pl) "")
             (setf (planet-status pl) 'secure)
             ))
-      (setf *planet-information* (acons q pl *planet-information*)))
+      (setf *planets* (acons q pl *planets*)))
 
     ;; Put Romulans in the galaxy
     (do ((i 0 (1+ i))
