@@ -5961,6 +5961,8 @@ displayed y - x, where +y is downward!"
   (when *window-interface-p*
     (select-window *message-window*))
 
+  (skip-line)
+
   (when *landedp*
     (print-message (format nil "Captain! You can't leave standard orbit until you~%"))
     (print-message (format nil "are back aboard the ship.~%"))
@@ -8457,7 +8459,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (setf command (match-token *input-item* commands))
     ;; In windowed mode commands aren't echoed automatically so do it manually
     (when *window-interface-p*
-      (print-message (format nil "Stardate ~A: ~A~{ ~A~}~%~%"
+      (print-message (format nil "Stardate ~A: ~A~{ ~A~}~%"
                              (format-stardate *stardate*) command *line-tokens*)))
     ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak mayday
     (cond
