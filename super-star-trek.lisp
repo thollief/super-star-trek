@@ -7624,12 +7624,8 @@ it's your problem."
        (dock))
      (print-message (format nil "~%Lt. Uhura-  \"Captain, we made it!\"~%")))))
 
-;; TODO - there is no reason to limit the report to uninhabited planets. Sure, the only tactical
-;;        reason for the report is to remember where the crystals were located, but go ahead and
-;;        display inhabited worlds too. This is a "planet report" and the player gets a better
-;;        sense of having a history in the game if all the planets that were scanned are reported.
 (defun survey () ; C: survey(void)
-  "Report on (uninhabited) planets in the galaxy."
+  "Report on known planets in the galaxy."
 
   (if *window-interface-p*
       (if *planet-report-window*
@@ -7647,17 +7643,19 @@ it's your problem."
     (dolist (p-cons *planets*)
       (setf pl (rest p-cons))
       (unless (planet-destroyedp pl)
-        (when (and (planet-knownp pl)
-                   (not (planet-inhabitedp pl)))
+        (when (planet-knownp pl)
           (setf one-planet-knownp-p t)
           (print-out (format nil "~A  class ~A  "
                              (format-quadrant-coordinates (first p-cons))
                              (format-planet-class (planet-class pl))))
-          (unless (eql (planet-crystals pl) 'present)
-            (print-out "no "))
-          (print-out (format nil "dilithium crystals present.~%"))
-          (when (shuttle-landed-p (first p-cons))
-            (print-out (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))
+          (if (planet-inhabitedp pl)
+              (print-out (format nil "~A~%" (planet-name pl)))
+              (progn
+                (unless (eql (planet-crystals pl) 'present)
+                  (print-out "no "))
+                (print-out (format nil "dilithium crystals present.~%"))
+                (when (shuttle-landed-p (first p-cons))
+                  (print-out (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))))
     (unless one-planet-knownp-p
       (print-out (format nil "No information available.~%")))))
 
@@ -8271,13 +8269,11 @@ values, expecially number of entities in the game."
           (progn
             (setf (planet-class pl) +class-m+) ; All inhabited planets are class M
             (setf (planet-crystals pl) 'absent)
-            ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
-            (setf (planet-knownp pl) t)
+            (setf (planet-knownp pl) nil)
             (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) t)
             (setf (planet-name pl) (aref *system-names* i))
-            (setf (planet-status pl) 'secure)
-            )
+            (setf (planet-status pl) 'secure))
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
             ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
@@ -8288,8 +8284,7 @@ values, expecially number of entities in the game."
             (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) nil)
             (setf (planet-name pl) "")
-            (setf (planet-status pl) 'secure)
-            ))
+            (setf (planet-status pl) 'secure)))
       (setf *planets* (acons q pl *planets*)))
 
     ;; Put Romulans in the galaxy
