@@ -3303,7 +3303,7 @@ handling the result. Return the amount of damage if the player ship was hit."
            (unless (string= sector-contents +thing+)
              (print-message (format nil " displaced by blast to ~A ~%"
                                     (format-sector-coordinates displaced-to-sector))))
-           ;; Enemy has moved, reset distances for next attack on player.
+           ;; A ship was displaced, reset all distances for next attack on player.
            (do ((i 0 (1+ i)))
                ((>= i *enemies-here*))
              (setf (enemy-distance (aref *quadrant-enemies* i))
@@ -4768,6 +4768,7 @@ player has reached a base by abandoning ship or using the SOS command."
       (when (string= (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)
         (setf (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))))
 
+;; TODO - the ship seemed to revert to the Enterprise after abandoning, test!
 (defun abandon-ship () ; C: abandon(void)
   "The ship is abandoned. If your current ship is the Faire Queene, or if your shuttle craft is
 dead, you're out of luck. You need the shuttle craft in order for the captain (that's you!!) to
@@ -7500,7 +7501,10 @@ the planet."
      (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
        (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
                               (format-quadrant-coordinates *ship-quadrant*)))
-       (print-message (format nil "~%         Planet at ~A is of class ~A.~%"
+       (print-message (format nil "~%         Planet "))
+       (when (planet-inhabitedp pl)
+         (print-message (format nil "'~A' " (planet-name pl))))
+       (print-message (format nil "at ~A is of class ~A.~%"
                               (format-sector-coordinates *current-planet*)
                               (format-planet-class (planet-class pl))))
        (when (shuttle-landed-p *ship-quadrant*)
