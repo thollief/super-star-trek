@@ -4809,63 +4809,66 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
 
         ((not (eql *shuttle-craft-location* 'on-ship))
          (print-message (format nil "Shuttle craft not currently available.~%"))
-         (return-from abandon-ship nil))
+         (return-from abandon-ship nil))))
 
-        (t
-         ;; Print abandon ship messages
-         (print-message (format nil "~%***ABANDON SHIP!  ABANDON SHIP!~%") :print-slowly t)
-         (print-message (format nil "~%***ALL HANDS ABANDON SHIP!~%") :print-slowly t)
-         (skip-line 2)
-         ;; TODO - this isn't consistent with the "Entire crew.." message below
-         (print-message (format nil "Captain and crew escape in shuttle craft.~%"))
-         (when (= (length *base-quadrants*) 0)
-           ;; Oops! no place to go...
-           (finish 'abandon-ship-with-no-starbases)
-           (return-from abandon-ship nil))
-         ;; Dispose of crew.
-         ;; Before the introduction of inhabited planets the message was
-         ;; "Remainder of ship's complement beam down"
-         ;; "to nearest habitable planet."
-         (let ((p (first (assoc *ship-quadrant* *planets* :test #'coord-equal)))) ; non-nil if planet exists
-           (if (and p
-                    (not (damagedp +transporter+)))
-               (print-message (format nil "Remainder of ship's complement beam down to ~A.~%"
-                                      (planet-name p)))
-               (progn
-                 (print-message (format nil "Entire crew of ~A left to die in outer space.~%" *crew*))
-                 (incf *casualties* *crew*)
-                 (incf *abandoned-crew* *crew*))))
-         ;; If at least one base left, give 'em the Faerie Queene
-         (setf *dilithium-crystals-on-board-p* nil) ; crystals are lost
-         (setf *probes-available* 0) ; No probes
-         (print-message (format nil "~%You are captured by Klingons and released to~%"))
-         (print-message (format nil "the Federation in a prisoner-of-war exchange.~%"))
-         ;; Set up quadrant and position FQ adjacent to base
-         ;; Select a random base to be the new start
-         (let ((nth-base (truncate (* (length *base-quadrants*) (random 1.0)))))
-           (when (not (coord-equal *ship-quadrant* (nth nth-base *base-quadrants*)))
-             (setf *ship-quadrant* (nth nth-base *base-quadrants*))
-             (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
-             (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
-             (new-quadrant)))
-         ;; position next to base by trial and error
-         (setf (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+)
-         (do ((positionedp nil))
-             (positionedp)
-           (do ((count 0 (1+ count)))
-               ((or (>= count 100) ; previously +quadrant-size+, don't give up so easily
-                    positionedp))
-             (setf (coordinate-x *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-x *base-sector*))))
-             (setf (coordinate-y *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-y *base-sector*))))
-             (when (and (valid-sector-p (coordinate-x *ship-sector*) (coordinate-y *ship-sector*))
-                        (string= (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+))
-               (setf positionedp t))) ; found a spot
-           (unless positionedp
-             (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
-             (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
-             (new-quadrant))))))
+  ;; Print abandon ship messages
+  (print-message (format nil "~%***ABANDON SHIP!  ABANDON SHIP!~%") :print-slowly t)
+  (print-message (format nil "~%***ALL HANDS ABANDON SHIP!~%") :print-slowly t)
+  (skip-line 2)
+  ;; TODO - this isn't consistent with the "Entire crew.." message below
+  (print-message (format nil "Captain and crew escape in shuttle craft.~%"))
+  (when (= (length *base-quadrants*) 0)
+    ;; Oops! no place to go...
+    (finish 'abandon-ship-with-no-starbases)
+    (return-from abandon-ship nil))
+  ;; Dispose of crew.
+  ;; Before the introduction of inhabited planets the message was
+  ;; "Remainder of ship's complement beam down"
+  ;; "to nearest habitable planet."
+  (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))) ; non-nil if planet exists
+    (if (and p
+             (not (damagedp +transporter+)))
+        (print-message (format nil "Remainder of ship's complement beam down to ~A.~%"
+                               (planet-name p)))
+        (progn
+          (print-message (format nil "Entire crew of ~A left to die in outer space.~%" *crew*))
+          (incf *casualties* *crew*)
+          (incf *abandoned-crew* *crew*))))
+  ;; If at least one base left, give 'em the Faerie Queene
+  (setf *dilithium-crystals-on-board-p* nil) ; crystals are lost
+  (setf *probes-available* 0) ; No probes
+  (print-message (format nil "~%You are captured by Klingons and released to~%"))
+  (print-message (format nil "the Federation in a prisoner-of-war exchange.~%"))
+  ;; Set up quadrant and position FQ adjacent to base
+  ;; Select a random base to be the new start
+  (let ((nth-base (truncate (* (length *base-quadrants*) (random 1.0)))))
+    (when (not (coord-equal *ship-quadrant* (nth nth-base *base-quadrants*)))
+      (setf *ship-quadrant* (nth nth-base *base-quadrants*))
+      (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
+      (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
+      (new-quadrant)))
+  ;; position next to base by trial and error
+  ;; TODO - in theory this could fail if there is no empty sector next to the base, or if the RNG
+  ;;        doesn't find an empty sector. Instead, select a random empty sector (not "randomly
+  ;;        select a sector and check if it's empty"), and run new-quadrant again if none exists
+  (setf (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+)
+  (do ((positionedp nil))
+      (positionedp)
+    (do ((count 0 (1+ count)))
+        ((or (>= count 100) ; previously +quadrant-size+, don't give up so easily
+             positionedp))
+      (setf (coordinate-x *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-x *base-sector*))))
+      (setf (coordinate-y *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-y *base-sector*))))
+      (when (and (valid-sector-p (coordinate-x *ship-sector*) (coordinate-y *ship-sector*))
+                 (string= (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+))
+        (setf positionedp t))) ; found a spot
+    (unless positionedp
+      (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
+      (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
+      (new-quadrant)))
   ;; Get new commission
-  (setf (coord-ref *quadrant-contents* *ship-sector*) +faerie-queene+)
+  (setf *ship* +faerie-queene+)
+  (setf (coord-ref *quadrant-contents* *ship-sector*) *ship*)
   (setf *crew* +full-crew+)
   (print-message (format nil "Starfleet puts you in command of another ship,~%"))
   (print-message (format nil "the Faerie Queene, which is antiquated but,~%"))
