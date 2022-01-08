@@ -452,6 +452,7 @@ empty string if the planet class can't be determined."
 (define-constant +materialize-3+ "0") ; C: IHMATER2
 (define-constant +reserved+ "X")
 (define-constant +probe+ "^")
+(define-constant +torpedo+ "+")
 
 (defun letter-to-name (quadrant-entity)
   "Convert a single letter quadrant entity to a string for display."
@@ -2775,7 +2776,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
       (if (> hit 0.005)
           (progn
             (when (not (damagedp +short-range-sensors+))
-              (boom e-coord))
+              (boom (coordinate-x e-coord) (coordinate-y e-coord)))
             (print-message (format nil "~A unit hit on ~A at ~A~%" (truncate hit)
                                    (letter-to-name (coord-ref *quadrant-contents* e-coord))
                                    (format-sector-coordinates e-coord))))
@@ -3218,24 +3219,83 @@ and return the x and y coordinates to which it was displaced."
              (distance torpedo-origin torpedo-coord)
              (abs (sin hit-angle))))))
 
+(defun put-short-range-scan-symbol (x y symbol) ; C: void put_srscan_sym(coord w, char sym)
+  "In curses mode, place the symbol at symbol-coord in the short range scan."
+
+  (when *window-interface-p*
+    (mvwaddstr *short-range-scan-window* (+ x 2) (+ (* y 2) 3) symbol)
+    (wrefresh *short-range-scan-window*)))
+
+(defun turn-sound-on (frequency) ; C: not user-defined...
+  "Play a sound on the PC speaker at the specified frequency."
+
+  ;; TODO - implement this, probably by calling some OS routine or external library
+  (setf frequency frequency))
+
+(defun turn-sound-off ()
+  "Stop sound output."
+
+  ;; TODO - how does SDL do it?
+  )
+
+(defun warble () ; C: void warble(void)
+  "Sound and visual effects for mayday - ship teleportation"
+
+  ;; (short-range-scan) ; this was in the C source, is it needed here?
+  (turn-sound-on 50)
+  (print-message "     . . . . .     " :print-slowly t)
+  (sleep 1)
+  (turn-sound-off))
+
+(defun boom (x y) ; C: void boom(coord w)
+  "An enemy is destroyed - display a boom effect and make a boom noise. Called when an attack
+with phasers destroys an enemy."
+
+  (when *window-interface-p*
+    (turn-sound-on 500)
+    (wattron *short-range-scan-window* a_reverse)
+    (put-short-range-scan-symbol x y (aref *quadrant-contents* x y))
+    (sleep .5)
+    (textcolor +default-color+)
+    (put-short-range-scan-symbol x y (aref *quadrant-contents* x y))
+    (sleep .3)
+    (wattron *short-range-scan-window* a_reverse)
+    (put-short-range-scan-symbol x y (aref *quadrant-contents* x y))
+    (sleep .3)
+    (textcolor +default-color+)
+    (put-short-range-scan-symbol x y (aref *quadrant-contents* x y))
+    (sleep .3)
+    (turn-sound-off)
+    ;; A last short range scan seems to clear up artifacts from the boom sequence.
+    (short-range-scan)))
+
 (defun track-torpedo (torp-x ; floating point x position
                       torp-y ; floating point y position
                       length-of-track
                       torpedo-number
                       number-of-torpedoes-in-salvo
                       sector-contents) ; C: void tracktorpedo(coord w, int l, int i, int n, int iquad)
-  "Torpedo-track animation. If displaying coordinates then display fractional amounts since it is
-allowed to aim between sectors."
+  "Torpedo-track animation. If displaying coordinate values then display fractional amounts since
+it is allowed to aim between sectors."
 
   (if *window-interface-p*
-      ;; TODO - write the curses part
       (if (or (not (damagedp +short-range-sensors+))
               *dockedp*)
           (progn
-            (setf sector-contents sector-contents) ; never used? hah!
-            t) ; TODO - finish this
-          (print-out (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y)))
-        )
+            (when (= length-of-track 1)
+              (short-range-scan))
+            (if (or (string= sector-contents +empty-sector+)
+                    (string= sector-contents +black-hole+))
+                ;; Pass over an empty sector. Black hole collisions are handled without effects.
+                (progn
+                  (put-short-range-scan-symbol (round torp-x) (round torp-y) +torpedo+)
+                  (turn-sound-on (* length-of-track 10))
+                  (sleep 1)
+                  (turn-sound-off)
+                  (put-short-range-scan-symbol (round torp-x) (round torp-y) sector-contents))
+                ;; Highlight an impact sector
+                (boom (round torp-x) (round torp-y))))
+          (print-out (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y))))
       (progn
         (if (= length-of-track 1)
             ;; Display track header
@@ -4946,34 +5006,6 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
        (print-message (format nil "~%Lt. Uhura- \"Captain, an important message from the starbase:\"~%"))
        (attack-report)
        (setf *base-attack-report-seen-p* t)))))
-
-(defun put-short-range-scan-symbol (symbol-coord symbol) ; C: void put_srscan_sym(coord w, char sym)
-  "In curses mode, place the symbol at symbol-coord in the short range scan."
-
-  ;; TODO - write this
-  (setf symbol-coord symbol-coord)
-  (setf symbol symbol)
-  (print-message (format nil "Debug: displaying a short range scan symbol~%"))
-  )
-
-(defun sound (frequency) ; C: not user-defined...
-  "Play a sound on the PC speaker at the specified frequency."
-
-  ;; TODO - implement this, probably by calling some OS routine or external library
-  (setf frequency frequency)
-  )
-
-(defun warble () ; C: void warble(void)
-  "Sound and visual effects for teleportation"
-
-  ;; TODO - this function is a placeholder, implement it in a portable way
-)
-
-(defun boom (c) ; C: void boom(coord w)
-  "enemy fall down, go boom - display a boom effect and make a boom noise"
-
-  ;; TODO - write this
-  (setf c c))
 
 (defun time-warp () ; C: timwrp(), /* let's do the time warp again */
   "Travel forward or backward in time."
