@@ -402,7 +402,7 @@ coordinates or nil."
   class ; C: pclass, one of 1, 2, or 3 (M, N, or O) - affects time needed to mine crystals
   name ; Name of the planet. An empty string for uninhabited planets
   destroyedp ; Whether or not this planet has been destroyed
-  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
+  knownp ; whether or not this planet has been scanned by the player
   inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
   crystals ; has crystals: 'absent, 'present, or 'mined
   (status 'secure)) ; C: status, One of secure, distressed, enslaved
@@ -460,7 +460,6 @@ empty string if the planet class can't be determined."
   ;; TODO these are the strings actually used. Should plan for them all, or use a struct with a
   ;;      symbol and a label, like the game type or game length. Is there an alist in here
   ;;      somewhere, or an object?
-  ;; TODO - When displaying an inhabited world, show the name instead of "unknown"
   (cond
     ((string= quadrant-entity +klingon+)
      "Klingon")
@@ -841,43 +840,43 @@ the same as the ship if the shuttle craft location is on-ship.")
 ;; Colony have been omitted.
 ;;
 ;; Some planets marked Class G and P here will be displayed as class M
-;; because of the way planets are generated. This is a known bug. TODO - fix it!
+;; because of the way planets are generated. This is a known bug.
 ;;
 ;;      Federation Worlds
-;; "Andoria (Fesoan)"),  several episodes
-;; "Tellar Prime (Miracht)"),  TOS: "Journey to Babel"
-;; "Vulcan (T'Khasi)"),  many episodes
-;; "Medusa"),   TOS: "Is There in Truth No Beauty?"
-;; "Argelius II (Nelphia)"), TOS: "Wolf in the Fold" ("IV" in BSD)
-;; "Ardana"),   TOS: "The Cloud Minders"
-;; "Catulla (Cendo-Prae)"),  TOS: "The Way to Eden"
-;; "Gideon"),   TOS: "The Mark of Gideon"
-;; "Aldebaran III"),  TOS: "The Deadly Years"
-;; "Alpha Majoris I"),  TOS: "Wolf in the Fold"
-;; "Altair IV"),   TOS: "Amok Time
-;; "Ariannus"),   TOS: "Let That Be Your Last Battlefield"
-;; "Benecia"),   TOS: "The Conscience of the King"
-;; "Beta Niobe I (Sarpeidon)"),  TOS: "All Our Yesterdays"
-;; "Alpha Carinae II"),  TOS: "The Ultimate Computer"
-;; "Capella IV (Kohath)"),  TOS: "Friday's Child" (Class G)
-;; "Daran V"),   TOS: "For the World is Hollow and I Have Touched the Sky"
-;; "Deneb II"),   TOS: "Wolf in the Fold" ("IV" in BSD)
-;; "Eminiar VII"),   TOS: "A Taste of Armageddon"
-;; "Gamma Canaris IV"),  TOS: "Metamorphosis"
-;; "Gamma Tranguli VI (Vaalel)"),  TOS: "The Apple"
-;; "Ingraham B"),   TOS: "Operation: Annihilate"
-;; "Janus IV"),   TOS: "The Devil in the Dark"
-;; "Makus III"),   TOS: "The Galileo Seven"
-;; "Marcos XII"),   TOS: "And the Children Shall Lead",
-;; "Omega IV"),   TOS: "The Omega Glory"
-;; "Regulus V"),   TOS: "Amok Time
-;; "Deneva"),   TOS: "Operation -- Annihilate!"
+;; "Andoria (Fesoan)" class M,  several episodes
+;; "Tellar Prime (Miracht)" class M,  TOS: "Journey to Babel"
+;; "Vulcan (T'Khasi)" class M,  many episodes
+;; "Medusa" class ?,   TOS: "Is There in Truth No Beauty?"
+;; "Argelius II (Nelphia)" class M, TOS: "Wolf in the Fold" ("IV" in BSD)
+;; "Ardana" class M,   TOS: "The Cloud Minders"
+;; "Catulla (Cendo-Prae)" class ?,  TOS: "The Way to Eden"
+;; "Gideon" class M,   TOS: "The Mark of Gideon"
+;; "Aldebaran III" class ?,  TOS: "The Deadly Years"
+;; "Alpha Majoris I" class ?,  TOS: "Wolf in the Fold"
+;; "Altair IV" class ?,   TOS: "Amok Time
+;; "Ariannus" class ?,   TOS: "Let That Be Your Last Battlefield"
+;; "Benecia" class ?,   TOS: "The Conscience of the King"
+;; "Beta Niobe I (Sarpeidon)" class ?,  TOS: "All Our Yesterdays"
+;; "Alpha Carinae II" class ?,  TOS: "The Ultimate Computer"
+;; "Capella IV (Kohath)" class M,  TOS: "Friday's Child" (Class G)
+;; "Daran V" class ?,   TOS: "For the World is Hollow and I Have Touched the Sky"
+;; "Deneb II" class ?,   TOS: "Wolf in the Fold" ("IV" in BSD)
+;; "Eminiar VII" class ?,   TOS: "A Taste of Armageddon"
+;; "Gamma Canaris IV" class ?,  TOS: "Metamorphosis"
+;; "Gamma Tranguli VI (Vaalel)" class ?,  TOS: "The Apple"
+;; "Ingraham B" class M,   TOS: "Operation: Annihilate"
+;; "Janus IV" class ?,   TOS: "The Devil in the Dark"
+;; "Makus III" class ?,   TOS: "The Galileo Seven"
+;; "Marcos XII" class ?,   TOS: "And the Children Shall Lead",
+;; "Omega IV" class M,   TOS: "The Omega Glory"
+;; "Regulus V" class M,   TOS: "Amok Time
+;; "Deneva" class ?,   TOS: "Operation -- Annihilate!"
 ;;
 ;;     Worlds from BSD Trek
-;; "Rigel II"),   TOS: "Shore Leave" ("III" in BSD)
-;; "Beta III"),   TOS: "The Return of the Archons"
-;; "Triacus"),   TOS: "And the Children Shall Lead",
-;; "Exo III"),   TOS: "What Are Little Girls Made Of?" (Class P)
+;; "Rigel II" class ?,   TOS: "Shore Leave" ("III" in BSD)
+;; "Beta III" class M,   TOS: "The Return of the Archons"
+;; "Triacus" class ?,   TOS: "And the Children Shall Lead",
+;; "Exo III" class ?,   TOS: "What Are Little Girls Made Of?" (Class P)
 ;;
 ;;     Others
 ;; "Hansen's Planet"),  TOS: "The Galileo Seven"
@@ -1305,9 +1304,7 @@ affected."
   (if (or (not (coord-equal nova-quadrant *ship-quadrant*))
           *just-in-p*)
       ;; It isn't here, or we just entered (treat as enroute)
-      (when (and (not *cloakedp*)
-                 (or (not (damagedp +subspace-radio+))
-                     *dockedp*))
+      (when (subspace-radio-available-p)
         (print-message (format nil "~%Message from Starfleet Command       Stardate ~A~%"
                                (format-stardate *stardate*)))
         (print-message (format nil "     Supernova in ~A; caution advised.~%"
@@ -1368,9 +1365,7 @@ affected."
   (setf *base-quadrants* (remove nova-quadrant *base-quadrants* :test #'coord-equal))
   ;; mark supernova in galaxy and in star chart
   (when (or (coord-equal *ship-quadrant* nova-quadrant)
-            (and (not *cloakedp*)
-                 (or (not (damagedp +subspace-radio+))
-                     *dockedp*)))
+            (subspace-radio-available-p))
     (setf (quadrant-supernovap (coord-ref *galaxy* nova-quadrant)) t))
   ;; Either case ends the game but neither necessarily occurs. There is no default case.
   (cond
@@ -1463,9 +1458,7 @@ t-quadrant is the quadrant to which the ship is pulled"
      (setf (starchart-page-starbases (coord-ref *starchart* base-q)) 0))
     ;; Get word via subspace radio
     ((and (> (length *base-quadrants*) 0) ; Need an existing base to transmit the message
-          (and (not *cloakedp*)
-               (or (not (damagedp +subspace-radio+)) ; and a radio to receive it.
-                   *dockedp*)))
+          (subspace-radio-available-p)) ; and a radio to receive it.
      (print-message (format nil "~%Lt. Uhura-  \"Captain, Starfleet Command reports that~%"))
      (print-message (format nil "   the starbase in ~A has been destroyed by~%"
                             (format-quadrant-coordinates base-q)))
@@ -1528,9 +1521,7 @@ Return true on successful move."
       ;; Destroy the planet
       (setf (planet-destroyedp helpful-planet) t)
       (rplacd (assoc *super-commander-quadrant* *planets* :test #'coord-equal) helpful-planet)
-      (when (and (not *cloakedp*)
-                 (or *dockedp*
-                     (not (damagedp +subspace-radio+))))
+      (when (subspace-radio-available-p)
         (print-message (format nil "Lt. Uhura-  \"Captain, Starfleet Intelligence reports~%"))
         (print-message (format nil "   a planet in ~A has been destroyed~%"
                                (format-quadrant-coordinates *super-commander-quadrant*)))
@@ -1643,9 +1634,7 @@ Return true on successful move."
               (when (is-scheduled-p +commander-destroys-base+)
                 (postpone-event +super-commander-destroys-base+
                                 (- (scheduled-for +commander-destroys-base+) *stardate*)))
-              (when (or *cloakedp*
-                        (and (damagedp +subspace-radio+)
-                             (not *dockedp*)))
+              (when (subspace-radio-available-p)
                 (return-from move-super-commander nil)) ; No warning
               (setf *base-attack-report-seen-p* t)
               (print-message (format nil "Lt. Uhura-  \"Captain, the starbase in ~A~%"
@@ -1662,9 +1651,7 @@ Return true on successful move."
   ;; Check for intelligence report
   (when (and (or (<= (random 1.0) 0.2)
                  (> (quadrant-starbases (coord-ref *galaxy* *super-commander-quadrant*)) 0))
-             (not *cloakedp*)
-             (or (not (damagedp +subspace-radio+))
-                 *dockedp*)
+             (subspace-radio-available-p)
              (quadrant-chartedp (coord-ref *galaxy* *super-commander-quadrant*)))
     (print-message (format nil "Lt. Uhura-  \"Captain, Starfleet Intelligence reports~%"))
     (print-message (format nil "   the Super-commander is in ~A.\"~%"
@@ -1949,9 +1936,7 @@ tractor-beamed the ship then the other will not."
                                    (+ (scheduled-for +commander-destroys-base+) (expran (* 0.3 *initial-time*))))
                    (setf *base-attack-report-seen-p* nil)
                    ;; No warning if radio not available
-                   (when (and (not *cloakedp*)
-                              (or (not (damagedp +subspace-radio+))
-                                  *dockedp*))
+                   (when (subspace-radio-available-p)
                      (setf *base-attack-report-seen-p* t)
                      (print-message (format nil "~%Lt. Uhura-  \"Captain, the starbase in ~A"
                                             (format-quadrant-coordinates *base-under-attack-quadrant*)))
@@ -2010,9 +1995,7 @@ tractor-beamed the ship then the other will not."
            (setf (coordinate-x *probe-reported-quadrant*) i)
            (setf (coordinate-y *probe-reported-quadrant*) j)
            ;; No update if no working subspace radio
-           (when (and (not *cloakedp*)
-                      (or (not (damagedp +subspace-radio+))
-                          *dockedp*))
+           (when (subspace-radio-available-p)
              (print-message "~%Lt. Uhura-  \"The deep space probe ")
              (cond ((not (valid-quadrant-p (coordinate-x *probe-reported-quadrant*)
                                            (coordinate-y *probe-reported-quadrant*)))
@@ -2029,9 +2012,7 @@ tractor-beamed the ship then the other will not."
              (print-message (format nil ".\"~%")))))
        (when (is-scheduled-p +move-deep-space-probe+)
          ;; Update star chart if Radio is working or have access to radio.
-         (when (and (not *cloakedp*)
-                    (or (not (damagedp +subspace-radio+))
-                        *dockedp*))
+         (when (subspace-radio-available-p)
            (setf (starchart-page-klingons (coord-ref *starchart* *probe-reported-quadrant*))
                  (quadrant-klingons (coord-ref *galaxy* *probe-reported-quadrant*)))
            (setf (starchart-page-starbases (coord-ref *starchart* *probe-reported-quadrant*))
@@ -2097,9 +2078,7 @@ tractor-beamed the ship then the other will not."
            (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
                    candidate-planet)
            ;; tell the captain about it if we can
-           (when (and (not *cloakedp*)
-                      (or (not (damagedp +subspace-radio+))
-                          *dockedp*))
+           (when (subspace-radio-available-p)
              (print-message (format nil "~%Lt. Uhura- \"Captain, ~A in ~A reports it is under attack~%"
                                     (planet-name candidate-planet)
                                     (format-quadrant-coordinates *conquest-quadrant*)))
@@ -2125,9 +2104,7 @@ tractor-beamed the ship then the other will not."
                (schedule-event +klingons-build-ship-in-enslaved-system+
                                (expran (* 2.0 *initial-time*)))
                ;; report the disaster if we can
-               (when (and (not *cloakedp*)
-                          (or (not (damagedp +subspace-radio+))
-                              *dockedp*))
+               (when (subspace-radio-available-p)
                  (print-message
                   (format nil "Lt. Uhura- \"We've lost contact with starsystem ~A in ~A.\""
                           (planet-name conquest-planet)
@@ -2193,9 +2170,7 @@ tractor-beamed the ship then the other will not."
                       (print-message
                        (format nil "Spock- sensors indicate the Klingons have launched a warship from ~A."
                                (planet-name conquest-planet))))
-                     ((and (not *cloakedp*)
-                           (or (not (damagedp +subspace-radio+))
-                               *dockedp*))
+                     ((subspace-radio-available-p)
                       (print-message
                        (format nil "Lt. Uhura- Starfleet reports increased Klingon activity near ~A in ~A."
                                (planet-name conquest-planet)
@@ -3235,7 +3210,7 @@ and return the x and y coordinates to which it was displaced."
 (defun turn-sound-off ()
   "Stop sound output."
 
-  ;; TODO - how does SDL do it?
+  ;; TODO - implement this, how does SDL do it?
   )
 
 (defun warble () ; C: void warble(void)
@@ -3756,6 +3731,14 @@ there was an error (including -1 entered by the player to exit the command)."
       ;; TODO - is this a common idiom suitable for a function? Yes - (enemies-remaining-p)
       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
         (finish 'won)))))
+
+(defun subspace-radio-available-p ()
+  "Check if a subspace radio is available. A subspace radio is available if the onboard device is
+not damaged or if the ship is docked, and the ship is not cloaked."
+
+  (and (or (not (damagedp +subspace-radio+))
+           *dockedp*)
+       (not *cloakedp*)))
 
 (defun cloak () ; C: void cloak(void)
 
@@ -4760,8 +4743,7 @@ player has reached a base by abandoning ship or using the SOS command."
                (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
                (= (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 0))
       (setf *romulan-neutral-zone-p* t)
-      ;; The ship won't be cloaked in a new sector so no cloaking check here
-      (when (not (damagedp +subspace-radio+))
+      (when (subspace-radio-available-p)
         (print-message (format nil "~%LT. Uhura- \"Captain, an urgent message.~%"))
         (print-message (format nil "  I'll put it on audio.\"  CLICK~%"))
         (print-message (format nil "~%INTRUDER! YOU HAVE VIOLATED THE ROMULAN NEUTRAL ZONE.~%"))
@@ -6290,8 +6272,7 @@ quadrant experiencing a supernova)."
 
     ((is-scheduled-p +move-deep-space-probe+)
      (clear-type-ahead-buffer)
-     (if (and (damagedp +subspace-radio+)
-              (not *dockedp*))
+     (if (subspace-radio-available-p)
          (progn
            (print-message (format nil "~%Spock-  \"Records show the previous probe has not yet~%"))
            (print-message (format nil "   reached its destination.\"~%")))
@@ -6764,9 +6745,7 @@ quadrant experiencing a supernova)."
         (print-message (format nil " destroyed, ~A remaining.~%" (length *base-quadrants*))))
       (print-message (format nil "There are ~A bases.~%" *initial-bases*)))
   ;; Don't report this if not seen and either the radio is damaged or not at base!
-  (when (and (not *cloakedp*)
-             (or (not (damagedp +subspace-radio+))
-                 *dockedp*)
+  (when (and (subspace-radio-available-p
              *base-attack-report-seen-p*)
     (attack-report))
   (when (> *casualties* 0)
@@ -6784,9 +6763,7 @@ quadrant experiencing a supernova)."
   (when (string= *ship* +enterprise+)
     (print-message (format nil "You have ~A deep space probe~:P.~%"
                            (if (> *probes-available* 0) *probes-available* "no"))))
-  (when (and (not *cloakedp*)
-             (or (not (damagedp +subspace-radio+))
-                 *dockedp*)
+  (when (and (subspace-radio-available-p)
              (is-scheduled-p +move-deep-space-probe+))
     (if *probe-is-armed-p*
         (print-out "An armed deep space probe is in ")
