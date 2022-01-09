@@ -62,6 +62,8 @@ window."
         (curs-set 0))))
 
 ;; TODO - C source also stores the input line in the replay file.
+;; TODO - input of special keys, for example arrow keys, echo as multiple characters. Need to
+;;        backspace and write over those, too.
 (defun get-input-line () ; C: cgetline(char *line, int max)
   "Get a line of input from the keyboard as a string."
 
@@ -933,8 +935,6 @@ shuttle craft landed on it."
        (setf ship-name "Ship???")))
     (return-from format-ship-name ship-name)))
 
-;; TODO - every check for subspace radio damage needs to also check if the ship is cloaked because
-;;        the radio doesn't work while cloaked (review all calls checking the radio)
 (defun damagedp (device) ; C: #define damaged(dev) (game.damage[dev] != 0.0)
   "Evaluate whether or not a device is damaged."
 
@@ -1753,7 +1753,6 @@ tractor-beamed the ship then the other will not."
         (print-message (format nil "   surveillance reports are coming in.~%"))
         (skip-line)
         (when (not *base-attack-report-seen-p*)
-          ;; TODO - rename either attack-report or the boolean tracking if it needs to be called
           (attack-report)
           (setf *base-attack-report-seen-p* t))
         (print-message (format nil "   The star chart is now up to date.\"~%"))
@@ -2724,9 +2723,6 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
   (when *window-interface-p*
     (select-window *message-window*))
 
-  ;; TODO - Initially, the number of enemies and the number of entries in the hits array are the
-  ;;        same. As enemies are killed the enemies array becomes shorter but the hits array does
-  ;;        not. Convert this index tracking to some sort of structure that uses lists.
   (do ((hit-index 0 (1+ hit-index))
        (enemy-index 0 (1+ enemy-index))
        (dust-factor (+ 0.9 (* 0.01 (random 1.0))) ; amount by which delivered power is reduced over distance
@@ -2960,11 +2956,6 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           ;; they can't be fired on unless they are adjacent to the ship.
           ;; TODO - write the enhancements to the visual-scan function and then allow firing on
           ;;        Commanders, Super-commanders, and Romulan) that are detected by the visual scan
-          ;; TODO - Consider allowing manual fire only on enemies that are visible, either in the
-          ;;        short range scan, adjacent sectors, or visual scan. When an unseen enemy
-          ;;        attacks it's location becomes known (check the attack function to confirm this)
-          ;;        and it then can be counter-attacked. Display it in the short-range scan with a
-          ;;        generic letter such as "A" for "attacker" but not the specific type of enemy.
           ;; TODO - the recommended energy amounts for manual fire can vary if the input loop is
           ;;        repeated. Is this a bug or a feature?
           (setf requested-energy 0.0)
@@ -3397,9 +3388,6 @@ handling the result. Return the amount of damage if the player ship was hit."
                                               (format-sector-coordinates torpedo-sector)))
                        (print-message (format nil "   torpedo neutralized.~%")))
                      ;; Hit a regular enemy
-                     ;; TODO - during testing a torpedo destroyed a klingon but the Klingon was
-                     ;;        not removed from the SR scan. The SR scan showed a K but the enemy
-                     ;;        was treated as Unknown.
                      (do ((enemy-index 0 (1+ enemy-index)) ; find the enemy
                           e-energy
                           enemy-hit)
@@ -4633,10 +4621,10 @@ player has reached a base by abandoning ship or using the SOS command."
     (select-window *message-window*))
 
   (setf *just-in-p* t)
-  (setf *klingons-here* 0) ; TODO - a convenience variable to avoid referencing the galaxy array, keep it?
+  (setf *klingons-here* 0)
   (setf *commanders-here* 0)
   (setf *super-commanders-here* 0)
-  (setf *romulans-here* 0) ; TODO - a convenience variable to avoid referencing the galaxy array, keep it?
+  (setf *romulans-here* 0)
   (setf *romulan-neutral-zone-p* nil)
   (setf *cloaking-violation-reported-p* nil)
   (setf *enemies-here* 0)
@@ -4810,7 +4798,6 @@ player has reached a base by abandoning ship or using the SOS command."
       (when (string= (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)
         (setf (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))))
 
-;; TODO - the ship seemed to revert to the Enterprise after abandoning, test!
 (defun abandon-ship () ; C: abandon(void)
   "The ship is abandoned. If your current ship is the Faire Queene, or if your shuttle craft is
 dead, you're out of luck. You need the shuttle craft in order for the captain (that's you!!) to
@@ -6745,7 +6732,7 @@ quadrant experiencing a supernova)."
         (print-message (format nil " destroyed, ~A remaining.~%" (length *base-quadrants*))))
       (print-message (format nil "There are ~A bases.~%" *initial-bases*)))
   ;; Don't report this if not seen and either the radio is damaged or not at base!
-  (when (and (subspace-radio-available-p
+  (when (and (subspace-radio-available-p)
              *base-attack-report-seen-p*)
     (attack-report))
   (when (> *casualties* 0)
@@ -7490,12 +7477,8 @@ the planet."
        (setf *in-orbit-p* t)
        (setf *action-taken-p* t)))))
 
-;; TODO - respond in a reasonable way if there is an inhabited planet in the quadrant. There will
-;;        never be dilithium crystals (that's how the initialization code works - presumably if
-;;        the planet is inhabited the crystals have already been mined, or are not available for
-;;        the player to mine) but at least print the planet name.
 (defun sensor () ; C: sensor(void)
-  "Examine planets in this quadrant."
+  "Examine planets in this quadrant. Inhabited planets have a name but no dilithoum crystals."
 
   (when *window-interface-p*
     (select-window *message-window*))
