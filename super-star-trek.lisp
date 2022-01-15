@@ -265,7 +265,7 @@ to allow for curses or line-by-line output when the player is reminded of the in
       (t
        (print-message "~%Please answer with \"y\" or \"n\": ")))))
 
-;; TODO - Can/should coordinate handling be an object or package?
+;; TODO - Can/should coordinate handling be an object?
 ;; TODO - adjacency is a frequently used property of coordinate pairs. Add support for calculating
 ;;        it for any pair of coords?
 (defstruct coordinate ; C: coord
@@ -427,7 +427,7 @@ empty string if the planet class can't be determined."
   "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; Characters displayed for game entities in short range scans
-;; TODO - Make probes visible in short range scans. When you launch a probe and the move to the
+;; TODO - Make probes visible in short range scans. When you launch a probe and then move to the
 ;;        qaudrant where it is reported to be then it should be visible.
 ;;        This means giving the probe a sector coordinate, too, and handling it when displaying
 ;;        a short range scan. Being small, probes can be in the same sector as another object and
@@ -494,7 +494,8 @@ empty string if the planet class can't be determined."
 ;;        super-commander and sometimes commanders.
 
 (defstruct quadrant ; C: quadrant
-  "Information about a quadrant.
+  "Information about a quadrant. Some entities in a quadrant are transient and don't need to be
+tracked, including Tholians, black holes, and space things.
 
 When a quadrant has had a supernova don't zero out the number of stars, planets, and starbases. If
 the player caused the supernova these destroyed objects count against the final score and need to
@@ -793,7 +794,6 @@ the same as the ship if the shuttle craft location is on-ship.")
 (defparameter *current-planet* nil "Sector coordinate location of a planet in the current quadrant, if any") ; C: plnet
 
 (defparameter *time-taken-by-current-operation* 0.0) ; C: optime
-(defparameter *last-chart-update* 0.0); C: lastchart, time starchart was last updated. It starts functional but we've never seen it.
 
 (defparameter *probe-reported-quadrant* (make-coordinate)
   "The last reported location of the probe") ; C: probec, current probe quadrant
@@ -6630,9 +6630,6 @@ quadrant experiencing a supernova)."
       (skip-line))
 
   (print-out (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
-  (when (> *stardate* *last-chart-update*)
-    (print-out (format nil "(Last surveillance update ~A stardates ago).~%"
-                       (truncate (- *stardate* *last-chart-update*)))))
   (print-out (format nil "      1    2    3    4    5    6    7    8~%"))
   (do ((x 0 (1+ x)))
       ((>= x +galaxy-size+))
@@ -7802,7 +7799,6 @@ it's your problem."
     (setf *current-planet* (read s))
     (setf *condition* (read s))
     (setf *time-taken-by-current-operation* (read s))
-    (setf *last-chart-update* (read s))
     (setf *crystal-work-probability* (read s))
     (setf *probe-reported-quadrant* (read s))
     (setf *probe-x-coord* (read s))
@@ -7925,7 +7921,6 @@ loop, in effect continuously saving the current state of the game."
     (print *current-planet* s)
     (print *condition* s)
     (print *time-taken-by-current-operation* s)
-    (print *last-chart-update* s)
     (print *crystal-work-probability* s)
     (print *probe-reported-quadrant* s)
     (print *probe-x-coord* s)
@@ -8148,9 +8143,6 @@ values, expecially number of entities in the game."
         (setf (aref *starchart* i j) (make-starchart-page :stars 0
                                                           :starbases 0
                                                           :klingons 0))))
-
-    ;; Starchart is functional but we've never seen it
-    (setf *last-chart-update* +forever+)
 
     ;; Put stars in the galaxy
     (setf *initial-stars* 0)
