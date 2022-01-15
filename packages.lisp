@@ -59,7 +59,7 @@
   (:use common-lisp common-lisp-user)
   (:export define-constant))
 
-(defpackage events
+(defpackage sst-events
   (:documentation "Event handling for Super Star Trek")
   (:use common-lisp common-lisp-user)
   (:import-from sbcl-support
@@ -73,7 +73,7 @@
            unschedule
            find-event))
 
-(defpackage help
+(defpackage sst-help
   (:documentation "Help information for Super Star Trek")
   (:use common-lisp common-lisp-user)
   (:export *help-database*))
@@ -96,7 +96,7 @@
                 waddch waddstr wattron wattrset wclear wclrtoeol wgetch wmove wprintw wrefresh)
   (:import-from cl-utilities
                 split-sequence)
-  (:import-from events
+  (:import-from sst-events
                 +forever+
                 *future-events*
                 initialize-events
@@ -105,7 +105,7 @@
                 postpone-event
                 unschedule
                 find-event)
-  (:import-from help
+  (:import-from sst-help
                 *help-database*)
   (:export print-prompt
            print-message

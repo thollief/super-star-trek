@@ -1,6 +1,6 @@
 ;;;; Super Star Trek events
 
-(in-package events)
+(in-package sst-events)
 
 ;; TODO this is a suspicious constant, can it be removed from the code?
 (define-constant +forever+ 1e30)

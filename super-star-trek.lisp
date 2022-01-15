@@ -7700,7 +7700,7 @@ it's your problem."
   "Restore a saved game. Return true or false for restore success or failure."
 
   (with-open-file (s file-name :direction :input :if-does-not-exist nil)
-    (setf events::*future-events* (read s))
+    (setf sst-events::*future-events* (read s))
     (setf *random-state* (read s))
     (setf *line-tokens* (read s))
     (setf *input-item* (read s))
@@ -7822,7 +7822,7 @@ it's your problem."
 loop, in effect continuously saving the current state of the game."
 
   (with-open-file (s file-name :direction :output :if-exists :supersede)
-    (print events::*future-events* s)
+    (print sst-events::*future-events* s)
     (print *random-state* s)
     (print *line-tokens* s)
     (print *input-item* s)

@@ -1,6 +1,6 @@
 ;;;; Super Star Trek help
 
-(in-package help)
+(in-package sst-help)
 
 (defparameter *help-database* (list (cons "credits"
 "                SSSSS   U   U   PPPPP   EEEEE   RRRRR
