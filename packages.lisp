@@ -1,6 +1,6 @@
 ;;;; Super Star Trek package definitions
 
-;;;; Possible enhancements
+;;;; Possible enhancementsl
 ;;;; 1. Offer a randomized password instead of requiring user input. The C source for this port
 ;;;;    required a password if a "plain" game was selected and generated a random password if a
 ;;;;    "fancy" game was selected.
@@ -59,6 +59,31 @@
   (:use common-lisp common-lisp-user)
   (:export define-constant))
 
+(defpackage sst-coordinates
+  (:documentation "Coordinate definitions for Super Star Trek")
+  (:use common-lisp common-lisp-user)
+  (:import-from sbcl-support
+                define-constant)
+  (:export +galaxy-size+
+           +quadrant-size+
+           coordinate
+           coordinate-x
+           coordinate-y
+           sector-coordinate
+           sector-coordinate-p
+           make-sector-coordinate
+           quadrant-coordinate
+           make-quadrant-coordinate
+           valid-p
+           coord-ref
+           valid-quadrant-p
+           valid-sector-p
+           coord-equal
+           distance
+           format-coordinates
+           format-sector-coordinates
+           format-quadrant-coordinates))
+
 (defpackage sst-events
   (:documentation "Event handling for Super Star Trek")
   (:use common-lisp common-lisp-user)
@@ -96,6 +121,26 @@
                 waddch waddstr wattron wattrset wclear wclrtoeol wgetch wmove wprintw wrefresh)
   (:import-from cl-utilities
                 split-sequence)
+  (:import-from sst-coordinates
+                +galaxy-size+
+                +quadrant-size+
+                coordinate
+                coordinate-x
+                coordinate-y
+                sector-coordinate
+                sector-coordinate-p
+                make-sector-coordinate
+                quadrant-coordinate
+                make-quadrant-coordinate
+                valid-p
+                coord-ref
+                valid-quadrant-p
+                valid-sector-p
+                coord-equal
+                distance
+                format-coordinates
+                format-sector-coordinates
+                format-quadrant-coordinates)
   (:import-from sst-events
                 +forever+
                 *future-events*

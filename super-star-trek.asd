@@ -9,10 +9,10 @@
     :depends-on ("cl-charms" "cl-utilities")
     :components ((:file "packages")
                  (:file "sbcl-support")
+                 (:file "coordinates")
                  (:file "events")
                  (:file "help")
-                 (:file "super-star-trek")
-                 )
+                 (:file "super-star-trek"))
     :build-operation "asdf:program-op"
     :build-pathname "sst"
     :entry-point "sst:sst")
