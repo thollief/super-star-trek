@@ -43,7 +43,6 @@
 (defparameter *score-window* nil)
 
 (defparameter *line-tokens* nil "List of input tokens")
-(defparameter *input-item* nil "One space-separated token from the keyboard.")
 
 (defun select-window (window &key (clear-window nil))
   "Change window. Do nothing in line-by-line mode. If clear-window is true then also clear the
@@ -97,10 +96,6 @@
           ;; input length isn't limited here, use read-char if needed
           (setf line (read-line)))))) ; C: fgets(line, max, stdin)
 
-;; resume here
-
-;; TODO - scan should return the value scanned, not set a global, and unscan should accept a parameter
-;;       of the item to unscan.
 (defun scan-input ()
   "Manage a list of input tokens, returning one token each time this function is called. If the
 list is empty then get input from the keyboard, remove leading and trailing spaces, downcase
@@ -108,25 +103,27 @@ everything, and then split it on spaces to generate tokens. Return the first tok
 remainder for the next call, in effect providing command type-ahead. If the keyboard input didn't
  include any non-space characters then return nil."
 
-  (when (= (length *line-tokens*) 0)
+  (unless (input-available-p)
     (setf *line-tokens* (split-sequence #\SPACE
                                         (string-downcase (string-trim " "(get-input-line)))
                                         :remove-empty-subseqs t)))
-  (let ((test-number nil))
-    (setf *input-item* (pop *line-tokens*))
-    (when *input-item*
+  (let ((test-number nil)
+        input-item)
+    (setf input-item (pop *line-tokens*))
+    ;; input-item could be nil if player just presses the enter key
+    (when input-item
       ;; Read something, possibly a number. This is reading a Lisp form and if it's malformed then
       ;; we don't want it anyway so ignore the error.
-      (setf test-number (ignore-errors (read-from-string *input-item*)))
-      (when (numberp test-number) ; If it's a number then keep it
-        (setf *input-item* test-number)))))
+      (setf test-number (ignore-errors (read-from-string input-item)))
+      (when (numberp test-number) ; If it's a number then keep it, as a number
+        (setf input-item test-number)))
+    (return-from scan-input input-item)))
 
-(defun unscan-input ()
-  "Put the current *input-item* back on the list of line tokens."
+(defun unscan-input (token)
+  "Push the parameter on to the list of line tokens."
 
-  ;; *line-tokens* must contains strings, *input-item* could be a number or something.
-  (push (format nil "~A" *input-item*) *line-tokens*)
-  (setf *input-item* nil))
+  ;; *line-tokens* must contains strings, token could be a number or something.
+  (push (format nil "~A" token) *line-tokens*))
 
 (defun input-available-p ()
   "Return true when there are elements in the *line-tokens* list, false otherwise."
@@ -157,7 +154,6 @@ requie a specific number of tokens to be syntactically correct."
 future prompts. This is normally called after an input error or other condition where the future
 prompts change."
 
-  (setf *input-item* nil)
   (setf *line-tokens* nil))
 
 (defun match-token (token possible-matches) ; C: isit()
@@ -249,7 +245,8 @@ can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
     (when (>= *message-window-line-count* (1- *message-window-lines*))
       (clear-type-ahead-buffer)
       (print-prompt "Press ENTER to continue")
-      (scan-input)
+      (let (input)
+        (setf input (scan-input))) ; We don't care about the input, it's the enter key that matters
       (clear-type-ahead-buffer)
       (restart-message-window-paging))))
 
@@ -275,11 +272,10 @@ can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
 or no answer. If other answers are given then prompt again. Use this function instead of y-or-n-p
 to allow for curses or line-by-line output when the player is reminded of the input options."
 
-  (clear-type-ahead-buffer)
   (do ((char nil))
       (char)
-    (scan-input)
-    (setf char (match-token *input-item* (list "yes" "no")))
+    (clear-type-ahead-buffer)
+    (setf char (match-token (scan-input) (list "yes" "no")))
     (cond
       ((string= char "yes")
        (return-from get-y-or-n-p t))
@@ -290,14 +286,20 @@ to allow for curses or line-by-line output when the player is reminded of the in
       (t
        (print-message (format nil "~%Please answer with \"y\" or \"n\": "))))))
 
-;; TODO - this takes a global (*input-item*) as a parameter...
+;; TODO - calls to read-coordinate-number follow a similar pattern of checking for available
+;;        input and then reading the presumed number if it's available. Use that pattern as a
+;;        basis for defining a function read-coordinate-pair that returns two numbers that could
+;;        be coordinates if they pass validation checks.
 (defun read-coordinate-number ()
   "Read a player-entered coordinate number from the input buffer. Return the internal coordinate
 number (array index) or nil."
 
-  (let ((c-num nil))
-    (when (and *input-item* (numberp *input-item*))
-      (setf c-num (1- *input-item*)))
+  (let ((c-num nil)
+        input-item)
+    (setf input-item (scan-input))
+    (when (and input-item
+               (numberp input-item))
+      (setf c-num (1- input-item)))
     (return-from read-coordinate-number c-num)))
 
 ;; TODO - should this be a property of a ship struct?
@@ -310,20 +312,16 @@ and sector. If only two numbers are entered then only a quadrant is specified an
 be left empty. Check input for correctness and display an error message if needed. Return the valid
 coordinates or nil."
 
-  (scan-input)
   (let (qx qy sx sy)
     (setf qy (read-coordinate-number))
     ;; The player should have entered at least two numbers for the coordinate and the second one is
     ;; still in the input buffer. If the input buffer is empty then the scan would wait for further
     ;; input, which we don't want at this point.
     (when (input-available-p)
-      (scan-input)
       (setf qx (read-coordinate-number)))
     ;; If there are two more coordinates then read them, otherwise we don't care what was typed
     (when (two-input-items-available)
-      (scan-input)
       (setf sy (read-coordinate-number))
-      (scan-input)
       (setf sx (read-coordinate-number)))
     ;; If player entered only two coordinates, a quadrant, then fix up the quadrant coordinates
     (when (and qx qy (not sx) (not sy))
@@ -752,7 +750,7 @@ the same as the ship if the shuttle craft location is on-ship.")
 
 (defparameter *time-taken-by-current-operation* 0.0) ; C: optime
 
-(defparameter *probe-reported-quadrant* (make-quadrant-coordinate)
+(defparameter *probe-reported-quadrant* nil
   "The last reported location of the probe") ; C: probec, current probe quadrant
 ;; Probe x and y quadrant+sector
 (defparameter *probe-x-coord* 0) ; C: probex	, location of probe
@@ -1992,7 +1990,8 @@ tractor-beamed the ship then the other will not."
              ;; This comment is inaccurate because only probes directly cause supernovas,
              ;; although a ship can indirectly cause one if a novaed star goes supernova.
              ;; TODO - hold the player responsible if a star novaed by a torpedo turns into a
-             ;;        supernova?
+             ;;        supernova because players are responsible and scored negatively for blowing
+             ;;        up stars
              (incf *destroyed-stars* (quadrant-stars (coord-ref *galaxy* *probe-reported-quadrant*)))
              (incf *destroyed-bases* (quadrant-starbases (coord-ref *galaxy* *probe-reported-quadrant*)))
              ;; TODO inhabited worlds are not counted but should be
@@ -2777,30 +2776,31 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
     ;; Read at most three values from the input to obtain the firing mode. A maximum of three
     ;; values are needed for automatic mode so read them here. Amounts to fire will be prompted for
     ;; later if not provided.
-    (do ((token-count 0 (1+ token-count)))
+    (do ((token-count 0 (1+ token-count))
+         input-item)
         ((> token-count 2)
          (unless fire-mode
            (huh)
            (return-from fire-phasers nil)))
       (if (input-available-p)
           (progn
-            (scan-input)
+            (setf input-item (scan-input))
             (cond
-              ((numberp *input-item*)
+              ((numberp input-item)
                (if (eql fire-mode 'manual)
-                   (unscan-input) ; Don't read manual mode energy until the firing loop.
+                   (unscan-input input-item) ; Don't read manual mode energy until the firing loop.
                    (unless requested-energy ; If energy was already provided then don't overwrite it.
                      (setf fire-mode 'automatic)
-                     (setf requested-energy *input-item*))))
+                     (setf requested-energy input-item))))
 
-              ((match-token *input-item* (list "automatic"))
+              ((match-token input-item (list "automatic"))
                (setf fire-mode 'automatic))
 
               ((and (not fire-mode)
-                    (match-token *input-item* (list "manual")))
+                    (match-token input-item (list "manual")))
                (setf fire-mode 'manual))
 
-              ((match-token *input-item* (list "no"))
+              ((match-token input-item (list "no"))
                (setf raise-shields-p nil))
 
               (t
@@ -2808,13 +2808,13 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
                (return-from fire-phasers nil))))
           (unless fire-mode
             (print-prompt "Manual or automatic? ")
-            (scan-input)
+            (setf input-item (scan-input))
             (cond
-              ((or (not *input-item*); no input, player typed enter/return
-                   (match-token *input-item* (list "automatic")))
+              ((or (not input-item); no input, player typed enter/return
+                   (match-token input-item (list "automatic")))
                (setf fire-mode 'automatic))
 
-              ((match-token *input-item* (list "manual"))
+              ((match-token input-item (list "manual"))
                (setf fire-mode 'manual))
 
               (t
@@ -2838,17 +2838,16 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           (when (and (not requested-energy)
                      (> *enemies-here* 0))
             (print-message "Phasers locked on target. "))
-          (do ()
+          (do (input-item)
               ((and requested-energy
                     (< requested-energy available-energy)))
             (print-message (format nil "Energy available= ~,2F~%" available-energy))
             (clear-type-ahead-buffer)
-            (setf *input-item* nil)
             (print-prompt (format nil "~D units required. Units to fire: " (ceiling (recommended-energy))))
-            (scan-input)
-            (unless (numberp *input-item*)
+            (setf input-item (scan-input))
+            (unless (numberp input-item)
               (return-from fire-phasers nil))
-            (setf requested-energy *input-item*))
+            (setf requested-energy input-item))
           (when (<= requested-energy 0)
             ;; chicken out
             (return-from fire-phasers nil))
@@ -2916,31 +2915,31 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           ;; TODO - the recommended energy amounts for manual fire can vary if the input loop is
           ;;        repeated. Is this a bug or a feature?
           (setf requested-energy 0.0)
-   (do ((current-enemy 0) ; the loop restarts with the first enemy if too much energy is requested
-        (display-available-energy-p t)
-        enemy
-        enemy-coord
-        (hits (make-array *enemies-here*))) ; C: hits, but sized to fit
-       ((>= current-enemy *enemies-here*)
-        (when (= requested-energy 0)
-          ;; zero energy -- abort
-          (return-from fire-phasers nil))
-        (decf *ship-energy* requested-energy)
-        (clear-type-ahead-buffer)
-        (when (and shield-control-available-p
-                   *shields-are-up-p*)
-          (decf *ship-energy* 200) ; TODO - name the constant
-          (unless (toggle-high-speed-shield-control requested-energy)
-            (return-from fire-phasers nil)))
-        (apply-phaser-hits hits)
-        (setf *action-taken-p* t))
-     (setf enemy-coord (enemy-sector-coordinates (aref *quadrant-enemies* current-enemy)))
-     (setf enemy (coord-ref *quadrant* enemy-coord))
-     (when display-available-energy-p
-       (print-message (format nil "Energy available= ~,2F~%" (- available-energy 0.006))) ; what is this constant?
-       (setf display-available-energy-p nil)
-       (setf requested-energy 0.0))
-     (if (and (damagedp +short-range-sensors+)
+          (do ((current-enemy 0) ; the loop restarts with the first enemy if too much energy is requested
+               (display-available-energy-p t)
+               enemy
+               enemy-coord
+               (hits (make-array *enemies-here*))) ; C: hits, but sized to fit
+              ((>= current-enemy *enemies-here*)
+               (when (= requested-energy 0)
+                 ;; zero energy -- abort
+                 (return-from fire-phasers nil))
+               (decf *ship-energy* requested-energy)
+               (clear-type-ahead-buffer)
+               (when (and shield-control-available-p
+                          *shields-are-up-p*)
+                 (decf *ship-energy* 200) ; TODO - name the constant
+                 (unless (toggle-high-speed-shield-control requested-energy)
+                   (return-from fire-phasers nil)))
+               (apply-phaser-hits hits)
+               (setf *action-taken-p* t))
+            (setf enemy-coord (enemy-sector-coordinates (aref *quadrant-enemies* current-enemy)))
+            (setf enemy (coord-ref *quadrant* enemy-coord))
+            (when display-available-energy-p
+              (print-message (format nil "Energy available= ~,2F~%" (- available-energy 0.006))) ; what is this constant?
+              (setf display-available-energy-p nil)
+              (setf requested-energy 0.0))
+            (if (and (damagedp +short-range-sensors+)
                      (or (string= enemy +super-commander+)
                          (string= enemy +commander+)
                          (string= enemy +romulan+))
@@ -2951,28 +2950,25 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
                   (print-message (format nil "~A can't be located without short range scan.~%" (letter-to-name enemy)))
                   (clear-type-ahead-buffer)
                   (setf (aref hits current-enemy) 0) ; prevent overflow -- thanks to Alexei Voitenko
-                  (setf current-enemy (1+ current-enemy)))
+                  (incf current-enemy 1))
                 (progn
                   (unless (input-available-p)
-                    (print-prompt (format nil "(~A) units to fire at ~A at ~A: "
-                                          (if targeting-support-available-p
-                                              (format nil "~D" (truncate (recommended-energy-for-enemy current-enemy)))
-                                              "??")
-                                          (letter-to-name enemy)
-                                          (format-sector-coordinates enemy-coord))))
-                  (scan-input)
-                  (when (and *input-item*
-                             (not (numberp *input-item*)))
-                    (huh)
-                    (return-from fire-phasers nil))
-                  (when (and (numberp *input-item*)
-                             (< *input-item* 0))
-                    ;; abort out
-                    (clear-type-ahead-buffer)
-                    (return-from fire-phasers nil))
-                  (setf (aref hits current-enemy) *input-item*)
-                  (incf requested-energy *input-item*)
-                  (setf *input-item* nil)
+                    (print-prompt
+                     (format nil "(~A) units to fire at ~A at ~A: "
+                             (if targeting-support-available-p
+                                 (format nil "~D" (truncate (recommended-energy-for-enemy current-enemy)))
+                                 "??")
+                             (letter-to-name enemy)
+                             (format-sector-coordinates enemy-coord))))
+                  (let ((input-item (scan-input)))
+                    (unless (numberp input-item)
+                      (huh)
+                      (return-from fire-phasers nil))
+                    (when (< input-item 0)
+                      (clear-type-ahead-buffer)
+                      (return-from fire-phasers nil))
+                    (setf (aref hits current-enemy) input-item)
+                    (incf requested-energy input-item))
                   ;; If total requested is too much, inform and start over
                   (if (> requested-energy available-energy)
                       (progn
@@ -2981,7 +2977,7 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
                         (setf current-enemy 0)
                         (setf display-available-energy-p t))
                       (progn
-                        (setf current-enemy (1+ current-enemy)))))))))
+                        (incf current-enemy 1))))))))
     ;; Say shield raised or malfunction, if necessary
     (unless *all-done-p*
       (when (and shield-control-available-p
@@ -3198,8 +3194,8 @@ with phasers destroys an enemy."
                       torpedo-number
                       number-of-torpedoes-in-salvo
                       sector-contents) ; C: void tracktorpedo(coord w, int l, int i, int n, int iquad)
-  "Torpedo-track animation. If displaying coordinate values then display fractional amounts since
-it is allowed to aim between sectors."
+  "Torpedo-track animation. If displaying coordinate values then display fractional amounts because
+aiming between sectors is allowed."
 
   (if *window-interface-p*
       (if (or (not (damagedp +short-range-sensors+))
@@ -3232,7 +3228,7 @@ it is allowed to aim between sectors."
                       (= length-of-track 9))
               (skip-line)))
         ;; Convert internal torp coords to 1-based player values
-        (print-out (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y)) :print-slowly t))))
+        (print-out (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y))))))
 
 ;; TODO - there is a parallel with move-ship-within-quadrant. Is there common code that
 ;;        be refactored into a general-purpose routine?
@@ -3519,6 +3515,12 @@ direction of the target or nil."
   (when *window-interface-p*
     (select-window *message-window*))
 
+  ;; TODO - fractional sector coordinates are allowed, valid-p checks may need to be relaxed to
+  ;;        allow fractional coords, or find a different way to represent coordinates. The
+  ;;        place to check might be when a coordinate is used as an array index. That is,
+  ;;        coordinates are used as array indices but they could equally be an offset into an
+  ;;        array. The storage format of sector information should not restrict the valid values
+  ;;        of coordinates.
   (unless (valid-p target-coord)
     (huh)
     (return-from photon-torpedo-target-check nil))
@@ -3538,36 +3540,36 @@ direction of the target or nil."
     (return-from photon-torpedo-target-check (* 1.90985932 (atan delta-x delta-y)))))
 
 (defun get-number-of-torpedoes-to-fire ()
-  "Up to three torpedoes can be fired in one salvo. Return a number between 1 and 3 or nil to
+  "Up to three torpedoes can be fired in one salvo. Return a number between 1 and 3 or 0 to
 cancel."
 
-  (do ()
+  (do (input-item)
       (nil)
     ;; Get number of torpedoes to fire
     (unless (input-available-p)
       (print-message (format nil "~D torpedoes left.~%" *torpedoes*))
       (print-prompt "Number of torpedoes to fire: "))
-    (scan-input)
+    (setf input-item (scan-input))
     (cond
-      ((numberp *input-item*)
+      ((numberp input-item)
        (cond
          ;; abort command
-         ((<= *input-item* 0)
-          (return-from get-number-of-torpedoes-to-fire nil))
+         ((<= input-item 0)
+          (return-from get-number-of-torpedoes-to-fire 0))
 
-         ((> *input-item* 3)
+         ((> input-item 3)
           (print-message (format nil "Maximum of 3 torpedoes per burst.~%"))
           (clear-type-ahead-buffer))
 
-         ((<= *input-item* *torpedoes*)
-          (return-from get-number-of-torpedoes-to-fire *input-item*))
+         ((<= input-item *torpedoes*)
+          (return-from get-number-of-torpedoes-to-fire input-item))
          ;; less than 4 but more than the available torpedoes
          (t
           (clear-type-ahead-buffer))))
       ;; Not a number and not nil, must be alpha
-      (*input-item*
+      (input-item
        (huh)
-       (return-from get-number-of-torpedoes-to-fire nil))
+       (return-from get-number-of-torpedoes-to-fire 0))
 
       (t
        (clear-type-ahead-buffer)))))
@@ -3607,10 +3609,9 @@ there was an error (including -1 entered by the player to exit the command)."
                (> torpedo 0))
           (setf (aref courses torpedo) (aref courses 0))
           (progn
-            (scan-input)
             (setf (coordinate-x target) (read-coordinate-number))
-            (scan-input)
-            (setf (coordinate-y target) (read-coordinate-number))
+            (when (input-available-p)
+              (setf (coordinate-y target) (read-coordinate-number)))
             (setf (aref courses torpedo) (photon-torpedo-target-check target))
             (unless (aref courses torpedo)
               ;; If the target check returned nil then just return, player was already notified
@@ -3689,14 +3690,14 @@ not damaged or if the ship is docked, and the ship is not cloaked."
     (print-message (format nil "Ye Faerie Queene has no cloaking device.~%"))
     (return-from cloak nil))
 
-  (let ((action 'none))
+  (let ((action 'none)
+        input-item)
     (unless (input-available-p)
-      (scan-input))
-    (when (numberp *input-item*)
+      (setf input-item (scan-input)))
+    (when (numberp input-item)
       (return-from cloak nil))
-    ;; TODO - what is *input-item* at this point?
-    (if *input-item* ; is not nil
-        (let ((token (match-token *input-item* (list "on" "off"))))
+    (if input-item ; is not nil
+        (let ((token (match-token input-item (list "on" "off"))))
           (cond
             ((string= token "on")
              (when *cloakedp*
@@ -3740,7 +3741,7 @@ not damaged or if the ship is docked, and the ship is not cloaked."
                  (>= *stardate* +algeron-date+)
                  (not *cloaking-violation-reported-p*))
         (print-message (format nil "The Romulan ship discovers you are breaking the Treaty of Algeron!~%"))
-        (setf *cloaking-violations* (1+ *cloaking-violations*))
+        (incf *cloaking-violations* 1)
         (setf *cloaking-violation-reported-p* t))
       ;; TODO - breaking the Treaty of Algeron while in the Romulan Neutral Zone ends the game
       ;;        should check for both cloaking and uncloaking
@@ -3771,13 +3772,14 @@ not damaged or if the ship is docked, and the ship is not cloaked."
 input when a tractor beam event occurs."
 
   (setf *action-taken-p* nil)
-  (let ((action 'none))
+  (let ((action 'none)
+        input-item)
     (if raise-shields
         (setf action 'raise)
         (progn
           (when (input-available-p)
-            (scan-input))
-          (let ((token (match-token *input-item* (list "transfer" "up" "down"))))
+            (setf input-item (scan-input)))
+          (let ((token (match-token input-item (list "transfer" "up" "down"))))
             (if (string= token "transfer")
                 (setf action 'energy-transfer)
                 (cond
@@ -3839,35 +3841,35 @@ input when a tractor beam event occurs."
 
       ((eql action 'energy-transfer)
        (when (input-available-p)
-         (scan-input))
+         (setf input-item (scan-input)))
        (do ()
-           ((numberp *input-item*))
+           ((numberp input-item))
          (clear-type-ahead-buffer)
          (print-prompt "Energy to transfer to shields: ")
-         (scan-input))
-       (when (= *input-item* 0)
+         (setf input-item (scan-input)))
+       (when (= input-item 0)
          (return-from shield-actions nil))
-       (when (> *input-item* *ship-energy*)
+       (when (> input-item *ship-energy*)
          (print-message (format nil "Insufficient ship energy.~%"))
          (return-from shield-actions nil))
        (setf *action-taken-p* t)
-       (when (>= (+ *shield-energy* *input-item*) *initial-shield-energy*)
+       (when (>= (+ *shield-energy* input-item) *initial-shield-energy*)
          (print-message (format nil "Shield energy maximized.~%"))
-         (when (> (+ *shield-energy* *input-item*) *initial-shield-energy*)
+         (when (> (+ *shield-energy* input-item) *initial-shield-energy*)
            (print-message (format nil "Excess energy requested returned to ship energy~%")))
          (decf *ship-energy* (- *initial-shield-energy* *shield-energy*))
          (setf *shield-energy* *initial-shield-energy*)
          (return-from shield-actions nil))
        ;; Prevent shield drain loophole
-       (when (and (< *input-item* 0.0)
-                  (> (- *ship-energy* *input-item*) *initial-energy*))
+       (when (and (< input-item 0.0)
+                  (> (- *ship-energy* input-item) *initial-energy*))
         (print-message (format nil "~%Engineering to bridge--~%"))
         (print-message (format nil "  \"Scott here. Power circuit problem, Captain.\"~%"))
         (print-message (format nil "  \"I can't drain the shields.\"~%"))
         (setf *action-taken-p* nil)
         (return-from shield-actions nil))
 
-       (when (< (+ *shield-energy* *input-item*) 0)
+       (when (< (+ *shield-energy* input-item) 0)
          (print-message (format nil"All shield energy transferred to ship.~%"))
          (incf *ship-energy* *shield-energy*)
          (setf *shield-energy* 0.0)
@@ -3875,11 +3877,11 @@ input when a tractor beam event occurs."
 
        ;; this stanza needs a return-from if there is ever code added after it
        (print-message (format nil "Scotty- ~%"))
-       (if (> *input-item* 0)
+       (if (> input-item 0)
            (print-message (format nil "\"Transferring energy to shields.\"~%"))
            (print-message (format nil "\"Draining energy from shields.\"~%")))
-       (incf *shield-energy* *input-item*)
-       (decf *ship-energy* *input-item*)))))
+       (incf *shield-energy* input-item)
+       (decf *ship-energy* input-item)))))
 
 (defun ram (&key rammed-by-p enemy enemy-coordinates) ; C: void ram(bool ibumpd, feature ienm, coord w)
   "Make our ship ram something. If rammed-by-p is true then an enemy ship is ramming the player.
@@ -5800,7 +5802,7 @@ can occur."
     (update-condition)
     (update-windows)))
 
-(defun get-probe-course-and-distance () ; C: oid getcd(bool isprobe, int akey), for the probe
+(defun get-probe-course-and-distance () ; C: void getcd(bool isprobe, int akey), for the probe
   "Get course direction and distance for moving the probe.
 
 This program originally required input in terms of a (clock) direction and distance. Somewhere in
@@ -5822,48 +5824,38 @@ displayed y - x, where +y is downward!"
       (setf navigation-mode 'manual)
       (clear-type-ahead-buffer))
 
-    (do (token)
+    (do (token
+         input-item)
         (navigation-mode)
       (unless (input-available-p) ; input is "move" on first loop, nil thereafter
         (print-prompt "Manual or automatic: "))
-      (scan-input)
-      (if (numberp *input-item*) ; No input (<enter> key only) will loop
+      (setf input-item (scan-input))
+      (if (numberp input-item) ; No input (<enter> key only) will loop
           (progn
+            (unscan-input input-item) ; put it back so a coordinate pair can be read below
             (print-message (format nil "Manual navigation assumed.~%")) ; Per the original docs
             (setf navigation-mode 'manual))
-          (when *input-item*
-            (setf token (match-token *input-item* (list "manual" "automatic")))
+          (when input-item
+            (setf token (match-token input-item (list "manual" "automatic")))
             (if token
-                (progn
-                  (if (string= token "manual")
-                      (setf navigation-mode 'manual)
-                      (setf navigation-mode 'automatic))
-                  (if (input-available-p)
-                      (scan-input)
-                      (setf *input-item* nil)))
+                (if (string= token "manual")
+                    (setf navigation-mode 'manual)
+                    (setf navigation-mode 'automatic))
                 (progn
                   (huh)
                   (clear-type-ahead-buffer)
                   (return-from get-probe-course-and-distance (values nil nil)))))))
 
     (if (eql navigation-mode 'automatic)
-        (do (sx sy qx qy)
-            (*input-item*
-             (setf qx (read-coordinate-number))
-             (setf *input-item* nil)
-             (when (input-available-p)
-               (scan-input)
-               (setf qy (read-coordinate-number)))
-             (when (two-input-items-available) ; both quadrant and sector specified
-               (scan-input)
-               (setf sx (read-coordinate-number))
-               (scan-input)
-               (setf sy (read-coordinate-number)))
-             (when (and (not sx) (not sy))
+        (do (qx qy sx sy)
+            (qx
+             (when (and (not sx)
+                        (not sy))
                ;; Only quadrant specified -- go to center of destination quadrant
-               (setf sx (+ qx 0.5))
-               (setf sy (+ qy 0.5)))
-             (if (and (valid-quadrant-p qx qy) (valid-sector-p sx sy))
+               (setf sx 5)
+               (setf sy 5))
+             (if (and (valid-quadrant-p qx qy)
+                      (valid-sector-p sx sy))
                  (progn
                    (skip-line)
                    ;; Multiply sectors by 0.1 to scale them to the size of a quadrant
@@ -5874,25 +5866,31 @@ displayed y - x, where +y is downward!"
                  (progn
                    (huh)
                    (return-from get-probe-course-and-distance (values nil nil)))))
-          (print-prompt "Target quadrant or quadrant&sector: ")
-          (clear-type-ahead-buffer)
-          (scan-input))
+          (unless (input-available-p)
+            (print-prompt "Target quadrant or quadrant&sector: ")
+            (clear-type-ahead-buffer))
+          (setf qx (read-coordinate-number))
+          (when (input-available-p)
+            (setf qy (read-coordinate-number)))
+          (when (two-input-items-available) ; both quadrant and sector specified
+            (setf sx (read-coordinate-number))
+            (setf sy (read-coordinate-number))))
         (progn ; manual
-          (do (nothing)
-              (*input-item*
-               (when (numberp *input-item*)
-                 (setf delta-x *input-item*))
+          (do (input-item)
+              (input-item
+               (when (numberp input-item)
+                 (setf delta-x input-item))
                (when (input-available-p)
-                 (scan-input)
-                 (when (numberp *input-item*)
-                   (setf delta-y *input-item*)))
+                 (setf input-item (scan-input))
+                 (when (numberp input-item)
+                   (setf delta-y input-item)))
                (when (or (not delta-x) (not delta-y))
                  (huh)
                  (return-from get-probe-course-and-distance (values nil nil))))
-            (setf nothing nothing)
-            (print-prompt "X and Y displacements: ")
-            (clear-type-ahead-buffer)
-            (scan-input))))
+            (unless (input-available-p)
+              (print-prompt "X and Y displacements: ")
+              (clear-type-ahead-buffer))
+            (setf input-item (scan-input)))))
     ;; Check for zero movement
     (when (and (= delta-x 0) (= delta-y 0))
       (clear-type-ahead-buffer)
@@ -5937,50 +5935,34 @@ displayed y - x, where +y is downward!"
       (setf navigation-mode 'manual)
       (clear-type-ahead-buffer))
 
-    (do (token)
+    (do (token
+         input-item)
         (navigation-mode)
       (unless (input-available-p) ; input is "move" on first loop, empty thereafter
         (print-prompt "Manual or automatic: ")
         (setf need-prompt-p t))
-      (scan-input)
-      (if (numberp *input-item*) ; No input (<enter> key only) will loop
+      (setf input-item (scan-input))
+      (if (numberp input-item) ; No input (<enter> key only) will loop
           (progn
+            (unscan-input input-item) ; put it back so a coordinate pair can be read below
             (print-message (format nil "Manual movement assumed.~%")) ; Per the original docs
             (setf navigation-mode 'manual))
-          (when *input-item*
-            (setf token (match-token *input-item* (list "manual" "automatic")))
+          (when input-item
+            (setf token (match-token input-item (list "manual" "automatic")))
             (if token
                 (progn
                   (if (string= token "manual")
                       (setf navigation-mode 'manual)
-                      (setf navigation-mode 'automatic))
-                  (if (input-available-p)
-                      (scan-input)
-                      (setf *input-item* nil)))
+                      (setf navigation-mode 'automatic)))
                 (progn
                   (huh)
                   (return-from get-ship-course-and-distance (values -1.0 0)))))))
 
     (if (eql navigation-mode 'automatic)
         (do (sx sy qx qy)
-            (*input-item*
-             (setf sx (read-coordinate-number))
-             (setf *input-item* nil)
-             (when (input-available-p)
-               (scan-input)
-               (setf sy (read-coordinate-number)))
-             (when (two-input-items-available) ; both quadrant and sector specified
-               (setf qx sx)
-               (setf qy sy)
-               (scan-input)
-               (setf sx (read-coordinate-number))
-               (scan-input)
-               (setf sy (read-coordinate-number)))
-             (when (and (not qy) (not qx))
-               (setf qx (coordinate-x *ship-quadrant*))
-               (setf qy (coordinate-y *ship-quadrant*))
-               (setf feedback-from 'sulu))
-             (if (and (valid-quadrant-p qx qy) (valid-sector-p sx sy))
+            (sx
+             (if (and (valid-quadrant-p qx qy)
+                      (valid-sector-p sx sy))
                  (progn
                    (if (eql feedback-from 'chekov)
                        (print-message (format nil "Ensign Chekov- \"Course laid in, Captain.\"~%"))
@@ -5999,26 +5981,40 @@ displayed y - x, where +y is downward!"
                  (progn
                    (huh)
                    (return-from get-ship-course-and-distance (values -1.0 0)))))
-          (print-prompt "Destination sector or quadrant&sector: ")
-          (clear-type-ahead-buffer)
-          (setf need-prompt-p t)
-          (scan-input))
+          (unless (input-available-p)
+            (print-prompt "Destination sector or quadrant&sector: ")
+            (clear-type-ahead-buffer)
+            (setf need-prompt-p t))
+          (setf sx (read-coordinate-number))
+          (when (input-available-p)
+            (setf sy (read-coordinate-number)))
+          (when (two-input-items-available) ; both quadrant and sector specified
+            (setf qx sx)
+            (setf qy sy)
+            (setf sx (read-coordinate-number))
+            (setf sy (read-coordinate-number)))
+          (when (and (not qy)
+                     (not qx))
+            (setf qx (coordinate-x *ship-quadrant*))
+            (setf qy (coordinate-y *ship-quadrant*))
+            (setf feedback-from 'sulu)))
         (progn ; manual
-          (do ()
-              (*input-item*
-               (when (numberp *input-item*)
-                 (setf delta-x *input-item*))
+          (do (input-item)
+              (input-item
+               (when (numberp input-item)
+                 (setf delta-x input-item))
                (when (input-available-p)
-                 (scan-input)
-                 (when (numberp *input-item*)
-                   (setf delta-y *input-item*)))
-               (when (or (not delta-x) (not delta-y))
+                 (setf input-item (scan-input))
+                 (when (numberp input-item)
+                   (setf delta-y input-item)))
+               (when (or (not delta-x)
+                         (not delta-y))
                  (huh)
                  (return-from get-ship-course-and-distance (values -1.0 0)))
                (setf feedback-from 'sulu))
             (print-prompt "X and Y displacements: ")
             (clear-type-ahead-buffer)
-            (scan-input))))
+            (setf input-item (scan-input)))))
     ;; Check for zero movement
     (when (and (= delta-x 0) (= delta-y 0))
       (return-from get-ship-course-and-distance (values -1.0 0)))
@@ -6219,10 +6215,10 @@ quadrant experiencing a supernova)."
     ((is-scheduled-p +move-deep-space-probe+)
      (clear-type-ahead-buffer)
      (if (subspace-radio-available-p)
+         (print-message (format nil "~%Uhura- \"The previous probe is still reporting data, Sir.\"~%"))
          (progn
            (print-message (format nil "~%Spock-  \"Records show the previous probe has not yet~%"))
-           (print-message (format nil "   reached its destination.\"~%")))
-         (print-message (format nil "~%Uhura- \"The previous probe is still reporting data, Sir.\"~%"))))
+           (print-message (format nil "   reached its destination.\"~%")))))
 
     (t
      (unless (input-available-p)
@@ -6233,15 +6229,14 @@ quadrant experiencing a supernova)."
          (return-from launch-probe nil)))
      (setf *probe-is-armed-p* nil)
      (if (input-available-p)
-         (progn
-           (scan-input)
-           (cond ((numberp *input-item*)
-                  (unscan-input)) ; probably a quadrant coordinate, put it back
+         (let ((input-item (scan-input)))
+           (cond ((numberp input-item)
+                  (unscan-input input-item)) ; probably a quadrant coordinate, put it back
 
-                 ((match-token *input-item* (list "yes"))
+                 ((match-token input-item (list "yes"))
                   (setf *probe-is-armed-p* t))
 
-                 ((match-token *input-item* (list "no"))
+                 ((match-token input-item (list "no"))
                   (setf *probe-is-armed-p* nil))
 
                  (t
@@ -6255,7 +6250,7 @@ quadrant experiencing a supernova)."
        (when (and (not direction)
                   (not distance))
          (return-from launch-probe nil))
-       (setf *probes-available* (1- *probes-available*))
+       (decf *probes-available* 1)
        (let ((angle (* (- 15.0 direction) 0.5235988))
              bigger)
          (setf *probe-x-increment* (- (sin angle))) ; C: game.probeinx = -sin(angle);
@@ -6272,8 +6267,8 @@ quadrant experiencing a supernova)."
                                   (coordinate-x *ship-sector*)))
          (setf *probe-y-coord* (+ (* (coordinate-y *ship-quadrant*) +quadrant-size+)
                                   (coordinate-y *ship-sector*)))
-         (setf (coordinate-x *probe-reported-quadrant*) (coordinate-x *ship-quadrant*))
-         (setf (coordinate-y *probe-reported-quadrant*) (coordinate-y *ship-quadrant*)))
+         (setf *probe-reported-quadrant* (make-quadrant-coordinate :x (coordinate-x *ship-quadrant*)
+                                                                   :y (coordinate-y *ship-quadrant*))))
        (schedule-event +move-deep-space-probe+ 0.01)) ; Time to move one sector
      (print-message (format nil "Ensign Chekov-  \"The deep space probe is launched, Captain.\"~%"))
      (setf *action-taken-p* t))))
@@ -6281,65 +6276,67 @@ quadrant experiencing a supernova)."
 (defun set-warp-factor () ; C: setwarp(void)
   "Change the warp factor."
 
-  (if (input-available-p)
-      (scan-input)
-      (setf *input-item* nil))
-  (do ()
-      (*input-item*)
-    (print-prompt "Warp factor: ")
-    (scan-input))
-  (if (numberp *input-item*)
-      (cond
-        ((> (aref *device-damage* +warp-engines+) 10.0)
-         (print-message (format nil "~%Warp engines inoperative.~%")))
+  (let (input-item)
+    (when (input-available-p)
+        (setf input-item (scan-input)))
+    (do ()
+        (input-item)
+      (print-prompt "Warp factor: ")
+      (setf input-item (scan-input)))
+    (if (numberp input-item)
+        (cond
+          ((> (aref *device-damage* +warp-engines+) 10.0)
+           (print-message (format nil "~%Warp engines inoperative.~%")))
 
-        ((and (damagedp +warp-engines+) (> *input-item* 4.0))
-         (print-message (format nil "~%Engineer Scott- \"I'm doing my best, Captain,~%"))
-         (print-message (format nil "  but right now we can only go warp 4.\"~%")))
+          ((and (damagedp +warp-engines+) (> input-item 4.0))
+           (print-message (format nil "~%Engineer Scott- \"I'm doing my best, Captain,~%"))
+           (print-message (format nil "  but right now we can only go warp 4.\"~%")))
 
-        ((> *input-item* 10.0)
-         (print-message (format nil "~%Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
+          ((> input-item 10.0)
+           (print-message (format nil "~%Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
 
-        ((< *input-item* 1.0)
-         (print-message (format nil "~%Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
+          ((< input-item 1.0)
+           (print-message (format nil "~%Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
 
-        (t
-         (cond
-           ((or (<= *input-item* *warp-factor*)
-                (<= *input-item* 6.0))
-            (print-message
-             (format nil "~%Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate *input-item*))))
+          (t
+           (cond
+             ((or (<= input-item *warp-factor*)
+                  (<= input-item 6.0))
+              (print-message
+               (format nil "~%Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate input-item))))
 
-           ((< *input-item* 8.00)
-            (print-message
-             (format nil "~%Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
+             ((< input-item 8.00)
+              (print-message
+               (format nil "~%Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
 
-           ((= *input-item* 10.0)
-            (print-message (format nil "~%Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
+             ((= input-item 10.0)
+              (print-message (format nil "~%Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
 
-           (t
-            (print-message
-             (format nil "~%Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
-         (setf *warp-factor* *input-item*)))
-      (huh)))
+             (t
+              (print-message
+               (format nil
+                       "~%Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
+           (setf *warp-factor* input-item)))
+        (huh))))
 
 (defun wait () ; C: wait(void)
   "Wait on events."
 
   (let (original-time
-        time-to-wait)
+        time-to-wait
+        input-item)
     (setf *action-taken-p* nil)
     (unless (input-available-p)
       (print-prompt "How long? "))
-    (scan-input)
-    (unless (numberp *input-item*)
+    (setf input-item (scan-input))
+    (unless (numberp input-item)
       (huh)
       (return-from wait nil))
-    (when (<= *input-item* 0.0)
+    (when (<= input-item 0.0)
       (return-from wait nil))
-    (setf original-time *input-item*)
-    (setf time-to-wait *input-item*)
-    (when (or (>= *input-item* *remaining-time*)
+    (setf original-time input-item)
+    (setf time-to-wait input-item)
+    (when (or (>= input-item *remaining-time*)
               (> *enemies-here* 0))
       ;; TODO - have Spock calculate remaining time and ask "Are you sure this is wise?"
       ;; TODO - for number of enemies just prompt "Are you sure?", player will figure it out eventually
@@ -6402,23 +6399,23 @@ quadrant experiencing a supernova)."
         (when *window-interface-p*
           (select-window *prompt-window* :clear-window t))
         (clear-type-ahead-buffer)
-        (scan-input)
-        (when (numberp *input-item*)
-          (setf *input-item* (write-to-string *input-item*))
-        (if (string= *self-destruct-password* *input-item*)
-            (progn
-              (print-message (format nil "PASSWORD-ACCEPTED~%") :print-slowly t)
-              (print-message (format nil "                   5~%") :print-slowly t)
-              (print-message (format nil "                      4~%")) :print-slowly t
-              (print-message (format nil "                         3~%") :print-slowly t)
-              (print-message (format nil "                            2~%") :print-slowly t)
-              (print-message (format nil "                              1~%") :print-slowly t)
-              (when (< (random 1.0) 0.15)
-                (print-message (format nil "GOODBYE-CRUEL-WORLD~%") :print-slowly t))
-              (kaboom))
-            (progn
-              (print-message (format nil "PASSWORD-REJECTED;~%") :print-slowly t)
-              (print-message (format nil "CONTINUITY-EFFECTED~%") :print-slowly t)))))))
+        (let ((input-item (scan-input)))
+          (when (numberp input-item)
+            (setf input-item (write-to-string input-item)))
+          (if (string= *self-destruct-password* input-item)
+              (progn
+                (print-message (format nil "PASSWORD-ACCEPTED~%") :print-slowly t)
+                (print-message (format nil "                   5~%") :print-slowly t)
+                (print-message (format nil "                      4~%")) :print-slowly t
+                (print-message (format nil "                         3~%") :print-slowly t)
+                (print-message (format nil "                            2~%") :print-slowly t)
+                (print-message (format nil "                              1~%") :print-slowly t)
+                (when (< (random 1.0) 0.15)
+                  (print-message (format nil "GOODBYE-CRUEL-WORLD~%") :print-slowly t))
+                (kaboom))
+              (progn
+                (print-message (format nil "PASSWORD-REJECTED;~%") :print-slowly t)
+                (print-message (format nil "CONTINUITY-EFFECTED~%") :print-slowly t)))))))
 
 (defun calculate-eta () ; C: eta(void)
   "Use computer to get estimated time of arrival for a warp jump."
@@ -6432,7 +6429,7 @@ quadrant experiencing a supernova)."
     (print-message (format nil "COMPUTER DAMAGED, TRAVEL CALCULATION NOT POSSIBLE.~%"))
     (return-from calculate-eta nil))
 
-  (let (need-prompt wfl ttime twarp tpower trip-distance destination-quadrant)
+  (let (need-prompt wfl ttime twarp tpower trip-distance destination-quadrant input-item)
     (unless (two-input-items-available)
       (setf need-prompt t)
       (clear-type-ahead-buffer)
@@ -6468,9 +6465,9 @@ quadrant experiencing a supernova)."
         ((or ttime twarp))
       (clear-type-ahead-buffer)
       (print-prompt "Time or arrival date? ")
-      (scan-input)
-      (when (numberp *input-item*)
-        (setf ttime *input-item*)
+      (setf input-item (scan-input))
+      (when (numberp input-item)
+        (setf ttime input-item)
         (when (> ttime *stardate*)
           (decf ttime *stardate*)) ; Actually a star date
         (setf twarp (/ (+ (floor (* (sqrt (/ (* 10.0 trip-distance) ttime)) 10.0)) 1.0) 10.0))
@@ -6484,10 +6481,10 @@ quadrant experiencing a supernova)."
       (unless ttime
         (clear-type-ahead-buffer)
         (print-prompt "Warp factor? ")
-        (scan-input)
-        (when (numberp *input-item*)
+        (setf input-item (scan-input))
+        (when (numberp input-item)
           (setf wfl t)
-          (setf twarp *input-item*)
+          (setf twarp input-item)
           (when (or (< twarp 1.0) (> twarp 10.0))
             (huh)
             (return-from calculate-eta nil))))
@@ -6509,16 +6506,15 @@ quadrant experiencing a supernova)."
                       (> tpower (* *ship-energy* 2.0)))
               (unless wfl
                 (return-from calculate-eta nil))
-              (skip-line)
-              (print-prompt "New warp factor to try? ")
-              (scan-input)
-              (if (numberp *input-item*)
+              (print-prompt (format nil "~%New warp factor to try? "))
+              (setf input-item (scan-input))
+              (if (numberp input-item)
                   (if (and (>= twarp 1.0)
                            (<= twarp 10.0))
                       (progn
                         (setf wfl t)
                         (setf try-another-warp-factor-p t)
-                        (setf twarp *input-item*))
+                        (setf twarp input-item))
                       (progn
                         (huh)
                         (return-from calculate-eta nil)))
@@ -6537,12 +6533,16 @@ quadrant experiencing a supernova)."
         (print-message (format nil " energy will be ~,2F.~%" (- *ship-energy* tpower)))
         (cond
           (wfl
-           (print-message (format nil "And we will arrive at stardate ~A.~%" (format-stardate (+ *stardate* ttime)))))
+           (print-message (format nil "And we will arrive at stardate ~A.~%"
+                                  (format-stardate (+ *stardate* ttime)))))
+
           ((= twarp 1.0)
            (print-message (format nil "Any warp speed is adequate.~%")))
+
           (t
            (print-message (format nil "Minimum warp needed is ~,2F,~%" twarp))
-           (print-message (format nil "and we will arrive at stardate ~A.~%" (format-stardate (+ *stardate* ttime))))))
+           (print-message (format nil "and we will arrive at stardate ~A.~%"
+                                  (format-stardate (+ *stardate* ttime))))))
         (when (< *remaining-time* ttime)
           (print-message (format nil "Unfortunately, the Federation will be destroyed by then.~%")))
         (when (> twarp 6.0)
@@ -6555,14 +6555,14 @@ quadrant experiencing a supernova)."
           (print-message (format nil "The starbase there will be destroyed by then.~%")))
         (skip-line)
         (print-prompt "New warp factor to try? ")
-        (scan-input)
-        (if (numberp *input-item*)
+        (setf input-item (scan-input))
+        (if (numberp input-item)
           (if (and (>= twarp 1.0)
                    (<= twarp 10.0))
               (progn
                 (setf wfl t)
                 (setf try-another-warp-factor-p t)
-                (setf twarp *input-item*))
+                (setf twarp input-item))
               (progn
                 (huh)
                 (return-from calculate-eta nil)))
@@ -6720,8 +6720,7 @@ quadrant experiencing a supernova)."
   (let (req-item)
     (unless (input-available-p)
       (print-prompt "Information desired? "))
-    (scan-input)
-    (setf req-item (match-token *input-item* (list "date" "condition" "position" "lsupport"
+    (setf req-item (match-token (scan-input) (list "date" "condition" "position" "lsupport"
                                                    "warpfactor" "energy" "torpedoes" "shields"
                                                    "klingons" "time")))
     (unless req-item
@@ -6787,21 +6786,20 @@ sectors on the short-range scan even when short-range sensors are out."
                                                               (-1 -1)
                                                               (-1  0)
                                                               (-1  1))))
-        ix iy sector-contents)
+        ix iy sector-contents input-item)
     (skip-line)
-    (unless (numberp *input-item*)
-      (clear-type-ahead-buffer)
-      (print-prompt "Direction? ")
-      (scan-input)
-      (unless (numberp *input-item*)
-        (huh)
-        (return-from visual-scan nil)))
-    (when (or (< *input-item* 0.0)
-              (> *input-item* 360.0))
+    (unless (input-available-p)
+      (print-prompt "Direction? "))
+    (setf input-item (scan-input))
+    (unless (numberp input-item)
+      (huh)
+      (return-from visual-scan nil))
+    (when (or (< input-item 0.0)
+              (> input-item 360.0))
       (return-from visual-scan nil))
     (when *window-interface-p*
       (select-window *message-window*))
-    (setf delta-index (floor (/ (+ *input-item* 22) 45)))
+    (setf delta-index (floor (/ (+ input-item 22) 45)))
     (setf ix (+ (coordinate-x *ship-sector*) (aref visual-delta delta-index 0)))
     (setf iy (+ (coordinate-y *ship-sector*) (aref visual-delta delta-index 1)))
     (if (or (< ix 0) (>= ix +quadrant-size+) (< iy 0) (>= iy +quadrant-size+))
@@ -7135,11 +7133,13 @@ was an event that requires aborting the operation carried out by the calling fun
             (print-prompt "Spock-  \"Wouldn't you rather take the Galileo?\" ")
             (when (get-y-or-n-p)
               (return-from beam nil))
-            (print-message (format nil "Your crew hides the Galileo to prevent capture by aliens.~%")))
+            (print-message (format nil
+                                   "Your crew hides the Galileo to prevent capture by aliens.~%")))
           (print-message (format nil "Landing party assembled, ready to beam up.~%"))
           (print-message (format nil "~%Kirk whips out communicator...~%"))
           (print-message (format nil "BEEP  BEEP  BEEP~%") :print-slowly t)
-          (print-message (format nil "~%~%\"Kirk to enterprise-  Lock on coordinates...energize.\"~%")))
+          (print-message (format nil
+                                 "~%~%\"Kirk to enterprise-  Lock on coordinates...energize.\"~%")))
         ;; Going to planet
         (progn
           (print-message (format nil "Scotty-  \"Transporter room ready, Sir.\"~%"))
@@ -7657,7 +7657,6 @@ it's your problem."
     (setf sst-events::*future-events* (read s))
     (setf *random-state* (read s))
     (setf *line-tokens* (read s))
-    (setf *input-item* (read s))
     (setf *ship-quadrant* (read s))
     (setf *ship-sector* (read s))
     (setf *conquest-quadrant* (read s))
@@ -7779,7 +7778,6 @@ loop, in effect continuously saving the current state of the game."
     (print sst-events::*future-events* s)
     (print *random-state* s)
     (print *line-tokens* s)
-    (print *input-item* s)
     (print *ship-quadrant* s)
     (print *ship-sector* s)
     (print *conquest-quadrant* s)
@@ -7896,71 +7894,75 @@ loop, in effect continuously saving the current state of the game."
 Return game type, tournament number, and whether or not this is a restored game."
 
   (do ((game-type nil)
-       (tournament-number nil))
+       (tournament-number nil)
+       input-item)
       (game-type
        (return-from get-game-type (values game-type tournament-number)))
     (unless (input-available-p)
       (print-prompt "Would you like a Regular or Tournament game? "))
-    (scan-input)
-    (setf game-type (match-token *input-item* (list "regular" "tournament")))
+    (setf input-item (scan-input))
+    (setf game-type (match-token input-item (list "regular" "tournament")))
     (cond
       ((string= game-type "tournament")
        (unless (input-available-p)
          (print-prompt "Type in name or number of tournament: "))
-       (scan-input)
-       (if *input-item*
-           (setf tournament-number *input-item*)
+       (setf input-item (scan-input))
+       (if input-item
+           (setf tournament-number input-item)
            (setf game-type nil))) ; no tournament name or number input so start over
 
       ((string= game-type "regular")
        t) ; Acknowledge the selection because any other input is an error.
 
       (t
-       (when *input-item*
-         (print-message (format nil "What is \"~A\"?~%" *input-item*)))
+       (when input-item
+         (print-message (format nil "What is \"~A\"?~%" input-item)))
        (clear-type-ahead-buffer)))))
 
 (defun get-game-length () ; C: choose()
   "A game parameter used as a multiplier for some game settings."
 
-  (do ((game-length nil))
+  (do ((game-length nil)
+       input-item)
       (game-length
        (setf *game-length* game-length))
     (unless (input-available-p)
       (print-prompt "Would you like a Short, Medium, or Long game? "))
-    (scan-input)
-    (setf game-length (match-token *input-item* (list "short" "medium" "long")))
+    (setf input-item (scan-input))
+    (setf game-length (match-token input-item (list "short" "medium" "long")))
     (unless game-length
-      (when *input-item*
-        (print-message (format nil "What is \"~A\"?~%" *input-item*)))
+      (when input-item
+        (print-message (format nil "What is \"~A\"?~%" input-item)))
       (clear-type-ahead-buffer))))
 
 (defun get-skill-level () ; C: choose()
 
-  (do ((skill-level nil))
+  (do ((skill-level nil)
+       input-item)
       (skill-level
        (setf *skill-level* (first (rassoc skill-level *skill-level-labels* :test #'string=))))
     (unless (input-available-p)
       (print-prompt "Are you a Novice, Fair, Good, Expert, or Emeritus player? "))
-    (scan-input)
-    (setf skill-level (match-token *input-item* (list "novice" "fair" "good" "expert" "emeritus")))
+    (setf input-item (scan-input))
+    (setf skill-level (match-token input-item (list "novice" "fair" "good" "expert" "emeritus")))
     (unless skill-level
-      (when *input-item*
-        (print-message (format nil "What is \"~A\"?~%" *input-item*)))
+      (when input-item
+        (print-message (format nil "What is \"~A\"?~%" input-item)))
       (clear-type-ahead-buffer))))
 
 ;; TODO - add an option to generate a password if the player can't be bothered to make one up
 (defun get-game-password () ; C: setpassword()
   "Set the self-destruct password."
 
-  (do ((game-password nil))
+  (do ((game-password nil)
+       input-item)
       (game-password
        (return-from get-game-password game-password))
     (unless (input-available-p)
       (print-prompt "Please type in a secret password: "))
-    (scan-input)
-    (when *input-item*
-      (setf game-password *input-item*)
+    (setf input-item (scan-input))
+    (when input-item
+      (setf game-password input-item)
       (when (numberp game-password)
         (setf game-password (write-to-string game-password))))))
 
@@ -8334,18 +8336,19 @@ consequences."
     (select-window *message-window*))
 
   (let (help-topics
-        topic)
+        topic
+        input-item)
     (setf help-topics (mapcar #'first *help-database*))
     (when (input-available-p)
-      (scan-input)
-      (setf topic (match-token *input-item* help-topics)))
+      (setf input-item (scan-input))
+      (setf topic (match-token input-item help-topics)))
     ;; Prompt if no topic supplied, or a second try if the supplied topic didn't exist
     (when (= (length topic) 0)
       (print-help-topics help-topics)
       (print-prompt "Help on what command or topic? ")
       (clear-type-ahead-buffer)
-      (scan-input)
-      (setf topic (match-token *input-item* help-topics)))
+      (setf input-item (scan-input))
+      (setf topic (match-token input-item help-topics)))
     (let (contents)
       (setf contents (rest (assoc topic *help-database* :test #'string=)))
       (skip-line)
@@ -8356,7 +8359,8 @@ consequences."
           (print-message (format nil "~A~%" content-line))))
       (when (and (= (length contents) 0)
                  (> (length topic) 0))
-        (print-message (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
+        (print-message
+         (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
 
 (defun display-commands (commands) ; C: listCommands(void)
   "Print a list of valid commands."
@@ -8394,9 +8398,8 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     ;; TODO - possible error: after attacking but not killing a Klingon with a torpedo the Klingon
     ;;        returned fire. The next command "pho 1 4 3" was interpreted as "NIL 1 4 3"
     (clear-type-ahead-buffer)
-    (scan-input)
     ;; TODO - fix match-token to ignore all previous input on -1
-    (setf command (match-token *input-item* commands))
+    (setf command (match-token (scan-input) commands))
     ;; In windowed mode commands aren't echoed automatically so do it manually
     (when *window-interface-p*
       (print-message (format nil "Stardate ~A: ~A~A~%"
