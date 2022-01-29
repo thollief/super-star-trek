@@ -10,7 +10,7 @@
 ;; the list data structure
 ;; TODO - can *future-events* not be exported?
 ;; TODO - possibly a list, possibly an ordered list
-(defparameter *future-events* (make-array +number-of-events+) "Dates of future events") ; C: future[NEVENTS]
+(defvar *future-events* (make-array +number-of-events+) "Dates of future events") ; C: future[NEVENTS]
 
 (defun initialize-events ()
   "Prepare the events data structure for use at the start of a game."

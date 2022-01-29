@@ -2,7 +2,7 @@
 
 (in-package sst-help)
 
-(defparameter *help-database* (list (cons "credits"
+(defvar *help-database* (list (cons "credits"
 "                SSSSS   U   U   PPPPP   EEEEE   RRRRR
                 S       U   U   P   P   E       R   R
                 SSSSS   U   U   PPPPP   EEEE    RRRRR

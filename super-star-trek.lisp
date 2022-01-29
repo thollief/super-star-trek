@@ -22,27 +22,27 @@
 (define-constant +algeron-date+ 2311 "Date of the Treaty of Algeron") ; C: #define ALGERON
 
 ;; TODO - create a terminalio package?
-(defparameter *window-interface-p* t
+(defvar *window-interface-p* t
   "Control whether to display a full screen using (n)curses or the classic line-by-line output.
  This variable is not saved and restored because the terminal used could change between sessions.")
-(defparameter *current-window* nil) ; C: curwnd
-(defparameter *short-range-scan-window* nil) ; C: srscan_window
-(defparameter *ship-status-window* nil)
-(defparameter *game-status-window* nil)
-(defparameter *long-range-scan-window* nil) ; C: lrscan_window
-(defparameter *message-window* nil)
-(defparameter *message-window-lines* 23
+(defvar *current-window* nil) ; C: curwnd
+(defvar *short-range-scan-window* nil) ; C: srscan_window
+(defvar *ship-status-window* nil)
+(defvar *game-status-window* nil)
+(defvar *long-range-scan-window* nil) ; C: lrscan_window
+(defvar *message-window* nil)
+(defvar *message-window-lines* 23
   "Total number of lines in the message window. The default should be suitable for a classic 80x24
  terminal.")
-(defparameter *message-window-line-count* 0
+(defvar *message-window-line-count* 0
   "Number of lines that have been output in the message window.")
-(defparameter *prompt-window* nil)
-(defparameter *starchart-window* nil)
-(defparameter *damage-report-window* nil)
-(defparameter *planet-report-window* nil)
-(defparameter *score-window* nil)
+(defvar *prompt-window* nil)
+(defvar *starchart-window* nil)
+(defvar *damage-report-window* nil)
+(defvar *planet-report-window* nil)
+(defvar *score-window* nil)
 
-(defparameter *line-tokens* nil "List of input tokens")
+(defvar *line-tokens* nil "List of input tokens")
 
 (defun select-window (window &key (clear-window nil))
   "Change window. Do nothing in line-by-line mode. If clear-window is true then also clear the
@@ -291,8 +291,8 @@ to allow for curses or line-by-line output when the player is reminded of the in
        (print-message (format nil "~%Please answer with \"y\" or \"n\": "))))))
 
 ;; TODO - should this be a property of a ship struct?
-(defparameter *ship-quadrant* nil) ; C: coord quadrant, where we are
-(defparameter *ship-sector* nil) ; C: coord sector, where we are
+(defvar *ship-quadrant* nil) ; C: coord quadrant, where we are
+(defvar *ship-sector* nil) ; C: coord sector, where we are
 
 ;; TODO - players may input fractional numbers for coordinates for moving, firing photon torpedoes,
 ;;        and calculating distances, and those numbers should be used. Check this.
@@ -446,7 +446,7 @@ empty string if the planet class can't be determined."
     (t
      "")))
 
-(defparameter *planets* nil
+(defvar *planets* nil
   "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; TODO - define a ship structure. Ships have several properties: a label, a short range scan
@@ -562,18 +562,18 @@ be tracked."
 ;;(defstruct event
 ;;  date ; stardate when event will occur
 ;;  quadrant) ; coordinates of quadrant where event will occur
-(defparameter *conquest-quadrant* nil "Location of planet where the distress/enslave/reproduce events occur.")
+(defvar *conquest-quadrant* nil "Location of planet where the distress/enslave/reproduce events occur.")
 
 (define-constant +sst-version+ "SST 2.0") ; C: SSTMAGIC
 
 ;; User-selectable game parameters.
-(defparameter *tournament-number* nil "Tournament number, or nil if regular game.") ; C: tourn
+(defvar *tournament-number* nil "Tournament number, or nil if regular game.") ; C: tourn
 (defparameter *game-length-values* (list
                                     (cons "short" 1)
                                     (cons "medium" 2)
                                     (cons "long" 4))
   "Numeric values for game lengths used to intialize parameters in new games.")
-(defparameter *game-length* nil
+(defvar *game-length* nil
   "A string containing player's selection of game length.") ; C: length
 (define-constant +novice+ 1) ; C: skill, SKILL_NOVICE = 1
 (define-constant +fair+ 2) ; C: skill, SKILL_FAIR = 2
@@ -587,88 +587,88 @@ be tracked."
                                     (cons +expert+ "expert")
                                     (cons +emeritus+ "emeritus"))
   "Labels for skill levels.")
-(defparameter *skill-level* nil
+(defvar *skill-level* nil
   "A number representing the player's selection of skill level.") ; C: skill
-(defparameter *self-destruct-password* nil) ; C: passwd[10]
+(defvar *self-destruct-password* nil) ; C: passwd[10]
 
 ;; The Enterprise
 ;; TODO - the Faerie Queene has no shuttle craft or deathray so it should not be
 ;; possible/allowed/necessary to check if those devices are damaged
 (define-constant +full-crew+ 428) ; C: FULLCREW, BSD Trek was 387, that's wrong
-(defparameter *ship* +enterprise+) ; C: ship, 'E' is Enterprise
-(defparameter *initial-energy* 5000.0 "Initial and max energy") ; C: inenrg
-(defparameter *ship-energy* 5000.0) ; C: energy
-(defparameter *initial-shield-energy* 2500.0 "Initial and max shield") ; C: inshld
-(defparameter *shield-energy* 2500.0) ; C: shield
-(defparameter *shields-are-changing-p* nil) ; C: shldchg, affects efficiency
-(defparameter *shields-are-up-p* nil) ; C: shldup
-(defparameter *cloakedp* nil "Cloaking is enabled") ; C: iscloaked
-(defparameter *cloakingp* nil "In the process of cloaking and can be attacked") ; C: iscloaking
-(defparameter *initial-life-support-reserves* 4.0) ; C: inlsr
-(defparameter *life-support-reserves* 4.0) ; C: lsupres
-(defparameter *initial-torpedos* 10 "Initial and max torpedoes") ; C: intorps
-(defparameter *torpedoes* 10) ; C: torps
-(defparameter *warp-factor* 5.0) ; C: warpfac, Warp speed
-(defparameter *device-damage* (make-array +number-of-devices+ :initial-element 0.0)) ; C: damage[NDEVICES], Damage encountered
-(defparameter *crew* +full-crew+) ; C: crew, crew complement
-(defparameter *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
-(defparameter *casualties* 0) ; C: casual
-(defparameter *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
-(defparameter *brig-free* 0 "room in the brig") ; C: brigfree
-(defparameter *dilithium-crystals-on-board-p* nil) ; C: icrystl
-(defparameter *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
+(defvar *ship* +enterprise+) ; C: ship, 'E' is Enterprise
+(defvar *initial-energy* 5000.0 "Initial and max energy") ; C: inenrg
+(defvar *ship-energy* 5000.0) ; C: energy
+(defvar *initial-shield-energy* 2500.0 "Initial and max shield") ; C: inshld
+(defvar *shield-energy* 2500.0) ; C: shield
+(defvar *shields-are-changing-p* nil) ; C: shldchg, affects efficiency
+(defvar *shields-are-up-p* nil) ; C: shldup
+(defvar *cloakedp* nil "Cloaking is enabled") ; C: iscloaked
+(defvar *cloakingp* nil "In the process of cloaking and can be attacked") ; C: iscloaking
+(defvar *initial-life-support-reserves* 4.0) ; C: inlsr
+(defvar *life-support-reserves* 4.0) ; C: lsupres
+(defvar *initial-torpedos* 10 "Initial and max torpedoes") ; C: intorps
+(defvar *torpedoes* 10) ; C: torps
+(defvar *warp-factor* 5.0) ; C: warpfac, Warp speed
+(defvar *device-damage* (make-array +number-of-devices+ :initial-element 0.0)) ; C: damage[NDEVICES], Damage encountered
+(defvar *crew* +full-crew+) ; C: crew, crew complement
+(defvar *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
+(defvar *casualties* 0) ; C: casual
+(defvar *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
+(defvar *brig-free* 0 "room in the brig") ; C: brigfree
+(defvar *dilithium-crystals-on-board-p* nil) ; C: icrystl
+(defvar *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
 
-(defparameter *condition* nil "red, yellow, green") ; C: condition
+(defvar *condition* nil "red, yellow, green") ; C: condition
 ;; Values for *condition*
 (define-constant +green-status+ "GREEN") ; C: IHGREEN
 (define-constant +yellow-status+ "YELLOW") ; C: IHYELLOW
 (define-constant +red-status+ "RED") ; C: IHRED
 
 ;; TODO - decide if orbital cloaking is possible
-(defparameter *dockedp* nil) ; a possible flight condition
-(defparameter *in-orbit-p* nil) ; C: inorbit, orbiting - a possible flight condition
-(defparameter *height-of-orbit* 0) ; C: height, height of orbit around planet
+(defvar *dockedp* nil) ; a possible flight condition
+(defvar *in-orbit-p* nil) ; C: inorbit, orbiting - a possible flight condition
+(defvar *height-of-orbit* 0) ; C: height, height of orbit around planet
 
-(defparameter *initial-bases* 0) ; C: inbase
-(defparameter *destroyed-bases* 0 "Number of bases destroyed by player action.") ; C: basekl
-(defparameter *base-quadrants* ()
+(defvar *initial-bases* 0) ; C: inbase
+(defvar *destroyed-bases* 0 "Number of bases destroyed by player action.") ; C: basekl
+(defvar *base-quadrants* ()
   "A list of coordinate structs, these are quadrants containing bases.")
 
-(defparameter *initial-stars* 0); C: instar
-(defparameter *destroyed-stars* 0 "Number of stars destroyed by player action.") ; C: starkl
+(defvar *initial-stars* 0); C: instar
+(defvar *destroyed-stars* 0 "Number of stars destroyed by player action.") ; C: starkl
 
-(defparameter *initial-planets* 0) ; C: inplan
-(defparameter *destroyed-inhabited-planets* 0) ; C: nworldkl
-(defparameter *destroyed-uninhabited-planets* 0) ; C: nplankl
+(defvar *initial-planets* 0) ; C: inplan
+(defvar *destroyed-inhabited-planets* 0) ; C: nworldkl
+(defvar *destroyed-uninhabited-planets* 0) ; C: nplankl
 
-(defparameter *initial-klingons* 0) ; C: inkling
-(defparameter *remaining-klingons* 0) ; C: remkl
-(defparameter *captured-klingons* 0 "number of captured Klingons") ; C: kcaptured
+(defvar *initial-klingons* 0) ; C: inkling
+(defvar *remaining-klingons* 0) ; C: remkl
+(defvar *captured-klingons* 0 "number of captured Klingons") ; C: kcaptured
 
-(defparameter *initial-commanders* 0) ; C: incom
-(defparameter *commander-quadrants* () "List of coordinate structs, these are quadrants containing commanders.")
+(defvar *initial-commanders* 0) ; C: incom
+(defvar *commander-quadrants* () "List of coordinate structs, these are quadrants containing commanders.")
 
-(defparameter *initial-super-commanders* 0); C: inscom
-(defparameter *remaining-super-commanders* 0) ; C: nscrem
-(defparameter *super-commander-quadrant* nil) ; C: kscmdr
+(defvar *initial-super-commanders* 0); C: inscom
+(defvar *remaining-super-commanders* 0) ; C: nscrem
+(defvar *super-commander-quadrant* nil) ; C: kscmdr
 
-(defparameter *initial-romulans* 0) ; C: inrom
-(defparameter *remaining-romulans* 0) ; C: nromrem
+(defvar *initial-romulans* 0) ; C: inrom
+(defvar *remaining-romulans* 0) ; C: nromrem
 
-(defparameter *cloaking-violations* 0 "Number of treaty violations") ; C: ncviol
-(defparameter *cloaking-violation-reported-p* nil "Violation reported by Romulan in quadrant") ; C: isviolreported
+(defvar *cloaking-violations* 0 "Number of treaty violations") ; C: ncviol
+(defvar *cloaking-violation-reported-p* nil "Violation reported by Romulan in quadrant") ; C: isviolreported
 
-(defparameter *initial-resources* 0.0) ; C: inresor
-(defparameter *remaining-resources* 0.0) ; C: remres
-(defparameter *initial-time* 0.0) ; C: intime
-(defparameter *remaining-time* 0.0) ; C: remtime
-(defparameter *initial-stardate* 0.0) ; C: indate
-(defparameter *stardate* 0.0) ; C: double date
+(defvar *initial-resources* 0.0) ; C: inresor
+(defvar *remaining-resources* 0.0) ; C: remres
+(defvar *initial-time* 0.0) ; C: intime
+(defvar *remaining-time* 0.0) ; C: remtime
+(defvar *initial-stardate* 0.0) ; C: indate
+(defvar *stardate* 0.0) ; C: double date
 
-(defparameter *damage-factor* 0.0 "Damage modifier based on skill level") ; C: damfac
+(defvar *damage-factor* 0.0 "Damage modifier based on skill level") ; C: damfac
 
-(defparameter *galaxy* nil "The Galaxy, an array of quadrants") ; C: galaxy[GALSIZE+1][GALSIZE+1]
-(defparameter *starchart* nil "The starchart, an array of starchart-pages") ; C: chart[GALSIZE+1][GALSIZE+1]
+(defvar *galaxy* nil "The Galaxy, an array of quadrants") ; C: galaxy[GALSIZE+1][GALSIZE+1]
+(defvar *starchart* nil "The starchart, an array of starchart-pages") ; C: chart[GALSIZE+1][GALSIZE+1]
 
 (defstruct enemy
   "Information about an enemy in a sector.
@@ -685,35 +685,35 @@ greater or lesser."
 
 ;; The array size needs to accommodate the deathray case of filling the sector.
 ;; TODO - there seems to be two arrays for similar items
-(defparameter *quadrant-enemies* (make-array (* +quadrant-size+ +quadrant-size+))
+(defvar *quadrant-enemies* (make-array (* +quadrant-size+ +quadrant-size+))
   "Information about enemies in the quadrant, represented as an enemy struct.")
-(defparameter *quadrant* (make-array (list +quadrant-size+ +quadrant-size+))
+(defvar *quadrant* (make-array (list +quadrant-size+ +quadrant-size+))
   "The contents of the current quadrant, represented as an array of sector structures.") ; C: feature quad[QUADSIZE+1][QUADSIZE+1];
 
-(defparameter *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
-(defparameter *base-sector* nil) ; C: base, coordinate position of base in current quadrant
+(defvar *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
+(defvar *base-sector* nil) ; C: base, coordinate position of base in current quadrant
 
 ;; Other game parameters
 ;; TODO - should this be in an event structure?
-(defparameter *base-under-attack-quadrant* nil) ; C: battle, Base coordinates being attacked - a coordinate struct, or nil. See also the event +commander-attacks-base+
-(defparameter *calls-for-help* 0) ; C: nhelp
-(defparameter *energy-barrier-crossings* 0 "Count of energy-barrier crossings") ; C: nkinks
-(defparameter *in-shuttle-craft-p* nil "Kirk in Galileo") ; C: icraft
-(defparameter *miningp* nil) ; C: imine
-(defparameter *restingp* nil) ; C: resting, rest time
-(defparameter *super-commander-attack-enterprise-p* nil) ; C: iscate
-(defparameter *super-commander-attacking-base* 'not-atacking
+(defvar *base-under-attack-quadrant* nil) ; C: battle, Base coordinates being attacked - a coordinate struct, or nil. See also the event +commander-attacks-base+
+(defvar *calls-for-help* 0) ; C: nhelp
+(defvar *energy-barrier-crossings* 0 "Count of energy-barrier crossings") ; C: nkinks
+(defvar *in-shuttle-craft-p* nil "Kirk in Galileo") ; C: icraft
+(defvar *miningp* nil) ; C: imine
+(defvar *restingp* nil) ; C: resting, rest time
+(defvar *super-commander-attack-enterprise-p* nil) ; C: iscate
+(defvar *super-commander-attacking-base* 'not-atacking
   "Possible states are attacking, not attacking, in the process of destroying.") ; C: isatb
-(defparameter *shuttle-craft-location* 'on-ship
+(defvar *shuttle-craft-location* 'on-ship
   "Location of the shuttle craft. One of 'on-ship, 'off-ship, or 'removed. 'off-ship is effectively
 the same as being on a planet.") ; C: iscraft
-(defparameter *shuttle-craft-quadrant* nil "The quadrant coordinates of the shuttle craft. They are
+(defvar *shuttle-craft-quadrant* nil "The quadrant coordinates of the shuttle craft. They are
 the same as the ship if the shuttle craft location is on-ship.")
-(defparameter *alivep* t "The player is alive (not killed)") ; C: alive
-(defparameter *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
+(defvar *alivep* t "The player is alive (not killed)") ; C: alive
+(defvar *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
 
-(defparameter *snapshot* nil) ; C: snapshot snapsht;
-(defparameter *snapshot-taken-p* nil) ; C:snap
+(defvar *snapshot* nil) ; C: snapshot snapsht;
+(defvar *snapshot-taken-p* nil) ; C:snap
 (defun use-snapshot ()
   "Assign the values stored in the snapshot structure to the similarly named global values."
 
@@ -740,37 +740,37 @@ the same as the ship if the shuttle craft location is on-ship.")
   (setf *starchart* (snapshot-starchart *snapshot*)))
 
 ;; The game
-(defparameter *game-won-p* nil) ; C: gamewon, Finished!
-(defparameter *all-done-p* t "Game is finished. True at the end of a game or if no game is in progress.") ; C: alldone
+(defvar *game-won-p* nil) ; C: gamewon, Finished!
+(defvar *all-done-p* t "Game is finished. True at the end of a game or if no game is in progress.") ; C: alldone
 
 ;; Information about the current quadrant, set each time the ship enters a new quadrant
-(defparameter *just-in-p* nil
+(defvar *just-in-p* nil
   "True when the player has entered the quadrant but not yet taken any action.") ; C: justin
-(defparameter *klingons-here* nil) ; C: klhere
-(defparameter *commanders-here* nil) ; C: comhere - TODO could this be in the quadrant structure like Klingons and Romulans?
-(defparameter *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
-(defparameter *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
-(defparameter *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
-(defparameter *enemies-here* nil "Number of enemies in quadrant") ; C: nenhere
-(defparameter *romulan-neutral-zone-p* nil) ; C: neutz	, Romulan Neutral Zone
-(defparameter *landedp* nil) ; C: landed	, party on planet (true), on ship (false)
-(defparameter *attempted-escape-from-super-commander-p* nil) ; C: ientesc
-(defparameter *tholians-here* 0) ; C: ithere - Max 1 Tholian in a quadrant but this is an entity count not a boolean
-(defparameter *base-attack-report-seen-p* nil) ; C: iseenit
-(defparameter *current-planet* nil "Sector coordinate location of a planet in the current quadrant, if any") ; C: plnet
+(defvar *klingons-here* nil) ; C: klhere
+(defvar *commanders-here* nil) ; C: comhere - TODO could this be in the quadrant structure like Klingons and Romulans?
+(defvar *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
+(defvar *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
+(defvar *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
+(defvar *enemies-here* nil "Number of enemies in quadrant") ; C: nenhere
+(defvar *romulan-neutral-zone-p* nil) ; C: neutz	, Romulan Neutral Zone
+(defvar *landedp* nil) ; C: landed	, party on planet (true), on ship (false)
+(defvar *attempted-escape-from-super-commander-p* nil) ; C: ientesc
+(defvar *tholians-here* 0) ; C: ithere - Max 1 Tholian in a quadrant but this is an entity count not a boolean
+(defvar *base-attack-report-seen-p* nil) ; C: iseenit
+(defvar *current-planet* nil "Sector coordinate location of a planet in the current quadrant, if any") ; C: plnet
 
-(defparameter *time-taken-by-current-operation* 0.0) ; C: optime
+(defvar *time-taken-by-current-operation* 0.0) ; C: optime
 
-(defparameter *probe-reported-quadrant* nil
+(defvar *probe-reported-quadrant* nil
   "The last reported location of the probe") ; C: probec, current probe quadrant
 ;; Probe x and y quadrant+sector
-(defparameter *probe-x-coord* 0) ; C: probex	, location of probe
-(defparameter *probe-y-coord* 0) ; C: probey
-(defparameter *probe-x-increment* nil) ; C: probeinx, Probe x,y increment
-(defparameter *probe-y-increment* nil) ; C: probeiny
-(defparameter *moves-for-probe* nil) ; C: proben
-(defparameter *probes-available* 0) ; C: nprobes
-(defparameter *probe-is-armed-p* nil) ; C: isarmed
+(defvar *probe-x-coord* 0) ; C: probex	, location of probe
+(defvar *probe-y-coord* 0) ; C: probey
+(defvar *probe-x-increment* nil) ; C: probeinx, Probe x,y increment
+(defvar *probe-y-increment* nil) ; C: probeiny
+(defvar *moves-for-probe* nil) ; C: proben
+(defvar *probes-available* 0) ; C: nprobes
+(defvar *probe-is-armed-p* nil) ; C: isarmed
 
 ;; C: enum COLORS
 (define-constant +default-color+ 0)
@@ -793,13 +793,13 @@ the same as the ship if the shuttle craft location is on-ship.")
 
 ;; The Space Thing's global state should *not* be saved! This prevents players proving they encountered it
 ;; by examining a saved game.
-(defparameter *thing-location* nil); C: thing, location of strange object in galaxy
-(defparameter *things-here* 0) ; C: bool iqhere - Normally Max 1 Thing in a quadrant but this an entity count not a boolean.
-(defparameter *thing-is-angry-p* nil) ; C: bool iqengry
-(defparameter *score* 0) ; C: iscore, Common PLAQ
-(defparameter *seed* 0) ; C: int seed, the random-number seed
-(defparameter *log-file* 0) ; C: FILE *logfp, TODO - this should be a file, deal with it later
-(defparameter *replay-file* 0) ; C: FILE *replayfp, TODO - this should be a file, deal with it later
+(defvar *thing-location* nil); C: thing, location of strange object in galaxy
+(defvar *things-here* 0) ; C: bool iqhere - Normally Max 1 Thing in a quadrant but this an entity count not a boolean.
+(defvar *thing-is-angry-p* nil) ; C: bool iqengry
+(defvar *score* 0) ; C: iscore, Common PLAQ
+(defvar *seed* 0) ; C: int seed, the random-number seed
+(defvar *log-file* 0) ; C: FILE *logfp, TODO - this should be a file, deal with it later
+(defvar *replay-file* 0) ; C: FILE *replayfp, TODO - this should be a file, deal with it later
 
 ;; Internal documentation of system names
 ;;
