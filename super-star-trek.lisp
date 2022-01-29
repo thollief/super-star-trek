@@ -108,13 +108,17 @@ remainder for the next call, in effect providing command type-ahead. If the keyb
                                         (string-downcase (string-trim " "(get-input-line)))
                                         :remove-empty-subseqs t)))
   (let ((test-number nil)
-        input-item)
+        input-item
+        temp-read-eval) ; used to limit malicious actions, per the Lisp FAQ section 3-11
     (setf input-item (pop *line-tokens*))
     ;; input-item could be nil if player just presses the enter key
     (when input-item
+      (setf temp-read-eval *read-eval*)
+      (setf *read-eval* nil)
       ;; Read something, possibly a number. This is reading a Lisp form and if it's malformed then
       ;; we don't want it anyway so ignore the error.
       (setf test-number (ignore-errors (read-from-string input-item)))
+      (setf *read-eval* temp-read-eval)
       (when (numberp test-number) ; If it's a number then keep it, as a number
         (setf input-item test-number)))
     (return-from scan-input input-item)))
