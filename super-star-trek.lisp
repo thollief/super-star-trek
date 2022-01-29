@@ -286,11 +286,13 @@ to allow for curses or line-by-line output when the player is reminded of the in
       (t
        (print-message (format nil "~%Please answer with \"y\" or \"n\": "))))))
 
-;; TODO - calls to read-coordinate-number follow a similar pattern of checking for available
-;;        input and then reading the presumed number if it's available. Use that pattern as a
-;;        basis for defining a function read-coordinate-pair that returns two numbers that could
-;;        be coordinates if they pass validation checks.
-(defun read-coordinate-number ()
+;; TODO - should this be a property of a ship struct?
+(defparameter *ship-quadrant* nil) ; C: coord quadrant, where we are
+(defparameter *ship-sector* nil) ; C: coord sector, where we are
+
+;; TODO - players may input fractional numbers for coordinates for moving, firing photon torpedoes,
+;;        and calculating distances, and those numbers should be used. Check this.
+(defun scan-coordinate-number ()
   "Read a player-entered coordinate number from the input buffer. Return the internal coordinate
 number (array index) or nil."
 
@@ -300,11 +302,20 @@ number (array index) or nil."
     (when (and input-item
                (numberp input-item))
       (setf c-num (1- input-item)))
-    (return-from read-coordinate-number c-num)))
+    (return-from scan-coordinate-number c-num)))
 
-;; TODO - should this be a property of a ship struct?
-(defparameter *ship-quadrant* nil) ; C: coord quadrant, where we are
-(defparameter *ship-sector* nil) ; C: coord sector, where we are
+(defun scan-coordinate-pair ()
+  "Read two numbers from the input line and return them. The player is expected to enter two values
+but might enter only one, or none."
+
+  (let (x y)
+    (setf x (scan-coordinate-number))
+    ;; The player should have entered at least two numbers for the coordinate and the second one is
+    ;; still in the input buffer. If the input buffer is empty then the scan would wait for further
+    ;; input, which we don't want at this point because there is no prompt for what is needed.
+    (when (input-available-p)
+      (setf y (scan-coordinate-number)))
+    (return-from scan-coordinate-pair (values x y))))
 
 (defun get-quadrant-and-sector ()
   "Get from the player two numbers representing a quadrant, or four numbers representing a quadrant
@@ -313,16 +324,11 @@ be left empty. Check input for correctness and display an error message if neede
 coordinates or nil."
 
   (let (qx qy sx sy)
-    (setf qy (read-coordinate-number))
-    ;; The player should have entered at least two numbers for the coordinate and the second one is
-    ;; still in the input buffer. If the input buffer is empty then the scan would wait for further
-    ;; input, which we don't want at this point.
-    (when (input-available-p)
-      (setf qx (read-coordinate-number)))
+    (multiple-value-setq (qx qy) (scan-coordinate-pair))
     ;; If there are two more coordinates then read them, otherwise we don't care what was typed
     (when (two-input-items-available)
-      (setf sy (read-coordinate-number))
-      (setf sx (read-coordinate-number)))
+      (multiple-value-setq (sx sy) (scan-coordinate-pair)))
+    ;; TODO - the code doesn't match the comment, retest the function that calls this
     ;; If player entered only two coordinates, a quadrant, then fix up the quadrant coordinates
     (when (and qx qy (not sx) (not sy))
       (setf sx qx)
@@ -332,7 +338,8 @@ coordinates or nil."
     ;; Validate coordinate values and return them
     (if (and qx qy (valid-quadrant-p qx qy) sx sy (valid-sector-p sx sy))
         (return-from get-quadrant-and-sector (values sx sy qx qy))
-        (huh))))
+        (huh)))
+  )
 
 (defun format-stardate (d)
   "Write a stardate with one decimal point."
@@ -3609,10 +3616,12 @@ there was an error (including -1 entered by the player to exit the command)."
                (> torpedo 0))
           (setf (aref courses torpedo) (aref courses 0))
           (progn
-            (setf (coordinate-x target) (read-coordinate-number))
-            (when (input-available-p)
-              (setf (coordinate-y target) (read-coordinate-number)))
-            (setf (aref courses torpedo) (photon-torpedo-target-check target))
+            ;; TODO this is an awkward construct, might as well pass around the pair of numbers,
+            ;;      not filter them through a coordinate struct
+            (multiple-value-bind (x y) (scan-coordinate-pair)
+              (setf (coordinate-x target) x)
+              (setf (coordinate-y target) y)
+              (setf (aref courses torpedo) (photon-torpedo-target-check target)))
             (unless (aref courses torpedo)
               ;; If the target check returned nil then just return, player was already notified
               (return-from get-targets-for-torpedoes nil)))))))
@@ -5869,12 +5878,9 @@ displayed y - x, where +y is downward!"
           (unless (input-available-p)
             (print-prompt "Target quadrant or quadrant&sector: ")
             (clear-type-ahead-buffer))
-          (setf qx (read-coordinate-number))
-          (when (input-available-p)
-            (setf qy (read-coordinate-number)))
+          (multiple-value-setq (qx qy) (scan-coordinate-pair))
           (when (two-input-items-available) ; both quadrant and sector specified
-            (setf sx (read-coordinate-number))
-            (setf sy (read-coordinate-number))))
+            (multiple-value-setq (sx sy) (scan-coordinate-pair))))
         (progn ; manual
           (do (input-item)
               (input-item
@@ -5985,14 +5991,11 @@ displayed y - x, where +y is downward!"
             (print-prompt "Destination sector or quadrant&sector: ")
             (clear-type-ahead-buffer)
             (setf need-prompt-p t))
-          (setf sx (read-coordinate-number))
-          (when (input-available-p)
-            (setf sy (read-coordinate-number)))
+          (multiple-value-setq (sx sy) (scan-coordinate-pair))
           (when (two-input-items-available) ; both quadrant and sector specified
             (setf qx sx)
             (setf qy sy)
-            (setf sx (read-coordinate-number))
-            (setf sy (read-coordinate-number)))
+            (multiple-value-setq (sx sy) (scan-coordinate-pair)))
           (when (and (not qy)
                      (not qx))
             (setf qx (coordinate-x *ship-quadrant*))
