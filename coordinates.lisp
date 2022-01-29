@@ -25,8 +25,8 @@
 otherwise."))
 
 (defmethod valid-p ((coord coordinate))
-    (and (integerp (coordinate-x coord))
-         (integerp (coordinate-y coord))
+    (and (numberp (coordinate-x coord))
+         (numberp (coordinate-y coord))
          (>= (coordinate-x coord) 0)
          (>= (coordinate-y coord) 0)))
 
@@ -49,13 +49,21 @@ otherwise."))
   "Return true if the quadrant coordinates are valid. These are array indices, not player
 coordinates."
 
-  (valid-p (make-quadrant-coordinate :x x :y y)))
+  (if (and x y
+           (numberp x)
+           (numberp y))
+      (valid-p (make-quadrant-coordinate :x x :y y))
+      (return-from valid-quadrant-p nil)))
 
 (defun valid-sector-p (x y) ; C: VALID_SECTOR(x, y)
   "Return true if the sector coordinates are valid. These are array indices, not player
 coordinates."
 
-  (valid-p (make-sector-coordinate :x x :y y)))
+  (if (and x y
+           (numberp x)
+           (numberp y))
+      (valid-p (make-sector-coordinate :x x :y y))
+      (return-from valid-sector-p nil)))
 
 (defun coord-equal (c1 c2) ; C: same(c1, c2)
   "Two coordinates are equal if their corresponding x and y coordinates are equal."
