@@ -10,6 +10,7 @@
     :components ((:file "packages")
                  (:file "sbcl-support")
                  (:file "coordinates")
+                 (:file "terminal-io")
                  (:file "events")
                  (:file "help")
                  (:file "super-star-trek"))
