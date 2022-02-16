@@ -84,6 +84,61 @@
            format-sector-coordinates
            format-quadrant-coordinates))
 
+(defpackage sst-terminal-io
+  (:documentation "Read and write from terminals.")
+  (:use common-lisp common-lisp-user)
+  (:import-from cl-utilities
+                split-sequence)
+  (:import-from sbcl-support
+                define-constant)
+  (:import-from cl-charms/low-level
+                a_bold a_reverse color_black color_blue color_cyan color_green color_magenta
+                color_red color_white color_yellow
+                true false err ok *lines* *cols* *stdscr*
+                cbreak color-pair curs-set endwin getcury getmaxy getmaxyx getyx has-colors
+                init-pair initscr keypad mvwaddstr newwin nocbreak nonl scrollok start-color
+                wattron wattrset wclear wgetch wmove wprintw wrefresh)
+  (:export +default-color+
+           +green+
+           +cyan+
+           +red+
+           +brown+
+           +yellow+
+           screen
+           window
+           curses-window
+           *message-window*
+           *short-range-scan-window*
+           *ship-status-window*
+           *game-status-window*
+           *long-range-scan-window*
+           *prompt-window*
+           *starchart-window*
+           *damage-report-window*
+           *planet-report-window*
+           *score-window*
+           initialize-windows
+           clean-up-windows
+           clear-window
+           get-input-line
+           scan-input
+           unscan-input
+           input-available-p
+           two-input-items-available
+           number-of-input-items
+           format-input-items
+           clear-type-ahead-buffer
+           match-token
+           print-out
+           skip-line
+           print-message
+           print-prompt
+           page-window
+           restart-paging
+           set-text-color
+           toggle-reverse-video
+           track-torpedo))
+
 (defpackage sst-events
   (:documentation "Event handling for Super Star Trek")
   (:use common-lisp common-lisp-user)
@@ -109,16 +164,8 @@
   (:import-from sbcl-support
                 define-constant)
   (:import-from cl-charms/low-level
-                ;; Having difficulty getting getstr, getnstr, wgetstr, wgetnstr to work on FreeBSD
-                a_bold a_reverse color_black color_blue color_cyan color_green color_magenta
-                color_red color_white color_yellow key_eol key_backspace
-                *lines* *cols* *stdscr* true false err ok
-                wborder box ; TODO not sure if this is only debug or permanent
-                ;; line/box drawing characters
-                acs_hline acs_vline acs_llcorner acs_lrcorner acs_ulcorner acs_urcorner
-                color-pair cbreak curs-set endwin getcury getmaxy getmaxyx getyx has-colors
-                init-pair initscr keypad mvwaddstr newwin nocbreak nonl scrollok start-color
-                waddch waddstr wattron wattrset wclear wclrtoeol wgetch wmove wprintw wrefresh)
+                a_reverse
+                mvwaddstr waddch waddstr wattron wrefresh)
   (:import-from cl-utilities
                 split-sequence)
   (:import-from sst-coordinates
@@ -152,8 +199,46 @@
                 find-event)
   (:import-from sst-help
                 *help-database*)
-  (:export print-prompt
-           print-message
-           print-out)
+  (:import-from sst-terminal-io
+                +default-color+
+                +green+
+                +cyan+
+                +red+
+                +brown+
+                +yellow+
+                screen
+                window
+                curses-window
+                *message-window*
+                *short-range-scan-window*
+                *ship-status-window*
+                *game-status-window*
+                *long-range-scan-window*
+                *prompt-window*
+                *starchart-window*
+                *damage-report-window*
+                *planet-report-window*
+                *score-window*
+                initialize-windows
+                clean-up-windows
+                clear-window
+                get-input-line
+                scan-input
+                unscan-input
+                input-available-p
+                two-input-items-available
+                number-of-input-items
+                format-input-items
+                clear-type-ahead-buffer
+                match-token
+                print-out
+                skip-line
+                print-message
+                print-prompt
+                page-window
+                restart-paging
+                set-text-color
+                toggle-reverse-video
+                track-torpedo)
   (:nicknames sst)
   (:export sst))
