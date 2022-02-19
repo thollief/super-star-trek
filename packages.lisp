@@ -48,6 +48,9 @@
 ;;;; TODO - Do bases have long-range sensors? Why wouldn't they? If yes, then surely they would
 ;;;;        share their information with the ship, assuming the subspace radio is working. This
 ;;;;        would change game play a lot - less need to run around the galaxy finding klingons.
+;;;; TODO - However, per various websites, the subspace radio is not instantaneous. For play
+;;;;        purposes some information arrives instantly, but additional information from starbase
+;;;;        could arrive over the course of time. Use an enhanced event system to do this?
 
 ;; TODO - delete these lines. But, write a shell script or something to make sure quicklisp has the
 ;;        latest versions of packages? Add to sst.asd?

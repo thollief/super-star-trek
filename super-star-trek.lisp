@@ -1033,9 +1033,10 @@ affected."
      (skip-line *message-window* 2)
      ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep space
      ;; probe, that is, not induced by the player. Restore this? If yes, then also restore the score
-     ;; updates performed in this function when a probe causes as supernova.
+     ;; updates performed in this function when a probe causes a supernova.
      (print-message *message-window* (format nil "Lucky you!~%"))
-     (print-message *message-window* (format nil "A supernova in ~A has just destroyed the last Klingons.~%"
+     (print-message *message-window*
+                    (format nil "A supernova in ~A has just destroyed the last Klingons.~%"
                             (format-quadrant-coordinates nova-quadrant)))
      (finish 'won))
     (*all-done-p*
@@ -2887,27 +2888,31 @@ and return the x and y coordinates to which it was displaced."
                           sector-contents)
   "Display torpedo track information as updates to the short range scan window."
 
-  (if (or (not (damagedp +short-range-sensors+))
-          *dockedp*)
-      (progn
-        (when (= length-of-track 1)
-          (short-range-scan output-window))
-        (if (or (string= sector-contents +empty-sector+)
-                (string= sector-contents +black-hole+))
-            ;; Pass over an empty sector. Black hole collisions are handled without effects.
-            (progn
-              (put-short-range-scan-symbol output-window +torpedo+
-                                           (round torp-x) (round torp-y))
-              (turn-sound-on (* length-of-track 10))
-              (sleep 1)
-              (turn-sound-off)
-              (put-short-range-scan-symbol output-window
-                                           sector-contents (round torp-x) (round torp-y)))
-            ;; Highlight an impact sector
-            (boom output-window sector-contents (round torp-x) (round torp-y))))
-      ;; Short range sensors are damaged but player gets a torpedo track output anyway
-      (call-next-method *message-window* torp-x torp-y length-of-track torpedo-number
-                        number-of-torpedoes-in-salvo sector-contents)))
+  (when (or (not (damagedp +short-range-sensors+))
+            *dockedp*)
+    (when (= length-of-track 1)
+      (short-range-scan output-window))
+    (if (or (string= sector-contents +empty-sector+)
+            (string= sector-contents +black-hole+))
+        ;; Pass over an empty sector. Black hole collisions are handled without effects.
+        (progn
+          (put-short-range-scan-symbol output-window +torpedo+
+                                       (round torp-x) (round torp-y))
+          (turn-sound-on (* length-of-track 10))
+          (sleep 1)
+          (turn-sound-off)
+          (put-short-range-scan-symbol output-window
+                                       sector-contents (round torp-x) (round torp-y)))
+        ;; Highlight an impact sector
+        (boom output-window sector-contents (round torp-x) (round torp-y))))
+  ;; Also print torpedo track information even if short range sensors are damaged
+  (call-next-method *message-window*
+                    torp-x
+                    torp-y
+                    length-of-track
+                    torpedo-number
+                    number-of-torpedoes-in-salvo
+                    sector-contents))
 
 ;; TODO - there is a parallel with move-ship-within-quadrant. Is there common code that
 ;;        be refactored into a general-purpose routine?
@@ -2978,11 +2983,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                            sector-contents)
             (unless (string= sector-contents +empty-sector+)
               ;; hit something
-              (when (or (eql *short-range-scan-window* *message-window*)
-                        (and (not (eql *short-range-scan-window* *message-window*))
-                             (damagedp +short-range-sensors+)
-                             (not *dockedp*)))
-                (skip-line *message-window*)) ; start new line after text track
+              (skip-line *message-window*) ; start new line after text track
               (cond
                 ;; Hit our ship
                 ((or (string= sector-contents +enterprise+)
@@ -3064,7 +3065,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                                    (dead-enemy torpedo-sector sector-contents torpedo-sector))
 
                                   (t
-                                   (print-out *message-window* " damaged--")
+                                   (print-out *message-window* " damaged --")
                                    (setf (enemy-sector-coordinates
                                           (aref *quadrant-enemies* enemy-index))
                                          displaced-to-sector)
@@ -3328,7 +3329,6 @@ there was an error (including -1 entered by the player to exit the command)."
       (setf courses (get-targets-for-torpedoes number-of-torpedoes-to-fire))
       (when courses
         (setf *action-taken-p* t)
-        ;; TODO - the last torpedo in a salvo doesn't go where intended
         ;; Loop for moving <n> torpedoes
         (do ((i 0 (1+ i))
              (misfire nil)
@@ -5293,9 +5293,11 @@ the player completes their turn."
                     (when (and (not (damagedp +short-range-sensors+))
                                (eql weapon 'phasers))
                       (if (<= *skill-level* +fair+)
-                          (print-message *message-window* (format nil " from ~A at ~A~%" (letter-to-name enemy)
+                          (print-message *message-window*
+                                         (format nil " from ~A at ~A~%" (letter-to-name enemy)
                                                  (format-sector-coordinates enemy-sector)))
-                          (print-message *message-window* (format nil " from ~A at ~A~%" (letter-to-name enemy)
+                          (print-message *message-window*
+                                         (format nil " from ~A at ~A~%" (letter-to-name enemy)
                                                  (format-coordinates enemy-sector)))))
                     ;; Decide if hit is critical
                     (when (> hit hit-max)
@@ -5316,6 +5318,8 @@ the player completes their turn."
 ;; TODO - Error: the ship doesn't always leave the quadrant, and no E appears in the short range scan
 ;; seems to occur when moving at warp 10 over a distance of 3 or so quadrants. The error was seen when
 ;; testing the time-warp code, by moving a few quadrants at warp 10.
+;; TODO - when using curses, show the ship moving within the the current quadrant and withing the
+;;        destination quadrant, and on the star chart when moving "over" quadrants.
 (defun move-ship-within-quadrant (&key course distance (nova-push-p nil)) ; C: imove(bool novapush)
   "In-sector movement actions for warp and impulse drives. Supernova and tractor beam events
 can occur."
