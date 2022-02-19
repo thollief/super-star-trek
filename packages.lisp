@@ -161,7 +161,19 @@
 (defpackage sst-help
   (:documentation "Help information for Super Star Trek")
   (:use common-lisp common-lisp-user)
-  (:export *help-database*))
+  (:export display-online-help)
+  (:import-from cl-utilities
+                split-sequence)
+  (:import-from sst-terminal-io
+                *message-window*
+                skip-line
+                restart-paging
+                clear-type-ahead-buffer
+                input-available-p
+                match-token
+                print-message
+                print-prompt
+                scan-input))
 
 (defpackage super-star-trek
   (:documentation "Super Star Trek ported to Common Lisp.")
@@ -200,7 +212,7 @@
                 unschedule
                 find-event)
   (:import-from sst-help
-                *help-database*)
+                display-online-help)
   (:import-from sst-terminal-io
                 +default-color+
                 +green+
