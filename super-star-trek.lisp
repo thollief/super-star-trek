@@ -2029,27 +2029,40 @@ range scan."
              (set-text-color *short-range-scan-window*  +default-color+)))
           (when (string= (aref *quadrant* i j) *ship*)
             (toggle-reverse-video *short-range-scan-window*)))
-        ;; TODO - put-short-range-scan-symbol
         (print-out *short-range-scan-window* (format nil "~A" (aref *quadrant* i j)))
         (set-text-color *short-range-scan-window*  +default-color+)
         (print-out *short-range-scan-window* " "))
       (print-out *short-range-scan-window* "  ")))
 
-(defun short-range-scan ()
+(defgeneric short-range-scan (output-window)
+  (:documentation "Display a short range scan in the specified window."))
 
-    (if (eql *short-range-scan-window* *message-window*)
-	(skip-line *short-range-scan-window*)
-	(clear-window *short-range-scan-window*))
+(defmethod short-range-scan ((output-window screen))
+  "Display a short range scan in a line by line format."
 
+  (skip-line output-window))
+
+(defmethod short-range-scan ((output-window window))
+  "Display a short range scan using curses commands."
+
+  (clear-window output-window))
+
+;; TODO - this uses lisp syntax to get the desired result but it seems like the wrong thing to
+;;        have the most important part of the scan done in an :after function.
+(defmethod short-range-scan :after ((output-window screen))
+  "Short range scan output for all window types. This is the informational part of the scan."
+
+  (when (or *dockedp*
+            (not (damagedp +short-range-sensors+)))
+    (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
+
+  ;; Print a short range scan header
   (if (damagedp +short-range-sensors+)
       (if *dockedp*
-          (print-out *short-range-scan-window* (format nil " [Using Base's sensors]~%"))
-          (print-out *short-range-scan-window* (format nil "  S.R. SENSORS DAMAGED!~%")))
-      (progn
-        (print-out *short-range-scan-window* (format nil "     SHORT-RANGE SCAN~%"))
-        (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
-        (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*))))
-  (print-out *short-range-scan-window* (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
+          (print-out output-window (format nil " [Using Base's sensors]~%"))
+          (print-out output-window (format nil "  S.R. SENSORS DAMAGED!~%")))
+      (print-out output-window (format nil "     SHORT-RANGE SCAN~%")))
+  (print-out output-window (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
   (do ((i 0 (1+ i)))
       ((>= i +quadrant-size+))
     (print-out *short-range-scan-window* (format nil "~2@A " (1+ i)))
@@ -2102,7 +2115,7 @@ scan. Long-range sensors can scan all adjacent quadrants."
 
   ;; If there is a short range scan window then update all the default windows
   (unless (eql *short-range-scan-window* *message-window*)
-    (short-range-scan)
+    (short-range-scan *short-range-scan-window*)
     (all-statuses)
     (long-range-scan)
     ;; In curses mode sensors work automatically. Call before updating the display, but only once
@@ -2399,7 +2412,8 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
       (if (> hit 0.005)
           (progn
             (unless (damagedp +short-range-sensors+)
-              (boom (coordinate-x e-coord) (coordinate-y e-coord)))
+              (boom *short-range-scan-window*
+                    (coord-ref *quadrant* e-coord) (coordinate-x e-coord) (coordinate-y e-coord)))
             (print-message *message-window* (format nil "~A unit hit on ~A at ~A~%" (truncate hit)
                                    (letter-to-name (coord-ref *quadrant* e-coord))
                                    (format-sector-coordinates e-coord))))
@@ -2829,58 +2843,6 @@ and return the x and y coordinates to which it was displaced."
              (distance torpedo-origin torpedo-coord)
              (abs (sin hit-angle))))))
 
-;; TODO - thise contains curses calls, put it in the terminal-io package?
-(defun put-short-range-scan-symbol (symbol x y) ; C: void put_srscan_sym(coord w, char sym)
-  "In curses mode, place the symbol at symbol-coord in the short range scan."
-
-  (unless (eql *short-range-scan-window* *message-window*)
-    (mvwaddstr (slot-value *short-range-scan-window* 'curses-window) (+ x 2) (+ (* y 2) 3) symbol)
-    (wrefresh (slot-value *short-range-scan-window* 'curses-window))))
-
-(defun turn-sound-on (frequency) ; C: not user-defined...
-  "Play a sound on the PC speaker at the specified frequency."
-
-  ;; TODO - implement this, probably by calling some OS routine or external library
-  (setf frequency frequency))
-
-(defun turn-sound-off ()
-  "Stop sound output."
-
-  ;; TODO - implement this, how does SDL do it?
-  )
-
-(defun warble () ; C: void warble(void)
-  "Sound and visual effects for mayday - ship teleportation"
-
-  ;; (short-range-scan) ; this was in the C source, is it needed here?
-  (turn-sound-on 50)
-  (print-message *message-window* "     . . . . .     " :print-slowly t)
-  (sleep 1)
-  (turn-sound-off))
-
-;; TODO - this contains curses calls, put it in the terminal-io package?
-(defun boom (x y) ; C: void boom(coord w)
-  "An enemy is destroyed - display a boom effect and make a boom noise. Called when an attack
-with phasers destroys an enemy."
-
-  (unless (eql *short-range-scan-window* *message-window*)
-    (turn-sound-on 500)
-    (wattron (slot-value *short-range-scan-window* 'curses-window) a_reverse)
-    (put-short-range-scan-symbol (aref *quadrant* x y) x y)
-    (sleep .5)
-    (set-text-color *short-range-scan-window* +default-color+)
-    (put-short-range-scan-symbol (aref *quadrant* x y) x y)
-    (sleep .3)
-    (wattron (slot-value *short-range-scan-window* 'curses-window) a_reverse)
-    (put-short-range-scan-symbol (aref *quadrant* x y) x y)
-    (sleep .3)
-    (set-text-color *short-range-scan-window* +default-color+)
-    (put-short-range-scan-symbol (aref *quadrant* x y) x y)
-    (sleep .3)
-    (turn-sound-off)
-    ;; A last short range scan seems to clear up artifacts from the boom sequence.
-    (short-range-scan)))
-
 ;; C: void tracktorpedo(coord w, int l, int i, int n, int iquad)
 (defgeneric track-torpedo (output-window
                            torp-x ; floating point x position
@@ -2929,18 +2891,20 @@ with phasers destroys an enemy."
           *dockedp*)
       (progn
         (when (= length-of-track 1)
-          (short-range-scan))
+          (short-range-scan output-window))
         (if (or (string= sector-contents +empty-sector+)
                 (string= sector-contents +black-hole+))
             ;; Pass over an empty sector. Black hole collisions are handled without effects.
             (progn
-              (put-short-range-scan-symbol +torpedo+ (round torp-x) (round torp-y))
+              (put-short-range-scan-symbol output-window +torpedo+
+                                           (round torp-x) (round torp-y))
               (turn-sound-on (* length-of-track 10))
               (sleep 1)
               (turn-sound-off)
-              (put-short-range-scan-symbol sector-contents (round torp-x) (round torp-y)))
+              (put-short-range-scan-symbol output-window
+                                           sector-contents (round torp-x) (round torp-y)))
             ;; Highlight an impact sector
-            (boom (round torp-x) (round torp-y))))
+            (boom output-window sector-contents (round torp-x) (round torp-y))))
       ;; Short range sensors are damaged but player gets a torpedo track output anyway
       (call-next-method *message-window* torp-x torp-y length-of-track torpedo-number
                         number-of-torpedoes-in-salvo sector-contents)))
@@ -8066,7 +8030,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (when *action-taken-p*
          (setf hit-me-p t)))
       ((string= command "srscan")
-       (short-range-scan))
+       (short-range-scan *short-range-scan-window*))
       ((string= command "status")
        (all-statuses))
       ((string= command "photons")

@@ -137,7 +137,12 @@
            restart-paging
            set-text-color
            toggle-reverse-video
-           track-torpedo))
+           track-torpedo
+           put-short-range-scan-symbol
+           boom
+           turn-sound-on
+           turn-sound-off
+           warble))
 
 (defpackage sst-events
   (:documentation "Event handling for Super Star Trek")
@@ -163,9 +168,6 @@
   (:use common-lisp common-lisp-user)
   (:import-from sbcl-support
                 define-constant)
-  (:import-from cl-charms/low-level
-                a_reverse
-                mvwaddstr waddch waddstr wattron wrefresh)
   (:import-from cl-utilities
                 split-sequence)
   (:import-from sst-coordinates
@@ -239,6 +241,11 @@
                 restart-paging
                 set-text-color
                 toggle-reverse-video
-                track-torpedo)
+                track-torpedo
+                put-short-range-scan-symbol
+                boom
+                turn-sound-on
+                turn-sound-off
+                warble)
   (:nicknames sst)
   (:export sst))
