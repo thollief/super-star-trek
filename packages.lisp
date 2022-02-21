@@ -25,7 +25,7 @@
 ;;;;    * Smarter computer, with multiple requests.
 ;;;;    * There is a small probility that a nova event will leave a black hole.
 ;;;;    * Multiple laser banks and beam spreading.
-;;;; 5. Black holes can warp you to another location in the galaxy
+;;;; 5. Black holes can warp you to another location in the galaxy. This should have low probability.
 ;;;; 7. Add an undock command
 
 ;;;; TODO - add quadrants to events - every event occurs in a quadrant
@@ -85,7 +85,8 @@
            distance
            format-coordinates
            format-sector-coordinates
-           format-quadrant-coordinates))
+           format-quadrant-coordinates
+           galaxy-sector-to-quadrant))
 
 (defpackage sst-terminal-io
   (:documentation "Read and write from terminals.")
@@ -204,7 +205,8 @@
                 distance
                 format-coordinates
                 format-sector-coordinates
-                format-quadrant-coordinates)
+                format-quadrant-coordinates
+                galaxy-sector-to-quadrant)
   (:import-from sst-events
                 +forever+
                 *future-events*

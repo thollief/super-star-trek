@@ -8,8 +8,8 @@
 ;; TODO - adjacency is a frequently used property of coordinate pairs. Add support for calculating
 ;;        it for any pair of coords?
 (defstruct coordinate ; C: coord
-  "A pair of coordinates in two dimensions. These are array indices, so one less that the
- coordinate values displayed to the player."
+  "A pair of coordinates in two dimensions. These are used as Lisp array indices, so one less
+ than the coordinate values displayed to the player."
 
   x
   y)
@@ -43,7 +43,7 @@ otherwise."))
 (defmacro coord-ref (array-name coord)
   "Use the coordinate struct to access a 2d array."
 
-  `(aref ,array-name (coordinate-x ,coord) (coordinate-y ,coord)))
+  `(aref ,array-name (round (coordinate-x ,coord)) (round (coordinate-y ,coord))))
 
 (defun valid-quadrant-p (x y) ; C: VALID_QUADRANT(x, y)
   "Return true if the quadrant coordinates are valid. These are array indices, not player
@@ -52,6 +52,7 @@ coordinates."
   (if (and x y
            (numberp x)
            (numberp y))
+      ;; TODO - make-quadrant-coordinate should fail if x and y are not valid
       (valid-p (make-quadrant-coordinate :x x :y y))
       (return-from valid-quadrant-p nil)))
 
@@ -62,6 +63,7 @@ coordinates."
   (if (and x y
            (numberp x)
            (numberp y))
+      ;; TODO - make-sector-coordinate should fail if x and y are not valid
       (valid-p (make-sector-coordinate :x x :y y))
       (return-from valid-sector-p nil)))
 
@@ -99,3 +101,7 @@ the supplied coordinates are valid for sectors."
 
   (format nil "Sector ~A" (format-coordinates c)))
 
+(defun galaxy-sector-to-quadrant (sector)
+  "Given a sector coordinate within the galaxy, return the corresponding quadrant coordinate."
+
+  (truncate (/ sector +quadrant-size+)))
