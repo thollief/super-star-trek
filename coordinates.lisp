@@ -105,3 +105,9 @@ the supplied coordinates are valid for sectors."
   "Given a sector coordinate within the galaxy, return the corresponding quadrant coordinate."
 
   (truncate (/ sector +quadrant-size+)))
+
+(defun galaxy-sector-to-local-sector (sector)
+  "Given a sector coordinate with the galaxy, return the corresponding sector coordinate in the
+current quadrant."
+
+  (rem sector +quadrant-size+))

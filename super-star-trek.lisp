@@ -388,6 +388,7 @@ the entity may continue moving indefinitely, until it exits the current sector (
 (defvar *crew* +full-crew+) ; C: crew, crew complement
 (defvar *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
 (defvar *casualties* 0) ; C: casual
+;; TODO - show brig free/capacity as part of the ship status
 (defvar *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
 (defvar *brig-free* 0 "room in the brig") ; C: brigfree
 (defvar *dilithium-crystals-on-board-p* nil) ; C: icrystl
@@ -2051,7 +2052,20 @@ range scan."
              (set-text-color *short-range-scan-window*  +default-color+)))
           (when (string= (aref *quadrant* i j) *ship*)
             (toggle-reverse-video *short-range-scan-window*)))
-        (print-out *short-range-scan-window* (format nil "~A" (aref *quadrant* i j)))
+        ;; Determine which symbol to display and then display it
+        (let ((symbol (aref *quadrant* i j)))
+          (when *probe*
+            ;; If the probe is in the current quadrant and in the sector to be displayed, and the
+            ;; sector it occupies is empty (including no black hole - probes get to avoid black
+            ;; holes) then display the probe symbol.
+            (when (and (coord-equal *ship-quadrant* (make-quadrant-coordinate
+                                                     :x (galaxy-sector-to-quadrant (probe-x *probe*))
+                                                     :y (galaxy-sector-to-quadrant (probe-y *probe*))))
+                       (= i (galaxy-sector-to-local-sector (probe-x *probe*)))
+                       (= j (galaxy-sector-to-local-sector (probe-y *probe*)))
+                       (string= symbol +empty-sector+))
+              (setf symbol +probe+)))
+          (print-out *short-range-scan-window* (format nil "~A" symbol)))
         (set-text-color *short-range-scan-window*  +default-color+)
         (print-out *short-range-scan-window* " "))
       (print-out *short-range-scan-window* "  ")))
@@ -2087,7 +2101,7 @@ range scan."
   (print-out output-window (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
   (do ((i 0 (1+ i)))
       ((>= i +quadrant-size+))
-    (print-out *short-range-scan-window* (format nil "~2@A " (1+ i)))
+    (print-out output-window (format nil "~2@A " (1+ i)))
     (do ((j 0 (1+ j)))
         ((>= j +quadrant-size+))
       (sector-scan i j))
@@ -2096,9 +2110,9 @@ range scan."
     ;; appropriate game status on the current line).
     (if (eql *short-range-scan-window* *message-window*)
         (progn
-          (print-out *short-range-scan-window* " ")
+          (print-out output-window " ")
           (ship-status (1+ i)))
-        (skip-line *short-range-scan-window*))))
+        (skip-line output-window))))
 
 (defun long-range-scan ()
   "Scan the galaxy using long-range sensors and update the star chart. Display the results of the
@@ -7918,8 +7932,8 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
     (setf command (match-token (scan-input) commands))
     ;; In windowed mode commands are lost when the prompt window is refreshed.
     (unless (eql *prompt-window* *message-window*)
-      (print-message *message-window* (format nil "Stardate ~A: ~A~A~%"
-                             (format-stardate *stardate*) command (format-input-items))))
+      (print-message *message-window* (format nil "COMMAND: ~A~A~%"
+                                              command (format-input-items))))
     ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak mayday
     (cond
       ((string= command "abandon")

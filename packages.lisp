@@ -86,7 +86,8 @@
            format-coordinates
            format-sector-coordinates
            format-quadrant-coordinates
-           galaxy-sector-to-quadrant))
+           galaxy-sector-to-quadrant
+           galaxy-sector-to-local-sector))
 
 (defpackage sst-terminal-io
   (:documentation "Read and write from terminals.")
@@ -206,7 +207,8 @@
                 format-coordinates
                 format-sector-coordinates
                 format-quadrant-coordinates
-                galaxy-sector-to-quadrant)
+                galaxy-sector-to-quadrant
+                galaxy-sector-to-local-sector)
   (:import-from sst-events
                 +forever+
                 *future-events*
