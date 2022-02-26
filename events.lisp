@@ -4,6 +4,7 @@
 
 (define-constant +number-of-events+ 12)   ; C: NEVENTS
 
+(defvar *stardate* 0.0) ; C: double date
 ;; TODO - make future-events a list ordered by date, and then define scheduling functions that use
 ;; the list data structure
 ;; TODO - can *future-events* not be exported?
@@ -32,6 +33,15 @@
 
   (when (is-scheduled-p event)
     (setf (aref *future-events* event) (+ (aref *future-events* event) offset))))
+
+(defun schedule-event (event-type offset)
+  "Schedule an event of the specific type to occur offset time units in the future. Return the
+ event. This isn't a real event queue a la BSD Trek yet -- you can only have one event of each
+ type active at any given time.  Mostly these means we can only have one FDISTR/FENSLV/FREPRO
+ sequence going at any given time; BSD Trek, from which we swiped the idea, can have up to 5."
+
+  (setf (aref *future-events* event-type) (+ *stardate* offset))
+  (return-from schedule-event (aref *future-events* event-type)))
 
 (defun unschedule-event (event) ; C: event *unschedule(int evtype)
   "Remove an event from the schedule."

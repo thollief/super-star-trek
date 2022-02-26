@@ -466,7 +466,6 @@ the entity may continue moving indefinitely, until it exits the current sector (
 (defvar *initial-time* 0.0) ; C: intime
 (defvar *remaining-time* 0.0) ; C: remtime
 (defvar *initial-stardate* 0.0) ; C: indate
-(defvar *stardate* 0.0) ; C: double date
 
 (defvar *damage-factor* 0.0 "Damage modifier based on skill level") ; C: damfac
 
@@ -1421,15 +1420,6 @@ Return true on successful move."
     (if *probe*
         (schedule-event +move-deep-space-probe+ 0.01)
         (unschedule-event +move-deep-space-probe+))))
-
-(defun schedule-event (event-type offset)
-  "Schedule an event of the specific type to occur offset time units in the future. Return the
- event. This isn't a real event queue a la BSD Trek yet -- you can only have one event of each
- type active at any given time.  Mostly these means we can only have one FDISTR/FENSLV/FREPRO
- sequence going at any given time; BSD Trek, from which we swiped the idea, can have up to 5."
-
-  (setf (aref *future-events* event-type) (+ *stardate* offset))
-  (return-from schedule-event (aref *future-events* event-type)))
 
 ;; TODO - implement an ordered event queue and get-next-event to remove an item from the queue for
 ;;        processing. schedule-event is the enqueue function and unschedule-event is the dequeue
