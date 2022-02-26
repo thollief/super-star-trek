@@ -157,6 +157,9 @@
                 define-constant)
   (:export *stardate*
            *future-events*
+           event
+           event-date
+           event-quadrant
            initialize-events
            scheduled-for
            is-scheduled-p
@@ -214,6 +217,9 @@
   (:import-from sst-events
                 *stardate*
                 *future-events*
+                event
+                event-date
+                event-quadrant
                 initialize-events
                 scheduled-for
                 is-scheduled-p

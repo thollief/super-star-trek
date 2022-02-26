@@ -4,7 +4,16 @@
 
 (define-constant +number-of-events+ 12)   ; C: NEVENTS
 
-(defvar *stardate* 0.0) ; C: double date
+(defvar *stardate* 0.0  ; C: double date
+  "A counter for the passage of time. The meaning of stardates is not consistent in canonical
+media, but presentation is always 4 or 5 digits followed by a decimal point and a single digit.")
+
+;; TODO - the C source only used the quadrant in the event struct for planet conquest but most
+;;        events do occur in a quadrant. Update event handling to add quadrants to all events?
+(defstruct event
+  date ; stardate when event will occur
+  quadrant) ; coordinates of the quadrant where the event will occur
+
 ;; TODO - make future-events a list ordered by date, and then define scheduling functions that use
 ;; the list data structure
 ;; TODO - can *future-events* not be exported?
@@ -21,7 +30,7 @@
 (defun scheduled-for (event) ; C: scheduled(int evtype)
   "When will this event happen?"
 
-  (aref *future-events* event))
+  (event-date (aref *future-events* event)))
 
 (defun is-scheduled-p (event) ; C: is_scheduled(int evtype)
   "Is an event of the specified type scheduled."
@@ -29,19 +38,19 @@
   (aref *future-events* event))
 
 (defun postpone-event (event offset) ; C: postpone(int evtype, double offset)
-  "Postpone a scheduled event."
+  "Postpone a scheduled event by offset stardates."
 
   (when (is-scheduled-p event)
-    (setf (aref *future-events* event) (+ (aref *future-events* event) offset))))
+    (incf (event-date (aref *future-events* event)) offset)))
 
-(defun schedule-event (event-type offset)
-  "Schedule an event of the specific type to occur offset time units in the future. Return the
- event. This isn't a real event queue a la BSD Trek yet -- you can only have one event of each
- type active at any given time.  Mostly these means we can only have one FDISTR/FENSLV/FREPRO
- sequence going at any given time; BSD Trek, from which we swiped the idea, can have up to 5."
+(defun schedule-event (event-type offset &optional (quadrant nil))
+  "Schedule an event of the specific type to occur offset time units in the future. This isn't a
+ real event queue a la BSD Trek yet -- you can only have one event of each type active at any
+ given time.  Mostly these means we can only have one FDISTR/FENSLV/FREPRO sequence going at any
+ given time; BSD Trek, from which we swiped the idea, can have up to 5."
 
-  (setf (aref *future-events* event-type) (+ *stardate* offset))
-  (return-from schedule-event (aref *future-events* event-type)))
+  (setf (aref *future-events* event-type) (make-event :date (+ *stardate* offset)
+                                                      :quadrant quadrant)))
 
 (defun unschedule-event (event) ; C: event *unschedule(int evtype)
   "Remove an event from the schedule."

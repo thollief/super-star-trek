@@ -342,13 +342,6 @@ be tracked."
 (define-constant +inhabited-world-is-enslaved+ 10) ; C: FENSLV
 (define-constant +klingons-build-ship-in-enslaved-system+ 11) ; C: FREPRO
 
-;; TODO - the C source only used the quadrant in the event struct for planet conquest but most
-;;        events do occur in a quadrant. Update event handling to add quadrants to all events?
-;;(defstruct event
-;;  date ; stardate when event will occur
-;;  quadrant) ; coordinates of quadrant where event will occur
-(defvar *conquest-quadrant* nil "Location of planet where the distress/enslave/reproduce events occur.")
-
 (define-constant +sst-version+ "SST 2.0") ; C: SSTMAGIC
 
 ;; User-selectable game parameters.
@@ -1459,9 +1452,9 @@ tractor-beamed the ship then the other will not."
     (do ((l 0 (1+ l)))
         ((>= l (length *future-events*)))
       (when (and (aref *future-events* l) ; The event must be non-nil for the < comparison
-                 (< (aref *future-events* l) smallest-next-date))
+                 (< (event-date (aref *future-events* l)) smallest-next-date))
         (setf event-code l)
-        (setf smallest-next-date (aref *future-events* l))))
+        (setf smallest-next-date (event-date (aref *future-events* l)))))
     (setf execution-time (- smallest-next-date *stardate*))
     (when *cloakedp*
       (decf *ship-energy* (* execution-time 500.0)) ; cloaking uses energy!
@@ -1742,7 +1735,7 @@ tractor-beamed the ship then the other will not."
       ;; Move deep space probe
       ((= event-code +move-deep-space-probe+)
        (move-deep-space-probe)
-       ;; The player targeted their own quadrant with an armed probe
+       ;; Check if the player targeted their own quadrant with an armed probe
        (when (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
          (return-from process-events nil)))
       ;; Inhabited system issues distress call
@@ -1757,7 +1750,25 @@ tractor-beamed the ship then the other will not."
               (candidate-quadrant nil))
              ((or (> i 100)
                   candidate-quadrant)
-              (setf *conquest-quadrant* candidate-quadrant))
+              (when candidate-quadrant
+                ;; got one!! Schedule its enslavement
+                (schedule-event +inhabited-world-is-enslaved+
+                                (expran *initial-time*)
+                                candidate-quadrant)
+                (setf (planet-status candidate-planet) 'distressed)
+                (rplacd (assoc candidate-quadrant *planets* :test #'coord-equal) candidate-planet)
+                ;; tell the captain about it if we can
+                (when (subspace-radio-available-p)
+                  (print-message
+                   *message-window*
+                   (format nil "~%Lt. Uhura- \"Captain, ~A in ~A reports it is under attack~%"
+                           (planet-name candidate-planet)
+                           (format-quadrant-coordinates candidate-quadrant)))
+                  (print-message
+                   *message-window*
+                   (format nil "            by a Klingon invasion fleet.\"~%"))
+                  (when (cancel-rest-p)
+                    (return-from process-events nil)))))
            (setf candidate-quadrant (get-random-quadrant))
            (setf candidate-planet
                  (rest (assoc candidate-quadrant *planets* :test #'coord-equal)))
@@ -1767,70 +1778,57 @@ tractor-beamed the ship then the other will not."
                         (eql (planet-status candidate-planet) 'secure)
                         (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
                         (> (quadrant-klingons (coord-ref *galaxy* candidate-quadrant)) 0))
-             (setf candidate-quadrant nil)))
-         (when *conquest-quadrant*
-           ;; got one!!  Schedule its enslavement
-           (schedule-event +inhabited-world-is-enslaved+ (expran *initial-time*))
-           (setf (planet-status candidate-planet) 'distressed)
-           (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
-                   candidate-planet)
-           ;; tell the captain about it if we can
-           (when (subspace-radio-available-p)
-             (print-message *message-window* (format nil "~%Lt. Uhura- \"Captain, ~A in ~A reports it is under attack~%"
-                                    (planet-name candidate-planet)
-                                    (format-quadrant-coordinates *conquest-quadrant*)))
-             (print-message *message-window* (format nil "            by a Klingon invasion fleet.\"~%"))
-             (when (cancel-rest-p)
-               (return-from process-events nil))))))
+             (setf candidate-quadrant nil)))))
       ;; Starsystem is enslaved
       ((= event-code +inhabited-world-is-enslaved+)
-       (unschedule-event +inhabited-world-is-enslaved+)
-       (let ((conquest-planet
-               (rest (assoc *conquest-quadrant* *planets* :test #'coord-equal))))
+       (let ((conquest-quadrant (event-quadrant (find-event +inhabited-world-is-enslaved+)))
+             conquest-planet)
+         (setf conquest-planet (rest (assoc conquest-quadrant *planets* :test #'coord-equal)))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
          ;; see if current distress call still active
-         (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
+         (if (> (quadrant-klingons (coord-ref *galaxy* conquest-quadrant)) 0)
              (progn
                (setf (planet-status conquest-planet) 'enslaved)
-               (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
-                       conquest-planet)
+               (rplacd (assoc conquest-quadrant *planets* :test #'coord-equal) conquest-planet)
                ;; play stork and schedule the first baby
                (schedule-event +klingons-build-ship-in-enslaved-system+
-                               (expran (* 2.0 *initial-time*)))
+                               (expran (* 2.0 *initial-time*))
+                               conquest-quadrant)
                ;; report the disaster if we can
                (when (subspace-radio-available-p)
                  (print-message *message-window*
                   (format nil "Lt. Uhura- \"We've lost contact with starsystem ~A in ~A.\""
                           (planet-name conquest-planet)
-                          (format-quadrant-coordinates *conquest-quadrant*)))))
+                          (format-quadrant-coordinates conquest-quadrant)))))
              (progn
-               (setf (planet-status *conquest-quadrant*) 'secure)
-               (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
-                       conquest-planet)
-               (setf *conquest-quadrant* nil)))))
+               (setf (planet-status conquest-planet) 'secure)
+               (rplacd (assoc conquest-quadrant *planets* :test #'coord-equal) conquest-planet))))
+       (unschedule-event +inhabited-world-is-enslaved+))
       ;; Klingon reproduces
       ((= event-code +klingons-build-ship-in-enslaved-system+)
-       (let ((conquest-planet
-               (rest (assoc *conquest-quadrant* *planets* :test #'coord-equal)))
+       (let ((conquest-quadrant (event-quadrant (find-event
+                                                 +klingons-build-ship-in-enslaved-system+)))
+             conquest-planet
              (build-quadrant nil))
+         (setf conquest-planet (rest (assoc conquest-quadrant *planets* :test #'coord-equal)))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
          ;; see if current distress call still active
-         (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
+         (if (> (quadrant-klingons (coord-ref *galaxy* conquest-quadrant)) 0)
              (progn
                (schedule-event +klingons-build-ship-in-enslaved-system+ (* 1.0 *initial-time*))
                (unless (>= *remaining-klingons* +max-klingons-per-game+) ; full right now
                  ;; reproduce one Klingon
-                 (if (< (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*))
+                 (if (< (quadrant-klingons (coord-ref *galaxy* conquest-quadrant))
                         +max-klingons-per-quadrant+)
-                     (setf build-quadrant *conquest-quadrant*)
+                     (setf build-quadrant conquest-quadrant)
                      (progn ; this quadrant not ok, pick an adjacent one
                        ;; TODO - avoid favoring the top left quadrant by randomly selecting an
                        ;;        adjacent quadrant from a list of eligible quadrants
-                       (do ((i (1- (coordinate-x *conquest-quadrant*)) (1+ i)))
-                           ((or (> i (1+ (coordinate-x *conquest-quadrant*)))
+                       (do ((i (1- (coordinate-x conquest-quadrant)) (1+ i)))
+                           ((or (> i (1+ (coordinate-x conquest-quadrant)))
                                 build-quadrant))
-                         (do ((j (1- (coordinate-y *conquest-quadrant*)) (1+ j)))
-                             ((or (> j (1+ (coordinate-y *conquest-quadrant*)))
+                         (do ((j (1- (coordinate-y conquest-quadrant)) (1+ j)))
+                             ((or (> j (1+ (coordinate-y conquest-quadrant)))
                                   build-quadrant))
                            (when (and (valid-quadrant-p i j)
                                       (< (quadrant-klingons (aref *galaxy* i j)) +max-klingons-per-quadrant+)
@@ -1838,9 +1836,8 @@ tractor-beamed the ship then the other will not."
                              (setf build-quadrant (make-quadrant-coordinate :x i :y j)))))))
                  (when build-quadrant
                    ;; deliver the child
-                   (setf *remaining-klingons* (1+ *remaining-klingons*))
-                   (setf (quadrant-klingons (coord-ref *galaxy* build-quadrant))
-                         (1+ (quadrant-klingons (coord-ref *galaxy* build-quadrant))))
+                   (incf *remaining-klingons* 1)
+                   (incf (quadrant-klingons (coord-ref *galaxy* build-quadrant)) 1)
                    (when (coord-equal *ship-quadrant* build-quadrant)
                      (incf *enemies-here* 1)
                      (incf *klingons-here* 1)
@@ -1853,27 +1850,21 @@ tractor-beamed the ship then the other will not."
                                          :sector-coordinates coordinates)))
                      (sort-klingons))
                    ;; recompute time left (ported directly from the C source)
-                   (setf *remaining-time* (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
-                                              (/ *remaining-resources* (+ *remaining-klingons*
-                                                                          (* 4 (length *commander-quadrants*))))
-                                              99))
+                   (setf *remaining-time*
+                         (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
+                             (/ *remaining-resources* (+ *remaining-klingons*
+                                                         (* 4 (length *commander-quadrants*))))
+                             99))
                    ;; report the disaster if we can
                    (cond
                      ((and (coord-equal *ship-quadrant* build-quadrant)
                            (not (damagedp +short-range-sensors+)))
-                      (print-message *message-window*
-                       (format nil "Spock- sensors indicate the Klingons have launched a warship from ~A."
-                               (planet-name conquest-planet))))
+                      (print-message *message-window* (format nil "Spock- sensors indicate the Klingons have launched a warship from ~A." (planet-name conquest-planet))))
                      ((subspace-radio-available-p)
-                      (print-message *message-window*
-                       (format nil "Lt. Uhura- Starfleet reports increased Klingon activity near ~A in ~A."
-                               (planet-name conquest-planet)
-                               (format-quadrant-coordinates build-quadrant))))))))
+                      (print-message *message-window* (format nil "Lt. Uhura- Starfleet reports increased Klingon activity near ~A in ~A." (planet-name conquest-planet) (format-quadrant-coordinates build-quadrant))))))))
            (progn
              (setf (planet-status conquest-planet) 'secure)
-             (rplacd (assoc *conquest-quadrant* *planets* :test #'coord-equal)
-                     conquest-planet)
-             (setf *conquest-quadrant* nil))))))))
+             (rplacd (assoc conquest-quadrant *planets* :test #'coord-equal) conquest-planet))))))))
 
 (defun damaged-device-count ()
   "Return the number of damaged devices."
@@ -7324,7 +7315,6 @@ it's your problem."
     (setf sst-terminal-io::*line-tokens* (read s))
     (setf *ship-quadrant* (read s))
     (setf *ship-sector* (read s))
-    (setf *conquest-quadrant* (read s))
     (setf *tournament-number* (read s))
     (setf *game-length* (read s))
     (setf *skill-level* (read s))
@@ -7439,7 +7429,6 @@ loop, in effect continuously saving the current state of the game."
     (print sst-terminal-io::*line-tokens* s)
     (print *ship-quadrant* s)
     (print *ship-sector* s)
-    (print *conquest-quadrant* s)
     (print *tournament-number* s)
     (print *game-length* s)
     (print *skill-level* s)
