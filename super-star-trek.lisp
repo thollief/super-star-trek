@@ -1002,11 +1002,15 @@ affected."
           *just-in-p*)
       ;; It isn't here, or we just entered (treat as enroute)
       (when (subspace-radio-available-p)
-        (print-message *message-window* (format nil "~%Message from Starfleet Command       Stardate ~A~%"
+        (print-message *message-window*
+                       (format nil "~%Message from Starfleet Command       Stardate ~A~%"
                                (format-stardate *stardate*)))
         (print-message *message-window* (format nil "     Supernova in ~A; caution advised.~%"
                                (format-quadrant-coordinates nova-quadrant))))
       ;; we are in the quadrant!
+      ;; TODO - emergency override should fail if ship is cloaked when a random supernova occurs
+      ;;        in the current quadrant - warp engines cannot be used while cloaked and it takes
+      ;;        time to uncloak
       (progn
         (print-message *message-window* (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
         (print-message *message-window* (format nil "~%***Incipient supernova detected at ~A~%"
@@ -3456,7 +3460,7 @@ not damaged or if the ship is docked, and the ship is not cloaked."
 
   (let ((action 'none)
         input-item)
-    (unless (input-available-p)
+    (when (input-available-p)
       (setf input-item (scan-input)))
     (when (numberp input-item)
       (return-from cloak nil))
