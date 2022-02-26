@@ -1581,6 +1581,7 @@ the short-range sensors are out.
 This command is currently less useful that the Short Range Scan even when the
 short range sensors are damaged because the short range scan always shows all
 sectors immediately adjacent to the ship.")
+
                                     (cons "windows"
 "Toggle Windowed Display
 
@@ -1593,7 +1594,7 @@ between the two forms of display.
 
 This command clears the display, so existing narrative is also cleared.
 
-Win32 displays are always line-by-line.")
+Win32 displays are always line-by-line."))
 
   "An alist of help keywords and information. The keywords should be lowercase. Keywords are
 taken from the user command by the same parser as regular game commands so the same restrictions

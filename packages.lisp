@@ -155,13 +155,12 @@
   (:use common-lisp common-lisp-user)
   (:import-from sbcl-support
                 define-constant)
-  (:export +forever+
-           *future-events*
+  (:export *future-events*
            initialize-events
            scheduled-for
            is-scheduled-p
            postpone-event
-           unschedule
+           unschedule-event
            find-event))
 
 (defpackage sst-help
@@ -211,13 +210,12 @@
                 galaxy-sector-to-quadrant
                 galaxy-sector-to-local-sector)
   (:import-from sst-events
-                +forever+
                 *future-events*
                 initialize-events
                 scheduled-for
                 is-scheduled-p
                 postpone-event
-                unschedule
+                unschedule-event
                 find-event)
   (:import-from sst-help
                 display-online-help)

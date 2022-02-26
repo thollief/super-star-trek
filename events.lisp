@@ -2,8 +2,6 @@
 
 (in-package sst-events)
 
-;; TODO this is a suspicious constant, can it be removed from the code?
-(define-constant +forever+ 1e30)
 (define-constant +number-of-events+ 12)   ; C: NEVENTS
 
 ;; TODO - make future-events a list ordered by date, and then define scheduling functions that use
