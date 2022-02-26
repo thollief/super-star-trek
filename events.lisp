@@ -35,7 +35,7 @@
   (when (is-scheduled-p event)
     (setf (aref *future-events* event) (+ (aref *future-events* event) offset))))
 
-(defun unschedule (event) ; C: event *unschedule(int evtype)
+(defun unschedule-event (event) ; C: event *unschedule(int evtype)
   "Remove an event from the schedule."
 
   (setf (aref *future-events* event) nil))

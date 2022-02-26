@@ -1022,8 +1022,8 @@ affected."
           (setf *all-done-p* t))))
   (when (and *base-under-attack-quadrant*
              (coord-equal nova-quadrant *base-under-attack-quadrant*))
-    (unschedule +super-commander-destroys-base+)
-    (unschedule +commander-destroys-base+)
+    (unschedule-event +super-commander-destroys-base+)
+    (unschedule-event +commander-destroys-base+)
     (setf *base-under-attack-quadrant* nil))
   ;; Destroy any Klingons in supernovaed quadrant
   ;; and count down the number of remaining klingons as they are removed
@@ -1034,7 +1034,7 @@ affected."
     (setf *super-commander-quadrant* nil)
     (setf *super-commander-attacking-base* 'not-attacking)
     (setf *super-commander-attack-enterprise-p* nil)
-    (unschedule +move-super-commander+)
+    (unschedule-event +move-super-commander+)
     (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant))
           (1- (quadrant-klingons (coord-ref *galaxy* nova-quadrant))))
     (setf *remaining-klingons* (1- *remaining-klingons*)))
@@ -1045,9 +1045,9 @@ affected."
     (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant))
           (1- (quadrant-klingons (coord-ref *galaxy* nova-quadrant))))
     (when (= (length *commander-quadrants*) 0)
-      (unschedule +tractor-beam+)
-      (unschedule +commander-attacks-base+)
-      (unschedule +commander-destroys-base+)))
+      (unschedule-event +tractor-beam+)
+      (unschedule-event +commander-attacks-base+)
+      (unschedule-event +commander-destroys-base+)))
   (decf *remaining-klingons* (quadrant-klingons (coord-ref *galaxy* nova-quadrant)))
   (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 0)
   ;; destroy Romulans and planets in supernovaed quadrant
@@ -1202,7 +1202,7 @@ Return true on successful move."
     (setf *super-commander-attacking-base* 'not-attacking)
     (setf *super-commanders-here* 0)
     (setf *attempted-escape-from-super-commander-p* nil)
-    (unschedule +super-commander-destroys-base+)
+    (unschedule-event +super-commander-destroys-base+)
     (do ((i 0 (1+ i)))
         ((or (>= i *enemies-here*)
              (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
@@ -1254,7 +1254,7 @@ Return true on successful move."
         (progn
           (when (= (length *base-quadrants*) 0)
             ;; Nothing left to do
-            (unschedule +move-super-commander+)
+            (unschedule-event +move-super-commander+)
             (return-from move-super-commander nil))
           (let ((candidate-bases ()) ; Candidates for attack
                 (commander-at-closest-p t)
@@ -1322,7 +1322,7 @@ Return true on successful move."
                 (move-super-commander-one-quadrant destination-quadrant avoidp))))))
     ;; Check for a base
     (if (= (length *base-quadrants*) 0)
-        (unschedule +move-super-commander+)
+        (unschedule-event +move-super-commander+)
         (dolist (bq *base-quadrants*)
           ;; TODO - if  *base-under-attack-quadrant* refers to commander actions then it would
           ;;        appear that the super-commander only attacks bases already under attack
@@ -1420,7 +1420,7 @@ Return true on successful move."
       (setf *probe* nil))
     (if *probe*
         (schedule-event +move-deep-space-probe+ 0.01)
-        (unschedule +move-deep-space-probe+))))
+        (unschedule-event +move-deep-space-probe+))))
 
 (defun schedule-event (event-type offset)
   "Schedule an event of the specific type to occur offset time units in the future. Return the
@@ -1615,9 +1615,9 @@ tractor-beamed the ship then the other will not."
        ;;        incorrectly return true if there are no commanders remaining.
        (if (= (length *commander-quadrants*) 0)
            (progn
-             (unschedule +tractor-beam+)
-             (unschedule +commander-attacks-base+)
-             (unschedule +commander-destroys-base+))
+             (unschedule-event +tractor-beam+)
+             (unschedule-event +commander-attacks-base+)
+             (unschedule-event +commander-destroys-base+))
            (let ((commander-index 0)) ; default to the first commander in the list
              ;; Select a random commander if there is a choice of more than one
              (when (> (length *commander-quadrants*) 1)
@@ -1639,9 +1639,9 @@ tractor-beamed the ship then the other will not."
                      (setf finish-date (+ *stardate* *time-taken-by-current-operation*)))
                    (if (= (length *commander-quadrants*) 0)
                        (progn
-                         (unschedule +tractor-beam+)
-                         (unschedule +commander-attacks-base+)
-                         (unschedule +commander-destroys-base+))
+                         (unschedule-event +tractor-beam+)
+                         (unschedule-event +commander-attacks-base+)
+                         (unschedule-event +commander-destroys-base+))
                        (schedule-event +tractor-beam+ (+ *time-taken-by-current-operation*
                                                          (expran (/ (* 1.5 *initial-time*)
                                                                     (length *commander-quadrants*)))))))))))
@@ -1674,8 +1674,8 @@ tractor-beamed the ship then the other will not."
                (= (length *base-quadrants*) 0))
            (progn
              ;; no can do
-             (unschedule +commander-attacks-base+)
-             (unschedule +commander-destroys-base+))
+             (unschedule-event +commander-attacks-base+)
+             (unschedule-event +commander-destroys-base+))
            ;; Look for a base quadrant that has a commander in it, as long as the commander is not
            ;; the super-commander and the quadrant is not the current ship quadrant.
            ;; TODO - these loops might be replaceable with find
@@ -1714,10 +1714,10 @@ tractor-beamed the ship then the other will not."
                  (progn
                    ;; no match found -- try later
                    (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*)))
-                   (unschedule +commander-destroys-base+))))))
+                   (unschedule-event +commander-destroys-base+))))))
       ;; Super-Commander destroys base
       ((= event-code +super-commander-destroys-base+)
-       (unschedule +super-commander-destroys-base+)
+       (unschedule-event +super-commander-destroys-base+)
        ;; TODO - The logic below would seem to leave the super-commander in a "destroying a base"
        ;;        state if, for some reason, there is no base to destroy
        (setf *super-commander-attacking-base* 'destroying)
@@ -1726,7 +1726,7 @@ tractor-beamed the ship then the other will not."
          (setf *super-commander-attacking-base* 'not-attacking)))
       ;; Commander succeeds in destroying base
       ((= event-code +commander-destroys-base+)
-       (unschedule +commander-destroys-base+)
+       (unschedule-event +commander-destroys-base+)
        ;; TODO - do commanders actually destroy bases? Test the game. The original C code seemed
        ;;        to engage in pointless loops and if statements, specifically, determining if there
        ;;        was a commander present to destroy the base, if there were any bases at all, if there
@@ -1753,7 +1753,7 @@ tractor-beamed the ship then the other will not."
          (return-from process-events nil)))
       ;; Inhabited system issues distress call
       ((= event-code +distress-call-from-inhabited-world+)
-       (unschedule +distress-call-from-inhabited-world+)
+       (unschedule-event +distress-call-from-inhabited-world+)
        (let (candidate-planet)
          ;; Try a whole bunch of times to find something suitable.
          ;; TODO - or just make a list of candidate planets/quadrants, randomly select one, and then
@@ -1790,7 +1790,7 @@ tractor-beamed the ship then the other will not."
                (return-from process-events nil))))))
       ;; Starsystem is enslaved
       ((= event-code +inhabited-world-is-enslaved+)
-       (unschedule +inhabited-world-is-enslaved+)
+       (unschedule-event +inhabited-world-is-enslaved+)
        (let ((conquest-planet
                (rest (assoc *conquest-quadrant* *planets* :test #'coord-equal))))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
@@ -2244,7 +2244,7 @@ scan. Long-range sensors can scan all adjacent quadrants."
      (decf *klingons-here* 1)
      (decf *commanders-here* 1)
      (setf *commander-quadrants* (remove *ship-quadrant* *commander-quadrants* :test #'coord-equal))
-     (unschedule +tractor-beam+)
+     (unschedule-event +tractor-beam+)
      (when (> (length *commander-quadrants*) 0)
        (schedule-event +tractor-beam+ (expran (/ *initial-commanders* (length *commander-quadrants*))))))
 
@@ -2261,8 +2261,8 @@ scan. Long-range sensors can scan all adjacent quadrants."
      (setf *super-commander-quadrant* nil)
      (setf *super-commander-attacking-base* 'not-attacking)
      (setf *super-commander-attack-enterprise-p* nil)
-     (unschedule +move-super-commander+)
-     (unschedule +super-commander-destroys-base+)))
+     (unschedule-event +move-super-commander+)
+     (unschedule-event +super-commander-destroys-base+)))
 
   ;; For each kind of enemy, finish message to player
   (print-message *message-window* (format nil " destroyed.~%"))
@@ -2282,7 +2282,7 @@ scan. Long-range sensors can scan all adjacent quadrants."
     (when (and (is-scheduled-p +commander-destroys-base+)
                (coord-equal *base-under-attack-quadrant* *ship-quadrant*)
                (string= enemy +commander+))
-      (unschedule +commander-destroys-base+))
+      (unschedule-event +commander-destroys-base+))
     (do ((i 0 (1+ i))) ; find the enemy sector
         ((or (> i *enemies-here*)
              (coord-equal (enemy-sector-coordinates (aref *quadrant-enemies* i)) enemy-coord))
@@ -4756,8 +4756,8 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
           (when (> *remaining-super-commanders* 0)
             (schedule-event +move-super-commander+ 0.2777))
           (setf *super-commander-attacking-base* 'not-attacking)
-          (unschedule +commander-destroys-base+)
-          (unschedule +super-commander-destroys-base+)
+          (unschedule-event +commander-destroys-base+)
+          (unschedule-event +super-commander-destroys-base+)
           (setf *base-under-attack-quadrant* nil)
           (cond
             ;; Make sure Galileo is consistent -- Snapshot may have been taken when on planet,
@@ -4940,7 +4940,7 @@ object then it waits, in case the player helpfully removes the blocking object."
           (setf *attempted-escape-from-super-commander-p* nil)
           (setf *super-commander-attacking-base* 'not-attacking)
           (schedule-event +move-super-commander+ 0.2777)
-          (unschedule +super-commander-destroys-base+)
+          (unschedule-event +super-commander-destroys-base+)
           (setf *super-commander-quadrant* destination-quadrant))
         (progn
           (setf *commander-quadrants* (remove *ship-quadrant* *commander-quadrants* :test #'coord-equal))
