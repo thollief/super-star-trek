@@ -124,6 +124,7 @@
            *score-window*
            initialize-windows
            clean-up-windows
+           toggle-windows
            clear-window
            get-input-line
            scan-input
@@ -242,6 +243,7 @@
                 *score-window*
                 initialize-windows
                 clean-up-windows
+                toggle-windows
                 clear-window
                 get-input-line
                 scan-input

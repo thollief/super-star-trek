@@ -45,6 +45,91 @@ output location if no function-specific window is available.")
   ;; Remove this cleanup function from the exit hooks
   (delete '(clean-up-windows) sb-ext:*exit-hooks*))
 
+(defun set-up-curses-windows ()
+    "Set up curses mode and the window variables used within it. All windows variables reference
+ separate gameplay windows if there is space for them on the screen."
+
+  (keypad *stdscr* true) ; Assume the terminal has a keypad and function keys
+  (nonl)
+  (cbreak)
+  (when (has-colors)
+    (start-color)
+    (init-pair color_black color_black color_black)
+    (init-pair color_green color_green color_black)
+    (init-pair color_red color_red color_black)
+    (init-pair color_cyan color_cyan color_black)
+    (init-pair color_white color_white color_black)
+    (init-pair color_magenta color_magenta color_black)
+    (init-pair color_blue color_blue color_black)
+    (init-pair color_yellow color_yellow color_black))
+  (wclear *stdscr*)
+  (wmove *stdscr* 0 0)
+  (wrefresh *stdscr*)
+  ;; After this point use curses window functions, not *stdscr* functions.
+
+  ;; In curses/window mode these windows are always created because they fit the minimum
+  ;; space required for windowed mode: short range scan, status, long range scan, game
+  ;; status, message, prompt. If more rows/columns are available then more windows are
+  ;; created. All output that doesn't go to a specific window is displayed in the message
+  ;;window.
+  ;;
+  ;; TODO - name all these constants that define window position and size?
+  (setf *short-range-scan-window*
+        (make-instance 'window :height 12 :width 24 :curses-window (newwin 12 24 0 0)))
+  (setf *ship-status-window*
+        (make-instance 'window :height 10 :width 36 :curses-window (newwin 10 36 2 24)))
+  (setf *long-range-scan-window*
+        (make-instance 'window :height 5 :width 19 :curses-window (newwin 5 19 0 60)))
+  (setf *game-status-window*
+        (make-instance 'window :height 3 :width 19 :curses-window (newwin 3 19 8 60)))
+  (setf *prompt-window*
+        (make-instance 'window :height 1 :width *cols*
+                               :curses-window (newwin 1 *cols* (- *lines* 1) 0)))
+  ;; The message window is allocated all space between the short range scan window and the
+  ;; prompt window.
+  (setf *message-window*
+        (make-instance 'window :height (- *lines* 1 11) :width 80
+                               :curses-window (newwin(- *lines* 1 11)  80 12 0)
+                               :pagingp t))
+  (scrollok (curses-window *message-window*) true)
+  (if (>= *cols* 125)
+      (setf *starchart-window*
+            (make-instance 'window :height 10 :width 45
+                                   :curses-window (newwin 10 45 0 81)))
+      (setf *starchart-window* *message-window*))
+  (if (and (>= *cols* 119)
+           (>= *lines* 25))
+      (setf *damage-report-window*
+            (make-instance 'window :height 15 :width 38
+                                   :curses-window (newwin 15 38 11 81)))
+      (setf *damage-report-window* *message-window*))
+  (if (and (>= *cols* 185)
+           (>= *lines* 44))
+      (setf *planet-report-window*
+            (make-instance 'window :height 44 :width 59
+                                   :curses-window (newwin 44 59 0 126)))
+      (setf *planet-report-window* *message-window*))
+  (if (and (>= *cols* 187)
+           (>= *lines* 65))
+      (setf *score-window*
+            (make-instance 'window :height 20 :width 61
+                                   :curses-window (newwin 20 61 45 126)))
+      (setf *score-window* *message-window*)))
+
+(defun set-line-by-line-windows ()
+  "Set the window variables for line-by-line mode. All window variabless reference the message
+  window."
+
+  (setf *short-range-scan-window* *message-window*)
+  (setf *ship-status-window* *message-window*)
+  (setf *long-range-scan-window* *message-window*)
+  (setf *game-status-window* *message-window*)
+  (setf *prompt-window* *message-window*)
+  (setf *starchart-window* *message-window*)
+  (setf *damage-report-window* *message-window*)
+  (setf *planet-report-window* *message-window*)
+  (setf *score-window* *message-window*))
+
 (defun initialize-windows ()
   "Set up the window variables for the current terminal, with or without curses as appropriate."
 
@@ -76,83 +161,29 @@ output location if no function-specific window is available.")
 
     (if use-curses-p
         (progn
-          (keypad *stdscr* true) ; Assume the terminal has a keypad and function keys
-          (nonl)
-          (cbreak)
-          (when (has-colors)
-            (start-color)
-            (init-pair color_black color_black color_black)
-            (init-pair color_green color_green color_black)
-            (init-pair color_red color_red color_black)
-            (init-pair color_cyan color_cyan color_black)
-            (init-pair color_white color_white color_black)
-            (init-pair color_magenta color_magenta color_black)
-            (init-pair color_blue color_blue color_black)
-            (init-pair color_yellow color_yellow color_black))
-          (wclear *stdscr*)
-          (wmove *stdscr* 0 0)
-          (wrefresh *stdscr*)
-          ;; After this point use curses window functions, not *stdscr* functions.
-
-          ;; In curses/window mode these windows are always created because they fit the minimum
-          ;; space required for windowed mode: short range scan, status, long range scan, game
-          ;; status, message, prompt. If more rows/columns are available then more windows are
-          ;; created. All output that doesn't go to a specific window is displayed in the message
-          ;;window.
-          ;;
-          ;; TODO - name all these constants that define window position and size?
-          (setf *short-range-scan-window*
-                (make-instance 'window :height 12 :width 24 :curses-window (newwin 12 24 0 0)))
-          (setf *ship-status-window*
-                (make-instance 'window :height 10 :width 36 :curses-window (newwin 10 36 2 24)))
-          (setf *long-range-scan-window*
-                (make-instance 'window :height 5 :width 19 :curses-window (newwin 5 19 0 60)))
-          (setf *game-status-window*
-                (make-instance 'window :height 3 :width 19 :curses-window (newwin 3 19 8 60)))
-          (setf *prompt-window*
-                (make-instance 'window :height 1 :width *cols*
-                                       :curses-window (newwin 1 *cols* (- *lines* 1) 0)))
-          ;; The message window is allocated all space between the short range scan window and the
-          ;; prompt window.
-          (setf *message-window*
-                (make-instance 'window :height (- *lines* 1 11) :width 80
-                                       :curses-window (newwin(- *lines* 1 11)  80 12 0)
-                                       :pagingp t))
-          (scrollok (curses-window *message-window*) true)
-          (if (>= *cols* 125)
-              (setf *starchart-window*
-                    (make-instance 'window :height 10 :width 45
-                                           :curses-window (newwin 10 45 0 81)))
-              (setf *starchart-window* *message-window*))
-          (if (and (>= *cols* 119)
-                   (>= *lines* 25))
-              (setf *damage-report-window*
-                    (make-instance 'window :height 15 :width 38
-                                           :curses-window (newwin 15 38 11 81)))
-              (setf *damage-report-window* *message-window*))
-          (if (and (>= *cols* 185)
-                   (>= *lines* 44))
-              (setf *planet-report-window*
-                    (make-instance 'window :height 44 :width 59
-                                           :curses-window (newwin 44 59 0 126)))
-              (setf *planet-report-window* *message-window*))
-          (if (and (>= *cols* 187)
-                   (>= *lines* 65))
-              (setf *score-window*
-                    (make-instance 'window :height 20 :width 61
-                                           :curses-window (newwin 20 61 45 126)))
-              (setf *score-window* *message-window*)))
+          (set-up-curses-windows))
         (progn
           ;; Line by line mode - all output goes to the *message-windw*
-          (setf *short-range-scan-window* *message-window*)
-          (setf *ship-status-window* *message-window*)
-          (setf *long-range-scan-window* *message-window*)
-          (setf *game-status-window* *message-window*)
-          (setf *prompt-window* *message-window*)
-          (setf *starchart-window* *message-window*)
-          (setf *damage-report-window* *message-window*)
-          (setf *planet-report-window* *message-window*)
-          (setf *score-window* *message-window*)))))
+          (set-line-by-line-windows)))))
+
+(defun toggle-windows ()
+  "Toggle between line-by-line and windowed ([n]curses) display modes. Windowed mode is not
+supported in Win32 environments. The current display mode is not checkpointed because it can change
+between invocations of this program."
+
+  (if (eql *message-window* *short-range-scan-window*)
+      ;; Switch to curses mode
+      (progn
+        (unless (string= (software-type) "Win32")
+          (initscr)
+          (set-up-curses-windows))
+        )
+      ;; Switch to line-by-line mode
+      (progn
+        (setf *message-window* (make-instance 'screen :height *lines* :width *cols*
+                                                      :pagingp t))
+        (set-line-by-line-windows)
+        (endwin))))
 
 (defclass screen ()
   ((height

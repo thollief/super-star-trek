@@ -1,4 +1,4 @@
-;;;; Super Star Trek events
+;;;; Super Star Trek events and time
 
 (in-package sst-events)
 

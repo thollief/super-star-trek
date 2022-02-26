@@ -259,6 +259,8 @@ parameters, with the exception of the manual move command. If
 anything is not clear to you, experiment.  The worst you can do is
 lose a game or two.")
 
+                                    ;; TODO - how to document the game status?
+                                    ;; Update to show the probe symbol and the new ship status
                                     (cons "srscan"
 "Short-range Scan
 
@@ -1579,7 +1581,20 @@ the short-range sensors are out.
 This command is currently less useful that the Short Range Scan even when the
 short range sensors are damaged because the short range scan always shows all
 sectors immediately adjacent to the ship.")
-                                    )
+                                    (cons "windows"
+"Toggle Windowed Display
+
+  Mnemonic:  WINDOWS
+  Shortest abbreviation:  WI
+
+Information is normally displayed in panels, or windows, on the terminal. If windows can't be
+used for some reason then information is displayed in line-by-line mode. This command toggles
+between the two forms of display.
+
+This command clears the display, so existing narrative is also cleared.
+
+Win32 displays are always line-by-line.")
+
   "An alist of help keywords and information. The keywords should be lowercase. Keywords are
 taken from the user command by the same parser as regular game commands so the same restrictions
 apply. That is, input items are separated by spaces so the first word of each help topic must be
