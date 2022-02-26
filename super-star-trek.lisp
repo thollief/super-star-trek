@@ -24,8 +24,6 @@
 ;;- mining dilithium crystals
 ;;- entering planetary orbit
 
-;; enemy actions do not consume time
-
 (in-package super-star-trek)
 
 (define-constant +habitable-planets+ (/ (* +galaxy-size+ +galaxy-size+) 2)) ; C: NINHAB
@@ -720,7 +718,8 @@ shuttle craft landed on it."
 
   (cond
     ((is-scheduled-p +commander-destroys-base+)
-     (print-message *message-window* (format nil "Starbase in ~A is currently under Commander attack.~%"
+     (print-message *message-window*
+                    (format nil "Starbase in ~A is currently under Commander attack.~%"
                             (format-quadrant-coordinates *base-under-attack-quadrant*)))
      (print-message *message-window* (format nil "It can hold out until Stardate ~A.~%"
                             (format-stardate (truncate (scheduled-for +commander-destroys-base+))))))
@@ -1031,15 +1030,13 @@ affected."
     (setf *super-commander-attacking-base* 'not-attacking)
     (setf *super-commander-attack-enterprise-p* nil)
     (unschedule-event +move-super-commander+)
-    (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant))
-          (1- (quadrant-klingons (coord-ref *galaxy* nova-quadrant))))
+    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1))
     (setf *remaining-klingons* (1- *remaining-klingons*)))
   ;; TODO - can there be two commanders in one quadrant?
   (when (position nova-quadrant *commander-quadrants* :test #'coord-equal)
     ;; Destroyed a Commander
     (setf *commander-quadrants* (remove nova-quadrant *commander-quadrants* :test #'coord-equal))
-    (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant))
-          (1- (quadrant-klingons (coord-ref *galaxy* nova-quadrant))))
+    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1))
     (when (= (length *commander-quadrants*) 0)
       (unschedule-event +tractor-beam+)
       (unschedule-event +commander-attacks-base+)
@@ -1336,7 +1333,8 @@ Return true on successful move."
               (when (subspace-radio-available-p)
                 (return-from move-super-commander nil)) ; No warning
               (setf *base-attack-report-seen-p* t)
-              (print-message *message-window* (format nil "Lt. Uhura-  \"Captain, the starbase in ~A~%"
+              (print-message *message-window*
+                             (format nil "Lt. Uhura-  \"Captain, the starbase in ~A~%"
                                      (format-quadrant-coordinates *super-commander-quadrant*)))
               (print-message *message-window* (format nil "   reports that it is under attack from the Klingon Super-commander.~%"))
               (print-message *message-window* (format nil "   It can survive until stardate ~D.\"~%"
@@ -1531,9 +1529,9 @@ tractor-beamed the ship then the other will not."
     (cond
       ;; Supernova
       ((= event-code +supernova+)
-       ;; Select a quadant for the supernova and blow it up. This algorithm will find a
-       ;; quadrant with stars if one exists, unlike get-random-quadrant which could select
-       ;; a quadrant already containing a supernova or a quadrant without stars.
+       ;; Select a quadrant for the supernova and blow it up. This algorithm will find a quadrant
+       ;; with stars if one exists, unlike get-random-quadrant which could select a quadrant
+       ;; already containing a supernova or a quadrant without stars.
        (do (star-to-supernova
             (galaxy-star-count 0)
             (x 0 (1+ x)))
@@ -1559,7 +1557,7 @@ tractor-beamed the ship then the other will not."
          (do ((y 0 (1+ y)))
              ((>= y +galaxy-size+))
            (incf galaxy-star-count (quadrant-stars (aref *galaxy* x y)))))
-       (schedule-event +supernova+ (expran (* 0.5 *initial-time*)))
+       (schedule-event +supernova+ (expran (* 0.5 *initial-time*))) ; schedule another one
        (when (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
          (setf allow-player-input t))) ; C: return
       ;; Check with spy to see if S.C. should tractor beam
@@ -2012,12 +2010,12 @@ There is no line 10.
                (not *base-under-attack-quadrant*))
       (print-out *ship-status-window* (format nil "Base in ~A attacked by C. Alive until ~A~%"
                          (format-coordinates *base-under-attack-quadrant*)
-                         (format-stardate (find-event +commander-destroys-base+)))))
+                         (format-stardate (event-date (find-event +commander-destroys-base+))))))
     (when (or (eql *super-commander-attacking-base* 'attacking)
               (eql *super-commander-attacking-base* 'destroying))
       (print-out *ship-status-window* (format nil "Base in ~A attacked by S. Alive until ~A~%"
                          (format-coordinates *super-commander-quadrant*)
-                         (format-stardate (find-event +super-commander-destroys-base+)))))))
+                         (format-stardate (event-date (find-event +super-commander-destroys-base+))))))))
 
 (defun all-statuses ()
   "Display all the ship statuses that are displayed next to the short range scan. In
@@ -2230,6 +2228,7 @@ scan. Long-range sensors can scan all adjacent quadrants."
      (decf *commanders-here* 1)
      (setf *commander-quadrants* (remove *ship-quadrant* *commander-quadrants* :test #'coord-equal))
      (unschedule-event +tractor-beam+)
+     ;; TODO - this is the place to unscheduled commander events when the last commander is killed
      (when (> (length *commander-quadrants*) 0)
        (schedule-event +tractor-beam+ (expran (/ *initial-commanders* (length *commander-quadrants*))))))
 
@@ -4770,6 +4769,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
         (print-message *message-window* (format nil "You are traveling forward in time ~A stardates.~%" *time-taken-by-current-operation*))
         ;; Cheat to make sure no tractor beams occur during time warp
         (postpone-event +tractor-beam+ *time-taken-by-current-operation*)
+        ;; TODO - why only the subspace radio?
         (incf (aref *device-damage* +subspace-radio+) *time-taken-by-current-operation*)))
   (new-quadrant)
   (process-events)) ; Stas Sergeev added this -- do pending events
@@ -5399,7 +5399,7 @@ can occur."
   ;; TODO - n probably isn't needed: stop movement when full movement distance has been covered
   (let ((tractor-beam-scheduled-p nil)
         angle delta-x delta-y bigger
-        n
+        number-of-moves
         (s-coord (make-sector-coordinate :x 0 :y 0))) ; C: w
 
     (when (and *cloakedp*
@@ -5432,7 +5432,7 @@ can occur."
         (setf bigger (abs delta-y)))
     (setf delta-x (/ delta-x bigger))
     (setf delta-y (/ delta-y bigger))
-    (setf n (truncate (+ (* 10.0 distance bigger) 0.5))) ; Simulate C assignment to int
+    (setf number-of-moves (truncate (+ (* 10.0 distance bigger) 0.5))) ; Simulate C assignment to int
     ;; Move within the quadrant
     (setf (coord-ref *quadrant* *ship-sector*) +empty-sector+)
     (do ((m 0 (1+ m))
@@ -5440,7 +5440,7 @@ can occur."
          (prev-x (coordinate-x *ship-sector*))
          (prev-y (coordinate-y *ship-sector*)))
         ((or movement-stopped-p
-             (>= m n)))
+             (>= m number-of-moves)))
       (setf prev-x (+ prev-x delta-x))
       (setf prev-y (+ prev-y delta-y))
       (setf (coordinate-x s-coord) (round prev-x))
@@ -5547,7 +5547,7 @@ can occur."
                     (finish 'destroyed-by-black-hole))
                 (return-from move-ship-within-quadrant t))
              (when (> (aref *device-damage* index) 0) ; TODO - define a "count damaged devices" function?
-               (1+ damaged-devices))))
+               (incf damaged-devices 1))))
           ;; Something else
           (t
            (let ((stop-energy (/ (* 50.0 distance) *time-taken-by-current-operation*)))
@@ -6304,7 +6304,8 @@ quadrant experiencing a supernova)."
           (progn
             (print-message *message-window* "Remaining")))
       (unless try-another-warp-factor-p
-        (print-message *message-window* (format nil " energy will be ~,2F.~%" (- *ship-energy* tpower)))
+        (print-message *message-window*
+                       (format nil " energy will be ~,2F.~%" (- *ship-energy* tpower)))
         (cond
           (wfl
            (print-message *message-window* (format nil "And we will arrive at stardate ~A.~%"
@@ -6318,15 +6319,19 @@ quadrant experiencing a supernova)."
            (print-message *message-window* (format nil "and we will arrive at stardate ~A.~%"
                                   (format-stardate (+ *stardate* ttime))))))
         (when (< *remaining-time* ttime)
-          (print-message *message-window* (format nil "Unfortunately, the Federation will be destroyed by then.~%")))
+          (print-message *message-window*
+                         (format nil "Unfortunately, the Federation will be destroyed by then.~%")))
         (when (> twarp 6.0)
-          (print-message *message-window* (format nil "You'll be taking risks at that speed, Captain.~%")))
+          (print-message *message-window*
+                         (format nil "You'll be taking risks at that speed, Captain.~%")))
         (when (or (and (eql *super-commander-attacking-base* 'attacking)
                        (coord-equal *super-commander-quadrant* destination-quadrant)
-                       (< (find-event +super-commander-destroys-base+) (+ *stardate* ttime)))
-                  (and (< (find-event +commander-destroys-base+) (+ *stardate* ttime))
+                       (< (event-date (find-event +super-commander-destroys-base+))
+                          (+ *stardate* ttime)))
+                  (and (< (event-date (find-event +commander-destroys-base+)) (+ *stardate* ttime))
                        (coord-equal *base-under-attack-quadrant* destination-quadrant)))
-          (print-message *message-window* (format nil "The starbase there will be destroyed by then.~%")))
+          (print-message *message-window*
+                         (format nil "The starbase there will be destroyed by then.~%")))
         (skip-line *message-window*)
         (print-prompt "New warp factor to try? ")
         (setf input-item (scan-input))
@@ -6639,7 +6644,8 @@ was an event that requires aborting the operation carried out by the calling fun
 
     ((and (shuttle-landed-p *ship-quadrant*)
           (not *landedp*))
-     (print-message *message-window* (format nil "You will have to beam down to retrieve the shuttle craft.~%")))
+     (print-message *message-window*
+                    (format nil "You will have to beam down to retrieve the shuttle craft.~%")))
 
     ((or *shields-are-up-p*
          *dockedp*)

@@ -8,8 +8,6 @@
   "A counter for the passage of time. The meaning of stardates is not consistent in canonical
 media, but presentation is always 4 or 5 digits followed by a decimal point and a single digit.")
 
-;; TODO - the C source only used the quadrant in the event struct for planet conquest but most
-;;        events do occur in a quadrant. Update event handling to add quadrants to all events?
 (defstruct event
   date ; stardate when event will occur
   quadrant) ; coordinates of the quadrant where the event will occur
