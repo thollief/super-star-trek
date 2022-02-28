@@ -1,17 +1,16 @@
 ;;;; Super Star Trek
 
-;;Actions that allow the enemy to respond but don't take time:
-;;- fire phasers
-;;- fire photon torpedoes
-;;- raise and lower shields
-;;- dock at starbase
-;;- launch probe
-;;- use the transporter
-;;- use deathray
-;;- use dilithium crystals
-;; Enemy response is attack-player
+;;Actions that allow the enemy to respond but don't consume remaining time:
+;; use the transporter
+;; fire phasers
+;; fire photon torpedoes
+;; raise and lower shields
+;; launch probe
+;; use deathray
+;; use dilithium crystals
+;; dock at starbase
 
-;; Actions that consume time:
+;; Actions that consume remaining time:
 ;;- moving when buffeted by a nova
 ;;- movement when being pulled by a tractor beam
 ;;- capturing klingons
@@ -1004,7 +1003,8 @@ affected."
       ;;        in the current quadrant - warp engines cannot be used while cloaked and it takes
       ;;        time to uncloak
       (progn
-        (print-message *message-window* (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
+        (print-message *message-window* (format nil "~%***RED ALERT!  RED ALERT!~%")
+                       :print-slowly t)
         (print-message *message-window* (format nil "~%***Incipient supernova detected at ~A~%"
                                (format-sector-coordinates nova-sector)))
         ;; Is the player too close to the supernova to survive?
@@ -1030,13 +1030,13 @@ affected."
     (setf *super-commander-attacking-base* 'not-attacking)
     (setf *super-commander-attack-enterprise-p* nil)
     (unschedule-event +move-super-commander+)
-    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1))
-    (setf *remaining-klingons* (1- *remaining-klingons*)))
+    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1)
+    (decf *remaining-klingons* 1))
   ;; TODO - can there be two commanders in one quadrant?
   (when (position nova-quadrant *commander-quadrants* :test #'coord-equal)
     ;; Destroyed a Commander
     (setf *commander-quadrants* (remove nova-quadrant *commander-quadrants* :test #'coord-equal))
-    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1))
+    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1)
     (when (= (length *commander-quadrants*) 0)
       (unschedule-event +tractor-beam+)
       (unschedule-event +commander-attacks-base+)
@@ -1063,9 +1063,9 @@ affected."
           (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0))
      ;; If supernova destroys last Klingons give special message
      (skip-line *message-window* 2)
-     ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep space
-     ;; probe, that is, not induced by the player. Restore this? If yes, then also restore the score
-     ;; updates performed in this function when a probe causes a supernova.
+     ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep
+     ;; space probe, that is, not induced by the player. Restore this? If yes, then also restore
+     ;; the score updates performed in this function when a probe causes a supernova.
      (print-message *message-window* (format nil "Lucky you!~%"))
      (print-message *message-window*
                     (format nil "A supernova in ~A has just destroyed the last Klingons.~%"
@@ -1074,6 +1074,47 @@ affected."
     (*all-done-p*
      ;; if some Klingons remain, continue or die in supernova.
      (finish 'destroyed-by-supernova))))
+
+(defun repair-devices (repair-time) ; C variable: repair, C function does not exist
+  "Repair damaged devices for the length of time specified by repair-time. When they are
+functional again repaired devices perform their usual function if appropriate, e.g. subspace
+ radio, short range sensors."
+
+  (let ((repaired-devices (make-array +number-of-devices+ :initial-element nil))) ; C: fixed_dev
+    (when *dockedp*
+      (setf repair-time (/ repair-time +docked-repair-factor+)))
+    ;; Don't fix Deathray here. It's not fixed incrementally, but only after a long continuous
+    ;; time docked.
+    (do ((l 0 (1+ l)))
+        ((>= l +number-of-devices+))
+      (when (and (> (aref *device-damage* l) 0.0)
+                 (/= l +death-ray+))
+        (if (> (aref *device-damage* l) repair-time)
+            (decf (aref *device-damage* l) repair-time)
+            (progn
+              (setf (aref *device-damage* l) 0.0)
+              (setf (aref repaired-devices l) t)))))
+    ;; If radio repaired, update star chart and attack reports
+    (when (aref repaired-devices +subspace-radio+)
+      (print-message *message-window*
+                     (format nil "Lt. Uhura- \"Captain, the sub-space radio is working and~%"))
+      (print-message *message-window* (format nil "   surveillance reports are coming in.~%~%"))
+      (unless *base-attack-report-seen-p*
+        (attack-report)
+        (setf *base-attack-report-seen-p* t))
+      (print-message *message-window* (format nil "   The star chart is now up to date.\"~%~%")))
+    (when (or (aref repaired-devices +subspace-radio+)
+              (aref repaired-devices +long-range-sensors+)
+              (aref repaired-devices +short-range-sensors+))
+      (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
+    ;; When there is a separate short range scan window, if the short range sensors were just
+    ;; repaired and there is a planet in the current quadrant that has not been examined
+    ;; (unknown), then automatically examine it.
+    (when (and (not (eql *short-range-scan-window* *message-window*))
+               (aref repaired-devices +short-range-sensors+)
+               *current-planet*
+               (not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))))
+      (sensor))))
 
 (defun execute-tractor-beam (&key t-quadrant)
   "A commander or super-commander has tractor beamed the player ship.
@@ -1485,44 +1526,7 @@ tractor-beamed the ship then the other will not."
       (decf *life-support-reserves* execution-time)
       (when (<= (aref *device-damage* +life-support+) execution-time)
         (setf *life-support-reserves* *initial-life-support-reserves*)))
-    ;; Fix devices
-    ;; TODO - resting at starbase for the period of time in the damage report doesn't apply the
-    ;;        docking factor for device repairs. Tested by ramming an enemy, calling for help,
-    ;;        and then resting.
-    (let ((repair-time execution-time) ; C: repair
-          (repaired-devices (make-array +number-of-devices+ :initial-element nil))) ; C: fixed_dev
-      (when *dockedp*
-        (setf repair-time (/ repair-time +docked-repair-factor+)))
-      ;; Don't fix Deathray here. It's not fixed incrementally, but only after a long continuous time docked.
-      (do ((l 0 (1+ l)))
-          ((>= l +number-of-devices+))
-        (when (and (> (aref *device-damage* l) 0.0)
-                   (/= l +death-ray+))
-          (if (> (aref *device-damage* l) repair-time)
-              (decf (aref *device-damage* l) repair-time)
-              (progn
-                (setf (aref *device-damage* l) 0.0)
-                (setf (aref repaired-devices l) t)))))
-      ;; If radio repaired, update star chart and attack reports
-      (when (aref repaired-devices +subspace-radio+)
-        (print-message *message-window* (format nil "Lt. Uhura- \"Captain, the sub-space radio is working and~%"))
-        (print-message *message-window* (format nil "   surveillance reports are coming in.~%~%"))
-        (unless *base-attack-report-seen-p*
-          (attack-report)
-          (setf *base-attack-report-seen-p* t))
-        (print-message *message-window* (format nil "   The star chart is now up to date.\"~%~%")))
-      (when (or (aref repaired-devices +subspace-radio+)
-                (aref repaired-devices +long-range-sensors+)
-                (aref repaired-devices +short-range-sensors+))
-        (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
-      ;; When there is a separate short range scan window, if the short range sensors were just
-      ;; repaired and there is a planet in the current quadrant that has not been examined
-      ;; (unknown), then automatically examine it.
-      (when (and (not (eql *short-range-scan-window* *message-window*))
-                 (aref repaired-devices +short-range-sensors+)
-                 *current-planet*
-                 (not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))))
-        (sensor)))
+    (repair-devices execution-time)
     ;; Time was spent so subtract it from the operation time being handled by this invocation
     (decf *time-taken-by-current-operation* execution-time)
     ;; Cause extraneous event event-code to occur (C: EVCODE)
