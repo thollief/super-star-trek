@@ -12,7 +12,7 @@
 (define-constant +max-klingons-per-game+ 127) ; C: MAXKLGAME
 (define-constant +max-klingons-per-quadrant+ 9) ; C: MAXKLQUAD
 (define-constant +max-commanders-per-game+ 10)
-(define-constant +max-stars-per-quadrant+ 9)n
+(define-constant +max-stars-per-quadrant+ 9)
 (define-constant +phaser-factor+ 2.0) ; C: phasefac
 (define-constant +docked-repair-factor+ 0.25 "Repar factor when docked.") ; C: docfac
 (define-constant +deathray-failure-chance+ 0.30)
