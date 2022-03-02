@@ -2,8 +2,6 @@
 
 (in-package super-star-trek)
 
-(define-constant +galaxy-size+ 8) ; C: GALSIZE
-(define-constant +quadrant-size+ 10) ; C: QUADSIZE
 (define-constant +habitable-planets+ (/ (* +galaxy-size+ +galaxy-size+) 2)) ; C: NINHAB
 (define-constant +max-uninhabitable-planets+ 10) ; C: MAXUNINHAB
 (define-constant +min-uninhabitable-planets+ 5)
@@ -23,234 +21,28 @@
   "The name of the file used for checkpointing game state.")
 (define-constant +algeron-date+ 2311 "Date of the Treaty of Algeron") ; C: #define ALGERON
 
-;; TODO - create a terminalio package?
-(defparameter *window-interface-p* t
-  "Control whether to display a full screen using (n)curses or the classic line-by-line output.
-This variable is not saved and restored because the terminal used could change between sessions.")
-(defparameter *current-window* nil) ; C: curwnd
-(defparameter *short-range-scan-window* nil) ; C: srscan_window
-(defparameter *ship-status-window* nil)
-(defparameter *game-status-window* nil)
-(defparameter *long-range-scan-window* nil) ; C: lrscan_window
-(defparameter *message-window* nil)
-(defparameter *message-window-lines* 23 "Total number of lines in the message window. The default
-should be suitable for a classic 80x24 terminal.")
-(defparameter *message-window-line-count* 0
-  "Number of lines that have been output in the message window.")
-(defparameter *prompt-window* nil)
-(defparameter *starchart-window* nil)
-(defparameter *damage-report-window* nil)
-(defparameter *planet-report-window* nil)
-(defparameter *score-window* nil)
-
-(defparameter *line-tokens* nil "List of input tokens")
-(defparameter *input-item* nil "One space-separated token from the keyboard.")
-
-(defun select-window (window &key (clear-window nil))
-  "Change window. Do nothing in line-by-line mode. If clear-window is true then also clear the
-window."
-
-  (when *window-interface-p*
-    (setf *current-window* window)
-    (when clear-window
-      (clear-window window))
-    ;; make cursor visible if selecting one of these windows, otherwise hide it
-    (if (or (equal *message-window* window)
-            (equal *prompt-window* window))
-        ;; cursor visibility: 0 = invisible, 1 = normal visibility, 2 = very visible
-        (curs-set 1)
-        (curs-set 0))))
-
-;; TODO - C source also stores the input line in the replay file.
-(defun get-input-line () ; C: cgetline(char *line, int max)
-  "Get a line of input from the keyboard as a string."
-
-  (let (line)
-    (if *window-interface-p*
-        (progn
-          ;; wgetstr and related ncurses functions from charms/ll don't seem to work. Simulate with wgetch.
-          (do ((input-char 0 (wgetch *prompt-window*)))
-              ((= input-char 13)
-               line) ; return value
-            ;; wgetch returns numeric character codes, accept the usual printable ASCII characters
-            (when (and (>= input-char 32)
-                       (<= input-char 126))
-              (setf line (concatenate 'string line (string (code-char input-char))))
-              (when (= input-char 92) ; escape backslashes with a backslash because (read) is used to parse numbers
-                (setf line (concatenate 'string line "\\"))))
-            (when (= input-char 127) ; Handle backspace so errors can be corrected
-              (let (y x)
-                (getyx *prompt-window* y x)
-                (decf x 2)
-                (mvwaddstr *prompt-window* y x "  ") ; DEL is a ctrl char so "^j" is echoed
-                (wmove *prompt-window* y x)
-                (when (> (length line) 0)
-                  (decf x 1)
-                  (mvwaddstr *prompt-window* y x " ")
-                  (wmove *prompt-window* y x)
-                  (setf line (subseq line 0 (- (length line) 1))))))
-            (wrefresh *prompt-window*)))
-        (progn ; assume line-by-line
-          ;; input length isn't limited here, use read-char if needed
-          (setf line (read-line)))))) ; C: fgets(line, max, stdin)
-
-;; TODO - scan should return the value scanned, not set a global, and unscan should accept a parameter
-;;       of the item to unscan.
-(defun scan-input ()
-  "Manage a list of input tokens, returning one token each time this function is called. If the
-list is empty then get input from the keyboard, remove leading and trailing spaces, downcase
-everything, and then split it on spaces to generate tokens. Return the first token and save the
-remainder for the next call. If the keyboard input didn't include any non-space characters then
-return nil."
-
-  (when (= (length *line-tokens*) 0)
-    (setf *line-tokens* (split-sequence #\SPACE
-                                        (string-downcase (string-trim " "(get-input-line)))
-                                        :remove-empty-subseqs t)))
-  (let ((test-number nil))
-    (setf *input-item* (pop *line-tokens*))
-    (when *input-item*
-      ;; Read something, possibly a number. This is reading a Lisp form and if it's malformed then
-      ;; we don't want it anyway so ignore the error.
-      (setf test-number (ignore-errors (read-from-string *input-item*)))
-      (when (numberp test-number) ; If it's a number then keep it
-        (setf *input-item* test-number)))))
-
-(defun unscan-input ()
-  "Put the current *input-item* back on the list of line tokens."
-
-  ;; *line-tokens* must contains strings, *input-item* could be a number or something.
-  (push (format nil "~A" *input-item*) *line-tokens*)
-  (setf *input-item* nil))
-
-(defun clear-type-ahead-buffer () ; C: chew()
-  "Convenience function to delete any commands the player may have entered in anticipation of
-future prompts. This is normally called after an input error or other condition where the future
-prompts change."
-
-  (setf *input-item* nil)
-  (setf *line-tokens* nil))
-
-(defun match-token (token possible-matches) ; C: isit()
-  "Given a string and a list of possible matching strings, return the first item from the list
-that matches. A match occurs when the first characters of both strings, up to the length of the
-shortest string, are the same."
-
-  (unless (stringp token) ; make sure we are handling a string
-    (setf token (format nil "~A" token)))
-  (let ((token-length (length token))
-        length-to-compare)
-    (dolist (candidate possible-matches)
-      (setf length-to-compare (min token-length
-                                   (length candidate)))
-      (when (string= (subseq token 0 length-to-compare)
-                     (subseq candidate 0 length-to-compare))
-        (return-from match-token candidate)))))
-
-(defun print-out (string-to-print &key (print-slowly nil))
-  "Print a string. In curses mode use the current window. If print-slowly is true then print with a
-delay between each character to build dramatic tension. Slow printing was not optional on most
-paper-based terminals so slow printing helps recreate some of the gameplay experience of prior
-versions of Super Star Trek."
-
-  (map nil #'(lambda (c)
-               (when print-slowly
-                 (sleep 0.030))
-               (if *window-interface-p*
-                   ;; The curses wprintw function uses % to indicate format control characters for
-                   ;; C printf, so double them to print literal % symbols
-                   (let ((string-to-print (string c)))
-                     (when (string= string-to-print "%")
-                       (setf string-to-print "%%"))
-                     (wprintw *current-window* string-to-print)
-                     (wrefresh *current-window*))
-                   (progn
-                     (princ c)
-                     (finish-output))))
-       string-to-print)
-  (when print-slowly
-    (sleep 0.300)))
-
-(defun skip-line (&optional (lines-to-skip 1))
-  "A convenience function to add blank lines at the current cursor position of the screen or
-current window, normally the last line. Since this is just a newline it can also end strings
-that did not print their own newline."
-
-  (dotimes (x lines-to-skip)
-    (if *window-interface-p*
-        (progn
-          ;;(format nil "~%")
-          ;;(wprintw *current-window* (concatenate 'string (string #\Linefeed) (string #\Return)))
-          (wprintw *current-window* (string #\newline))
-          (wrefresh *current-window*))
-        (progn
-          (print-out (format nil "~%"))
-          (finish-output)))
-    (when (equal *current-window* *message-window*)
-      (page-message-window))))
-
-(defun print-message (message-to-print &key (print-slowly nil))
-  "Print a string in the message window. If not using the window interface just print it. Page the
-window after each newline."
-
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (let (message-line
-        (first-newline-position (position #\newline message-to-print)))
-    (if first-newline-position
-        (progn
-          (setf first-newline-position (1+ first-newline-position))
-          (setf message-line (subseq message-to-print 0 first-newline-position)))
-        (setf message-line message-to-print))
-    (print-out message-line :print-slowly print-slowly)
-    (when first-newline-position
-      (page-message-window)
-      (when (> (length message-to-print) first-newline-position)
-        (print-message (subseq message-to-print first-newline-position)
-                       :print-slowly print-slowly)))))
-
-(defun page-message-window ()
-  "Pause message window output if the window has been filled with the maximum number of lines it
-can hold. Don't pause in line-by-line mode - assume player has a scrollbar."
-
-  (when *window-interface-p*
-    (setf *message-window-line-count* (1+ *message-window-line-count*))
-    ;; Pause at one line less than the total number of lines to account for newlines.
-    (when (>= *message-window-line-count* (1- *message-window-lines*))
-      (clear-type-ahead-buffer)
-      (print-prompt "Press ENTER to continue")
-      (scan-input)
-      (clear-type-ahead-buffer)
-      (restart-message-window-paging))))
-
-(defun restart-message-window-paging ()
-  "Assume all previous message window output has been seen by the player."
-
-  (setf *message-window-line-count* 0))
-
 (defun print-stars ()
   "Print a line of stars."
 
-  (print-message (format nil "************************************************************~%")
+  (print-message *message-window*
+                 (format nil "************************************************************~%")
                  :print-slowly t))
 
 (defun huh () ; C: huh(void)
   "Complain about unparseable input."
 
   (clear-type-ahead-buffer)
-  (print-message (format nil "~%Beg your pardon, Captain?~%")))
+  (print-message *message-window* (format nil "~%Beg your pardon, Captain?~%")))
 
 (defun get-y-or-n-p () ; C: ja()
   "When a player choice may negatively affect successful completion of the game then require a yes
 or no answer. If other answers are given then prompt again. Use this function instead of y-or-n-p
 to allow for curses or line-by-line output when the player is reminded of the input options."
 
-  (clear-type-ahead-buffer)
   (do ((char nil))
       (char)
-    (scan-input)
-    (setf char (match-token *input-item* (list "yes" "no")))
+    (clear-type-ahead-buffer)
+    (setf char (match-token (scan-input) (list "yes" "no")))
     (cond
       ((string= char "yes")
        (return-from get-y-or-n-p t))
@@ -259,96 +51,38 @@ to allow for curses or line-by-line output when the player is reminded of the in
        (return-from get-y-or-n-p nil))
 
       (t
-       (print-message "~%Please answer with \"y\" or \"n\": ")))))
-
-;; TODO - Can/should coordinate handling be an object or package?
-;; TODO - adjacency is a frequently used property of coordinate pairs. Add support for calculating
-;;        it for any pair of coords?
-(defstruct coordinate ; C: coord
-  "Sector or quadrant coordinate pair. These are array indices, so one less that the coordinate
-values displayed to the player."
-
-  x
-  y)
-
-(defmacro coord-ref (array-name coord)
-  "Use the coordinate struct to access a 2d array."
-
-  `(aref ,array-name (coordinate-x ,coord) (coordinate-y ,coord)))
+       (print-message *message-window* (format nil "~%Please answer with \"y\" or \"n\": "))))))
 
 ;; TODO - should this be a property of a ship struct?
-(defparameter *ship-quadrant* nil) ; C: coord quadrant, where we are
-(defparameter *ship-sector* nil) ; C: coord sector, where we are
+(defvar *ship-quadrant* nil) ; C: coord quadrant, where we are
+(defvar *ship-sector* nil) ; C: coord sector, where we are
 
-;; TODO - can/should these take the coordinate structure as their parameter?
-(defun valid-quadrant-p (x y) ; C: VALID_QUADRANT(x, y)
-  "Return true if the quadrant coordinates are valid. These are array indices, not player
-coordinates."
-
-  (and (numberp x)
-       (numberp y)
-       (>= x 0)
-       (< x +galaxy-size+)
-       (>= y 0)
-       (< y +galaxy-size+)))
-
-;; TODO - should this take a coordinate struct as a parameter? Sometimes we have structs, sometimes we have a pair of scalars
-;;        write a version that takes the coordinate struct and unpacks it to use the pair of scalar's version, or
-;;        figure out how to write a macro similar to coord-ref
-(defun valid-sector-p (x y) ; C: VALID_SECTOR(x, y)
-  "Return true if the sector coordinates are valid. These are array indices, not player
-coordinates."
-
-  (and (numberp x)
-       (numberp y)
-       (>= x 0)
-       (< x +quadrant-size+)
-       (>= y 0)
-       (< y +quadrant-size+)))
-
-(defun coord-equal (c1 c2) ; C: same(c1, c2)
-  "Two coordinates are equal if their corresponding x and y coordinates are equal."
-
-  (and (eql (coordinate-x c1) (coordinate-x c2))
-       (eql (coordinate-y c1) (coordinate-y c2))))
-
-;; TODO - this doesn't calculate distance between sectors in different quadrants. Adding that
-;; capability could be done by converting to a global coordinate system internally. The need for
-;; the calculation came up in the mayday function.
-(defun distance (c1 c2) ; C: distance(c1, c2)
-  "Calculate the distance between two coordinates."
-
-  (sqrt(+ (expt (- (coordinate-x c1) (coordinate-x c2)) 2)
-          (expt (- (coordinate-y c1) (coordinate-y c2)) 2))))
-
-(defun format-coordinates (c) ; C: cramlc
-  "Format the supplied location coordinates as a string for printing. The game data structures are
-zero-based arrays but the player-visible game coordinate system is one-based. Convert from internal
-to external by adding 1."
-
-  (format nil "~A - ~A" (1+ (coordinate-x c)) (1+ (coordinate-y c))))
-
-(defun format-quadrant-coordinates (c) ; C: cramlc
-  "Format the supplied quadrant coordinates as a string for printing. No checking is done to ensure
-the supplied coordinates are valid for quadrants."
-
-  (format nil "Quadrant ~A" (format-coordinates c)))
-
-(defun format-sector-coordinates (c) ; C: cramlc
-  "Format the supplied sector coordinates as a string for printing. No checking is done to ensure
-the supplied coordinates are valid for sectors."
-
-  (format nil "Sector ~A" (format-coordinates c)))
-
-;; TODO - this takes a global (*input-item*) as a parameter...
-(defun read-coordinate-number ()
+;; TODO - players may input fractional numbers for coordinates for moving, firing photon torpedoes,
+;;        and calculating distances, and those numbers should be used. Check this.
+(defun scan-coordinate-number ()
   "Read a player-entered coordinate number from the input buffer. Return the internal coordinate
 number (array index) or nil."
 
-  (let ((c-num nil))
-    (when (and *input-item* (numberp *input-item*))
-      (setf c-num (1- *input-item*)))
-    (return-from read-coordinate-number c-num)))
+  (let ((c-num nil)
+        input-item)
+    (setf input-item (scan-input))
+    (when (and input-item
+               (numberp input-item))
+      (setf c-num (1- input-item)))
+    (return-from scan-coordinate-number c-num)))
+
+(defun scan-coordinate-pair ()
+  "Read two numbers from the input line and return them. The player is expected to enter two values
+but might enter only one, or none."
+
+  (let (x y)
+    (setf x (scan-coordinate-number))
+    ;; The player should have entered at least two numbers for the coordinate and the second one is
+    ;; still in the input buffer. If the input buffer is empty then the scan would wait for further
+    ;; input, which we don't want at this point because there is no prompt for what is needed.
+    (when (input-available-p)
+      (setf y (scan-coordinate-number)))
+    (return-from scan-coordinate-pair (values x y))))
 
 (defun get-quadrant-and-sector ()
   "Get from the player two numbers representing a quadrant, or four numbers representing a quadrant
@@ -356,21 +90,12 @@ and sector. If only two numbers are entered then only a quadrant is specified an
 be left empty. Check input for correctness and display an error message if needed. Return the valid
 coordinates or nil."
 
-  (scan-input)
   (let (qx qy sx sy)
-    (setf qy (read-coordinate-number))
-    ;; The player should have entered at least two numbers for the coordinate and the second one is
-    ;; still in the input buffer. If the input buffer is empty then the scan will wait for further
-    ;; input, which we don't want at this point.
-    (when *line-tokens*
-      (scan-input)
-      (setf qx (read-coordinate-number)))
+    (multiple-value-setq (qx qy) (scan-coordinate-pair))
     ;; If there are two more coordinates then read them, otherwise we don't care what was typed
-    (when (>= (length *line-tokens*) 2)
-      (scan-input)
-      (setf sy (read-coordinate-number))
-      (scan-input)
-      (setf sx (read-coordinate-number)))
+    (when (two-input-items-available)
+      (multiple-value-setq (sx sy) (scan-coordinate-pair)))
+    ;; TODO - the code doesn't match the comment, retest the function that calls this
     ;; If player entered only two coordinates, a quadrant, then fix up the quadrant coordinates
     (when (and qx qy (not sx) (not sy))
       (setf sx qx)
@@ -380,52 +105,22 @@ coordinates or nil."
     ;; Validate coordinate values and return them
     (if (and qx qy (valid-quadrant-p qx qy) sx sy (valid-sector-p sx sy))
         (return-from get-quadrant-and-sector (values sx sy qx qy))
-        (huh))))
+        (huh)))
+  )
 
 (defun format-stardate (d)
   "Write a stardate with one decimal point."
 
   (format nil "~,1,,,F" d))
 
-(define-constant +class-m+ 1)
-(define-constant +class-n+ 2)
-(define-constant +class-o+ 3)
-
-(defstruct planet ; C: planet
-  "Information about a planet."
-
-  quadrant ; C: w, a coordinate
-  ;; TODO - planet class has both a letter and a value. How to represent?
-  class ; C: pclass, one of 1, 2, or 3 (M, N, or O) - affects time needed to mine crystals
-  name ; Name of the planet. An empty string for uninhabited planets
-  destroyedp ; Whether or not this planet has been destroyed
-  knownp ; whether or not this planet has been scanned by the player - TODO handle inhabited planets
-  inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
-  crystals ; has crystals: 'absent, 'present, or 'mined
-  (status 'secure)) ; C: status, One of secure, distressed, enslaved
-
-(defun format-planet-class (class)
-  "Given a numeric value for the class of a planet, return the single letter equivalent, or an
-empty string if the planet class can't be determined."
-
-  (cond
-    ((= class +class-m+)
-     "M")
-    ((= class +class-n+)
-     "N")
-    ((= class +class-o+)
-     "O")
-    (t
-     "")))
-
-(defparameter *planet-information* nil
-  "An alist of planet structs keyed by the quadrant coordinates of the planet")
-
 ;; Characters displayed for game entities in short range scans
-;; TODO - are probes visible in short range scans? Should they be? They move fast so they might
-;;        not be visible for long enough to make a difference. At least for the period of time
-;;        between "launch probe" and some other command that uses time the probe could be
-;;        visible. Use the "^" symbol?
+;; TODO - Make probes visible in short range scans. When you launch a probe and then move to the
+;;        qaudrant where it is reported to be then it should be visible.
+;;        This means giving the probe a sector coordinate, too, and handling it when displaying
+;;        a short range scan. Being small, probes can be in the same sector as another object and
+;;        the other object will be displayed on the SR scan.
+;; TODO - show enterprise or faerie queene movement in the short range scan, until exiting the
+;;        current quadrant, and show the same movement when entering the destination quadrant.
 ;; C: typedef enum {} feature
 (define-constant +romulan+ "R") ; C: IHR
 (define-constant +klingon+ "K") ; C: IHK
@@ -447,35 +142,70 @@ empty string if the planet class can't be determined."
 (define-constant +materialize-2+ "o") ; C: IHMATER1
 (define-constant +materialize-3+ "0") ; C: IHMATER2
 (define-constant +reserved+ "X")
+(define-constant +probe+ "^")
+(define-constant +torpedo+ "+")
 
-(defun letter-to-name (quadrant-entity)
-  "Convert a single letter quadrant entity to a string for display."
+(defun letter-to-name (sector-entity)
+  "Convert a single letter sector entity to a string for display."
 
   ;; TODO these are the strings actually used. Should plan for them all, or use a struct with a
   ;;      symbol and a label, like the game type or game length. Is there an alist in here
   ;;      somewhere, or an object?
-  ;; TODO - When displaying an inhabited world, show the name instead of "unknown"
   (cond
-    ((string= quadrant-entity +klingon+)
+    ((string= sector-entity +klingon+)
      "Klingon")
-    ((string= quadrant-entity +romulan+)
+    ((string= sector-entity +romulan+)
      "Romulan")
-    ((string= quadrant-entity +commander+)
+    ((string= sector-entity +commander+)
      "Commander")
-    ((string= quadrant-entity +super-commander+)
+    ((string= sector-entity +super-commander+)
      "Super-commander")
-    ((string= quadrant-entity +tholian+)
+    ((string= sector-entity +tholian+)
      "Tholian")
-    ((string= quadrant-entity +thing+)
+    ((string= sector-entity +thing+)
      "Thing")
-    ((string= quadrant-entity +black-hole+)
+    ((string= sector-entity +black-hole+)
      "Black hole")
-    ((string= quadrant-entity +planet+)
+    ((string= sector-entity +planet+)
      "Planet")
-    ((string= quadrant-entity +star+)
+    ((string= sector-entity +star+)
      "Star")
     (t
      "unknown")))
+
+(define-constant +class-m+ 1)
+(define-constant +class-n+ 2)
+(define-constant +class-o+ 3)
+
+(defstruct planet ; C: planet
+  "Information about a planet."
+
+  quadrant ; C: w, a coordinate
+  ;; TODO - planet class has both a letter and a value. How to represent?
+  class ; C: pclass, one of 1, 2, or 3 (M, N, or O) - affects time needed to mine crystals
+  name ; Name of the planet. An empty string for uninhabited planets
+  destroyedp ; Whether or not this planet has been destroyed
+  knownp ; whether or not this planet has been scanned by the player
+  inhabitedp ; C: inhabited, Whether or not the planet has inhabitants.
+  crystals ; has crystals: 'absent, 'present, or 'mined
+  (status 'secure)) ; C: status, One of secure, distressed, enslaved
+
+(defun format-planet-class (class)
+  "Given a numeric value for the class of a planet, return the single letter equivalent, or an
+empty string if the planet class can't be determined."
+
+  (cond
+    ((= class +class-m+)
+     "M")
+    ((= class +class-n+)
+     "N")
+    ((= class +class-o+)
+     "O")
+    (t
+     "")))
+
+(defvar *planets* nil
+  "An alist of planet structs keyed by the quadrant coordinates of the planet")
 
 ;; TODO - define a ship structure. Ships have several properties: a label, a short range scan
 ;;        symbol, a location, dilithium crystals on board, energy, photon torpedoes, a shuttle
@@ -487,7 +217,8 @@ empty string if the planet class can't be determined."
 ;;        super-commander and sometimes commanders.
 
 (defstruct quadrant ; C: quadrant
-  "Information about a quadrant.
+  "Information about a quadrant. Some entities in a quadrant are transient and don't need to be
+tracked, including Tholians, black holes, and space things.
 
 When a quadrant has had a supernova don't zero out the number of stars, planets, and starbases. If
 the player caused the supernova these destroyed objects count against the final score and need to
@@ -522,7 +253,7 @@ be tracked."
   (destroyed-stars 0) ; C: starkl
   (destroyed-inhabited-planets 0) ; C: nworldkl
   (destroyed-uninhabited-planets 0) ; C: nplankl
-  (planet-information ()) ; C: planets
+  (planets ()) ; C: planets
   (stardate 0.0) ; C: double date
   shuttle-craft-location
   shuttle-craft-quadrant
@@ -566,41 +297,16 @@ be tracked."
                                                         "Shield Control" "Death Ray"
                                                         "D. S. Probe" "Cloaking Device")))
 
-
-;; Define future events - these are event types.
-;; TODO - These are indexes into the future-events array, what is an appropriate Common Lisp data
-;; structure? The values are also used in a case statement.
-(define-constant +spy+ 0 "Spy event happens always (no future[] entry), can cause SC to tractor beam Enterprise") ; C: FSPY
-(define-constant +supernova+ 1) ; C: FSNOVA
-(define-constant +tractor-beam+ 2 "Commander tractor beams Enterprise.") ; C: FTBEAM
-(define-constant +snapshot-for-time-warp+ 3) ; C: FSNAP
-(define-constant +commander-attacks-base+ 4) ; C: FBATTAK
-(define-constant +commander-destroys-base+ 5) ; C: FCDBAS
-(define-constant +move-super-commander+ 6
-  "The Super-commander moves, and might attack a base.") ; C: FSCMOVE
-(define-constant +super-commander-destroys-base+ 7) ; C: FSCDBAS
-(define-constant +move-deep-space-probe+ 8) ; C: FDSPROB
-(define-constant +distress-call-from-inhabited-world+ 9) ; C: FDISTR
-(define-constant +inhabited-world-is-enslaved+ 10) ; C: FENSLV
-(define-constant +klingons-build-ship-in-enslaved-system+ 11) ; C: FREPRO
-
-;; TODO - the C source only used the quadrant in the event struct for planet conquest but most
-;;        events do occur in a quadrant. Update event handling to add quadrants to all events?
-;;(defstruct event
-;;  date ; stardate when event will occur
-;;  quadrant) ; coordinates of quadrant where event will occur
-(defparameter *conquest-quadrant* nil "Location of planet where the distress/enslave/reproduce events occur.")
-
 (define-constant +sst-version+ "SST 2.0") ; C: SSTMAGIC
 
 ;; User-selectable game parameters.
-(defparameter *tournament-number* nil "Tournament number, or nil if regular game.") ; C: tourn
+(defvar *tournament-number* nil "Tournament number, or nil if regular game.") ; C: tourn
 (defparameter *game-length-values* (list
                                     (cons "short" 1)
                                     (cons "medium" 2)
                                     (cons "long" 4))
   "Numeric values for game lengths used to intialize parameters in new games.")
-(defparameter *game-length* nil
+(defvar *game-length* nil
   "A string containing player's selection of game length.") ; C: length
 (define-constant +novice+ 1) ; C: skill, SKILL_NOVICE = 1
 (define-constant +fair+ 2) ; C: skill, SKILL_FAIR = 2
@@ -614,124 +320,152 @@ be tracked."
                                     (cons +expert+ "expert")
                                     (cons +emeritus+ "emeritus"))
   "Labels for skill levels.")
-(defparameter *skill-level* nil
+(defvar *skill-level* nil
   "A number representing the player's selection of skill level.") ; C: skill
-(defparameter *self-destruct-password* nil) ; C: passwd[10]
+(defvar *self-destruct-password* nil) ; C: passwd[10]
+
+(defstruct mover
+  "An entity in the game that can move. This includes the player ship, enemy ships, torpedoes,
+and probes. Entities in motion have a current x,y location, an increment by which they will next
+change location, a speed (warp factor), and a destination. When a destination is not specified
+the entity may continue moving indefinitely, until it exits the current sector (torpedoes) or exits
+ the galaxy (probes)."
+
+  x ; cuurent sector x coordinate within the galaxy
+  y ; current sector y coordinate within the galaxy
+  warp-factor ; speed at which the entity moves
+  inc-x ; amount of change in the x direction next time the entity moves
+  inc-y ; amount of change in the y direction next time the entity moves
+  d-x ; destination sector x coordinate within the galaxy
+  d-y ; destination sector y coordinate within the galaxy
+  moves-remaining) ; number of moves remaining to cover the desired distance
 
 ;; The Enterprise
 ;; TODO - the Faerie Queene has no shuttle craft or deathray so it should not be
 ;; possible/allowed/necessary to check if those devices are damaged
 (define-constant +full-crew+ 428) ; C: FULLCREW, BSD Trek was 387, that's wrong
-(defparameter *ship* +enterprise+) ; C: ship, 'E' is Enterprise
-(defparameter *initial-energy* 5000.0 "Initial and max energy") ; C: inenrg
-(defparameter *ship-energy* 5000.0) ; C: energy
-(defparameter *initial-shield-energy* 2500.0 "Initial and max shield") ; C: inshld
-(defparameter *shield-energy* 2500.0) ; C: shield
-(defparameter *shields-are-changing-p* nil) ; C: shldchg, affects efficiency
-(defparameter *shields-are-up-p* nil) ; C: shldup
-(defparameter *cloakedp* nil "Cloaking is enabled") ; C: iscloaked
-(defparameter *cloakingp* nil "In the process of cloaking and can be attacked") ; C: iscloaking
-(defparameter *initial-life-support-reserves* 4.0) ; C: inlsr
-(defparameter *life-support-reserves* 4.0) ; C: lsupres
-(defparameter *initial-torpedos* 10 "Initial and max torpedoes") ; C: intorps
-(defparameter *torpedoes* 10) ; C: torps
-(defparameter *warp-factor* 5.0) ; C: warpfac, Warp speed
-(defparameter *device-damage* (make-array +number-of-devices+ :initial-element 0.0)) ; C: damage[NDEVICES], Damage encountered
-(defparameter *crew* +full-crew+) ; C: crew, crew complement
-(defparameter *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
-(defparameter *casualties* 0) ; C: casual
-(defparameter *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
-(defparameter *brig-free* 0 "room in the brig") ; C: brigfree
-(defparameter *dilithium-crystals-on-board-p* nil) ; C: icrystl
-(defparameter *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
+(defvar *ship* +enterprise+) ; C: ship, 'E' is Enterprise
+(defvar *initial-energy* 5000.0 "Initial and max energy") ; C: inenrg
+(defvar *ship-energy* 5000.0) ; C: energy
+(defvar *initial-shield-energy* 2500.0 "Initial and max shield") ; C: inshld
+(defvar *shield-energy* 2500.0) ; C: shield
+(defvar *shields-are-changing-p* nil) ; C: shldchg, affects efficiency
+(defvar *shields-are-up-p* nil) ; C: shldup
+(defvar *cloakedp* nil "Cloaking is enabled") ; C: iscloaked
+(defvar *cloakingp* nil "In the process of cloaking and can be attacked") ; C: iscloaking
+(defvar *initial-life-support-reserves* 4.0) ; C: inlsr
+(defvar *life-support-reserves* 4.0) ; C: lsupres
+(defvar *initial-torpedos* 10 "Initial and max torpedoes") ; C: intorps
+(defvar *torpedoes* 10) ; C: torps
+(defvar *warp-factor* 5.0) ; C: warpfac, Warp speed
+(defvar *device-damage* (make-array +number-of-devices+ :initial-element 0.0)) ; C: damage[NDEVICES], Damage encountered
+(defvar *crew* +full-crew+) ; C: crew, crew complement
+(defvar *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
+(defvar *casualties* 0) ; C: casual
+;; TODO - show brig free/capacity as part of the ship status
+(defvar *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
+(defvar *brig-free* 0 "room in the brig") ; C: brigfree
+(defvar *dilithium-crystals-on-board-p* nil) ; C: icrystl
+(defvar *crystal-work-probability* 0.0) ; C: cryprob, probability that crystal will work
+(defvar *probes-available* 0) ; C: nprobes
 
-;; TODO - dead seems to be the same as (not *alivep*)
-(defparameter *condition* nil "red, yellow, green, dead") ; C: condition
+(defvar *condition* nil "red, yellow, green") ; C: condition
 ;; Values for *condition*
 (define-constant +green-status+ "GREEN") ; C: IHGREEN
 (define-constant +yellow-status+ "YELLOW") ; C: IHYELLOW
 (define-constant +red-status+ "RED") ; C: IHRED
-(define-constant +dead+ "DEAD")
 
 ;; TODO - decide if orbital cloaking is possible
-(defparameter *dockedp* nil) ; a possible flight condition
-(defparameter *in-orbit-p* nil) ; C: inorbit, orbiting - a possible flight condition
-(defparameter *height-of-orbit* 0) ; C: height, height of orbit around planet
+(defvar *dockedp* nil) ; a possible flight condition
+(defvar *in-orbit-p* nil) ; C: inorbit, orbiting - a possible flight condition
+(defvar *height-of-orbit* 0) ; C: height, height of orbit around planet
 
-(defparameter *initial-bases* 0) ; C: inbase
-(defparameter *destroyed-bases* 0 "Number of bases destroyed by player action.") ; C: basekl
-(defparameter *base-quadrants* () "A list of coordinate structs, these are quadrants containing bases.")
+(defvar *initial-bases* 0) ; C: inbase
+(defvar *destroyed-bases* 0 "Number of bases destroyed by player action.") ; C: basekl
+(defvar *base-quadrants* ()
+  "A list of coordinate structs, these are quadrants containing bases.")
 
-(defparameter *initial-stars* 0); C: instar
-(defparameter *destroyed-stars* 0 "Number of stars destroyed by player action.") ; C: starkl
+(defvar *initial-stars* 0); C: instar
+(defvar *destroyed-stars* 0 "Number of stars destroyed by player action.") ; C: starkl
 
-(defparameter *initial-planets* 0) ; C: inplan
-(defparameter *destroyed-inhabited-planets* 0) ; C: nworldkl
-(defparameter *destroyed-uninhabited-planets* 0) ; C: nplankl
+(defvar *initial-planets* 0) ; C: inplan
+(defvar *destroyed-inhabited-planets* 0) ; C: nworldkl
+(defvar *destroyed-uninhabited-planets* 0) ; C: nplankl
 
-(defparameter *initial-klingons* 0) ; C: inkling
-(defparameter *remaining-klingons* 0) ; C: remkl
-(defparameter *captured-klingons* 0 "number of captured Klingons") ; C: kcaptured
+(defvar *initial-klingons* 0) ; C: inkling
+(defvar *remaining-klingons* 0) ; C: remkl
+(defvar *captured-klingons* 0 "number of captured Klingons") ; C: kcaptured
 
-(defparameter *initial-commanders* 0) ; C: incom
-(defparameter *commander-quadrants* () "List of coordinate structs, these are quadrants containing commanders.")
+(defvar *initial-commanders* 0) ; C: incom
+(defvar *commander-quadrants* () "List of coordinate structs, these are quadrants containing commanders.")
 
-(defparameter *initial-super-commanders* 0); C: inscom
-(defparameter *remaining-super-commanders* 0) ; C: nscrem
-(defparameter *super-commander-quadrant* nil) ; C: kscmdr
+(defvar *initial-super-commanders* 0); C: inscom
+(defvar *remaining-super-commanders* 0) ; C: nscrem
+(defvar *super-commander-quadrant* nil) ; C: kscmdr
 
-(defparameter *initial-romulans* 0) ; C: inrom
-(defparameter *remaining-romulans* 0) ; C: nromrem
+(defvar *initial-romulans* 0) ; C: inrom
+(defvar *remaining-romulans* 0) ; C: nromrem
 
-(defparameter *cloaking-violations* 0 "Number of treaty violations") ; C: ncviol
-(defparameter *cloaking-violation-reported-p* nil "Violation reported by Romulan in quadrant") ; C: isviolreported
+(defvar *cloaking-violations* 0 "Number of treaty violations") ; C: ncviol
+(defvar *cloaking-violation-reported-p* nil "Violation reported by Romulan in quadrant") ; C: isviolreported
 
-(defparameter *initial-resources* 0.0) ; C: inresor
-(defparameter *remaining-resources* 0.0) ; C: remres
-(defparameter *initial-time* 0.0) ; C: intime
-(defparameter *remaining-time* 0.0) ; C: remtime
-(defparameter *initial-stardate* 0.0) ; C: indate
-(defparameter *stardate* 0.0) ; C: double date
+(defvar *initial-resources* 0.0) ; C: inresor
+(defvar *remaining-resources* 0.0) ; C: remres
+(defvar *initial-time* 0.0) ; C: intime
+(defvar *remaining-time* 0.0) ; C: remtime
+(defvar *initial-stardate* 0.0) ; C: indate
 
-(defparameter *damage-factor* 0.0 "Damage modifier based on skill level") ; C: damfac
+(defvar *damage-factor* 0.0 "Damage modifier based on skill level") ; C: damfac
 
-(defparameter *galaxy* nil "The Galaxy, an array of quadrants") ; C: galaxy[GALSIZE+1][GALSIZE+1]
-(defparameter *starchart* nil "The starchart, an array of starchart-pages") ; C: chart[GALSIZE+1][GALSIZE+1]
+(defvar *galaxy* nil "The Galaxy, an array of quadrants") ; C: galaxy[GALSIZE+1][GALSIZE+1]
+(defvar *starchart* nil "The starchart, an array of starchart-pages") ; C: chart[GALSIZE+1][GALSIZE+1]
 
-(defparameter *quadrant-contents* (make-array (list +quadrant-size+ +quadrant-size+))
-  "The contents of the current quadrant.") ; C: feature quad[QUADSIZE+1][QUADSIZE+1];
-;; TODO the next 4 arrays have information for 1 enemy at a given index. Would a single arrary of structs
-;;      do the job as well, perhaps stored in *quadrant-contents*?
-;; The array sizes need to accomodate the deathray case of filling the sector.
-(defparameter *klingon-energy* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kpower[(QUADSIZE+1)*(QUADSIZE+1)], enemy energy levels
-(defparameter *klingon-distance* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kdist[(QUADSIZE+1)*(QUADSIZE+1)], enemy distances
-(defparameter *klingon-average-distance* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: kavgd[(QUADSIZE+1)*(QUADSIZE+1)], average distances
-(defparameter *klingon-sectors* (make-array (* +quadrant-size+ +quadrant-size+))) ; C: ks[(QUADSIZE+1)*(QUADSIZE+1)], enemy sector locations - an array of coordinates
-(defparameter *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
-(defparameter *base-sector* nil) ; C: base, coordinate position of base in current quadrant
+(defstruct enemy
+  "Information about an enemy in a sector.
+
+Average distance is the average of the distances between the player ship and an enemy before the
+ ship moved and after the ship moved. The average distance is used to calculate the strength of
+ the enemy's attack on the player, not the previous or current distances, either of which could be
+greater or lesser."
+
+  energy ; C: kpower
+  distance ; C: kdist
+  average-distance ; C: kavgd
+  sector-coordinates) ; C: ks
+
+;; The array size needs to accommodate the deathray case of filling the sector.
+;; TODO - there seems to be two arrays for similar items
+(defvar *quadrant-enemies* (make-array (* +quadrant-size+ +quadrant-size+))
+  "Information about enemies in the quadrant, represented as an enemy struct.")
+
+(defvar *quadrant* (make-array (list +quadrant-size+ +quadrant-size+))
+  "The contents of the current quadrant as seen on a short range scan. That is, an array of
+ strings, each containing a single character.") ; C: feature quad[QUADSIZE+1][QUADSIZE+1];
+
+(defvar *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
+(defvar *base-sector* nil) ; C: base, coordinate position of base in current quadrant
 
 ;; Other game parameters
 ;; TODO - should this be in an event structure?
-(defparameter *base-under-attack-quadrant* nil) ; C: battle, Base coordinates being attacked - a coordinate struct, or nil. See also the event +commander-attacks-base+
-(defparameter *calls-for-help* 0) ; C: nhelp
-(defparameter *energy-barrier-crossings* 0 "Count of energy-barrier crossings") ; C: nkinks
-(defparameter *in-shuttle-craft-p* nil "Kirk in Galileo") ; C: icraft
-(defparameter *miningp* nil) ; C: imine
-(defparameter *restingp* nil) ; C: resting, rest time
-(defparameter *super-commander-attack-enterprise-p* nil) ; C: iscate
-(defparameter *super-commander-attacking-base* 'not-atacking
+(defvar *base-under-attack-quadrant* nil) ; C: battle, Base coordinates being attacked - a coordinate struct, or nil. See also the event 'commander-attacks-base
+(defvar *calls-for-help* 0) ; C: nhelp
+(defvar *energy-barrier-crossings* 0 "Count of energy-barrier crossings") ; C: nkinks
+(defvar *in-shuttle-craft-p* nil "Kirk in Galileo") ; C: icraft
+(defvar *miningp* nil) ; C: imine
+(defvar *restingp* nil) ; C: resting, rest time
+(defvar *super-commander-attack-enterprise-p* nil) ; C: iscate
+(defvar *super-commander-attacking-base* 'not-atacking
   "Possible states are attacking, not attacking, in the process of destroying.") ; C: isatb
-(defparameter *shuttle-craft-location* 'on-ship
+(defvar *shuttle-craft-location* 'on-ship
   "Location of the shuttle craft. One of 'on-ship, 'off-ship, or 'removed. 'off-ship is effectively
 the same as being on a planet.") ; C: iscraft
-(defparameter *shuttle-craft-quadrant* nil "The quadrant coordinates of the shuttle craft. They are
+(defvar *shuttle-craft-quadrant* nil "The quadrant coordinates of the shuttle craft. They are
 the same as the ship if the shuttle craft location is on-ship.")
-;; TODO - alivep and condition = dead are two ways of saying the same thing....
-(defparameter *alivep* t "The player is alive (not killed)") ; C: alive
-(defparameter *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
+(defvar *alivep* t "The player is alive (not killed)") ; C: alive
+(defvar *action-taken-p* nil "If an action is taken then enemy is allowed to attack.") ; C: ididit
 
-(defparameter *snapshot* nil) ; C: snapshot snapsht;
-(defparameter *snapshot-taken-p* nil) ; C:snap
+(defvar *snapshot* nil) ; C: snapshot snapsht;
+(defvar *snapshot-taken-p* nil) ; C:snap
 (defun use-snapshot ()
   "Assign the values stored in the snapshot structure to the similarly named global values."
 
@@ -747,7 +481,7 @@ the same as the ship if the shuttle craft location is on-ship.")
   (setf *destroyed-stars* (snapshot-destroyed-stars *snapshot*))
   (setf *destroyed-inhabited-planets* (snapshot-destroyed-inhabited-planets *snapshot*))
   (setf *destroyed-uninhabited-planets* (snapshot-destroyed-uninhabited-planets *snapshot*))
-  (setf *planet-information* (snapshot-planet-information *snapshot*))
+  (setf *planets* (snapshot-planets *snapshot*))
   (setf *stardate* (snapshot-stardate *snapshot*))
   (setf *shuttle-craft-location* (snapshot-shuttle-craft-location *snapshot*))
   (setf *shuttle-craft-quadrant* (snapshot-shuttle-craft-quadrant *snapshot*))
@@ -758,67 +492,44 @@ the same as the ship if the shuttle craft location is on-ship.")
   (setf *starchart* (snapshot-starchart *snapshot*)))
 
 ;; The game
-(defparameter *game-won-p* nil) ; C: gamewon, Finished!
-(defparameter *all-done-p* t "Game is finished. True at the end of a game or if no game is in progress.") ; C: alldone
+(defvar *game-won-p* nil) ; C: gamewon, Finished!
+(defvar *all-done-p* t "Game is finished. True at the end of a game or if no game is in progress.") ; C: alldone
 
 ;; Information about the current quadrant, set each time the ship enters a new quadrant
-(defparameter *just-in-p* nil
+(defvar *just-in-p* nil
   "True when the player has entered the quadrant but not yet taken any action.") ; C: justin
-(defparameter *klingons-here* nil) ; C: klhere
-(defparameter *commanders-here* nil) ; C: comhere - TODO could this be in the quadrant structure like Klingons and Romulans?
-(defparameter *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
-(defparameter *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
-(defparameter *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
-(defparameter *enemies-here* nil "Number of enemies in quadrant") ; C: nenhere
-(defparameter *romulan-neutral-zone-p* nil) ; C: neutz	, Romulan Neutral Zone
-(defparameter *landedp* nil) ; C: landed	, party on planet (true), on ship (false)
-(defparameter *attempted-escape-from-super-commander-p* nil) ; C: ientesc
-(defparameter *tholians-here* 0) ; C: ithere - Max 1 Tholian in a quadrant but this is an entity count not a boolean
-(defparameter *base-attack-report-seen-p* nil) ; C: iseenit
-(defparameter *current-planet* nil "Sector coordinate location of a planet in the current quadrant, if any") ; C: plnet
+(defvar *klingons-here* nil) ; C: klhere
+(defvar *commanders-here* nil) ; C: comhere - TODO could this be in the quadrant structure like Klingons and Romulans?
+(defvar *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
+(defvar *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
+(defvar *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
+(defvar *enemies-here* nil "Number of enemies in quadrant") ; C: nenhere
+(defvar *romulan-neutral-zone-p* nil) ; C: neutz	, Romulan Neutral Zone
+(defvar *landedp* nil) ; C: landed	, party on planet (true), on ship (false)
+(defvar *attempted-escape-from-super-commander-p* nil) ; C: ientesc
+(defvar *tholians-here* 0) ; C: ithere - Max 1 Tholian in a quadrant but this is an entity count not a boolean
+(defvar *base-attack-report-seen-p* nil) ; C: iseenit
+(defvar *current-planet* nil "Sector coordinate location of a planet in the current quadrant, if any") ; C: plnet
 
-(defparameter *time-taken-by-current-operation* 0.0) ; C: optime
-(defparameter *last-chart-update* 0.0); C: lastchart, time starchart was last updated. It starts functional but we've never seen it.
+(defvar *time-taken-by-current-operation* 0.0) ; C: optime
 
-(defparameter *probe-reported-quadrant* (make-coordinate)
-  "The last reported location of the probe") ; C: probec, current probe quadrant
-;; Probe x and y quadrant+sector
-(defparameter *probe-x-coord* 0) ; C: probex	, location of probe
-(defparameter *probe-y-coord* 0) ; C: probey
-(defparameter *probe-x-increment* nil) ; C: probeinx, Probe x,y increment
-(defparameter *probe-y-increment* nil) ; C: probeiny
-(defparameter *moves-for-probe* nil) ; C: proben
-(defparameter *probes-available* 0) ; C: nprobes
-(defparameter *probe-is-armed-p* nil) ; C: isarmed
+(defstruct (probe (:include mover))
+  "A deep space probe launched by the Enterprise."
 
-;; C: enum COLORS
-(define-constant +default-color+ 0)
-(define-constant +black+ 1)
-(define-constant +blue+ 2)
-(define-constant +green+ 3)
-(define-constant +cyan+ 4)
-(define-constant +red+ 5)
-(define-constant +magenta+ 6)
-(define-constant +brown+ 7)
-(define-constant +light-gray+ 8)
-(define-constant +dark-gray+ 9)
-(define-constant +light-blue+ 10)
-(define-constant +light-green+ 11)
-(define-constant +light-cyan+ 12)
-(define-constant +light-red+ 13)
-(define-constant +light-magenta+ 14)
-(define-constant +yellow+ 15)
-(define-constant +white+ 16)
+  is-armed-p)  ; C: isarmed, When true, the probe's NOVAMAX warhead is armed and will detonate at the destination
 
-;; The Space Thing's global state should *not* be saved! This prevents players proving they encountered it
-;; by examining a saved game.
-(defparameter *thing-location* nil); C: thing, location of strange object in galaxy
-(defparameter *things-here* 0) ; C: bool iqhere - Normally Max 1 Thing in a quadrant but this an entity count not a boolean.
-(defparameter *thing-is-angry-p* nil) ; C: bool iqengry
-(defparameter *score* 0) ; C: iscore, Common PLAQ
-(defparameter *seed* 0) ; C: int seed, the random-number seed
-(defparameter *log-file* 0) ; C: FILE *logfp, TODO - this should be a file, deal with it later
-(defparameter *replay-file* 0) ; C: FILE *replayfp, TODO - this should be a file, deal with it later
+(defvar *probe* nil
+  "The probe currently in flight.")
+
+;; The Space Thing's global state should *not* be saved! This prevents players proving they
+;; encountered it by examining a saved game.
+(defvar *thing-location* nil "Location of strange object in galaxy"); C: thing
+(defvar *things-here* 0) ; C: bool iqhere - Normally Max 1 Thing in a quadrant but this an entity count not a boolean.
+(defvar *thing-is-angry-p* nil) ; C: bool iqengry
+(defvar *score* 0) ; C: iscore, Common PLAQ
+(defvar *seed* 0) ; C: int seed, the random-number seed
+(defvar *log-file* 0) ; C: FILE *logfp, TODO - this should be a file, deal with it later
+(defvar *replay-file* 0) ; C: FILE *replayfp, TODO - this should be a file, deal with it later
 
 ;; Internal documentation of system names
 ;;
@@ -827,43 +538,43 @@ the same as the ship if the shuttle craft location is on-ship.")
 ;; Colony have been omitted.
 ;;
 ;; Some planets marked Class G and P here will be displayed as class M
-;; because of the way planets are generated. This is a known bug. TODO - fix it!
+;; because of the way planets are generated. This is a known bug.
 ;;
 ;;      Federation Worlds
-;; "Andoria (Fesoan)"),  several episodes
-;; "Tellar Prime (Miracht)"),  TOS: "Journey to Babel"
-;; "Vulcan (T'Khasi)"),  many episodes
-;; "Medusa"),   TOS: "Is There in Truth No Beauty?"
-;; "Argelius II (Nelphia)"), TOS: "Wolf in the Fold" ("IV" in BSD)
-;; "Ardana"),   TOS: "The Cloud Minders"
-;; "Catulla (Cendo-Prae)"),  TOS: "The Way to Eden"
-;; "Gideon"),   TOS: "The Mark of Gideon"
-;; "Aldebaran III"),  TOS: "The Deadly Years"
-;; "Alpha Majoris I"),  TOS: "Wolf in the Fold"
-;; "Altair IV"),   TOS: "Amok Time
-;; "Ariannus"),   TOS: "Let That Be Your Last Battlefield"
-;; "Benecia"),   TOS: "The Conscience of the King"
-;; "Beta Niobe I (Sarpeidon)"),  TOS: "All Our Yesterdays"
-;; "Alpha Carinae II"),  TOS: "The Ultimate Computer"
-;; "Capella IV (Kohath)"),  TOS: "Friday's Child" (Class G)
-;; "Daran V"),   TOS: "For the World is Hollow and I Have Touched the Sky"
-;; "Deneb II"),   TOS: "Wolf in the Fold" ("IV" in BSD)
-;; "Eminiar VII"),   TOS: "A Taste of Armageddon"
-;; "Gamma Canaris IV"),  TOS: "Metamorphosis"
-;; "Gamma Tranguli VI (Vaalel)"),  TOS: "The Apple"
-;; "Ingraham B"),   TOS: "Operation: Annihilate"
-;; "Janus IV"),   TOS: "The Devil in the Dark"
-;; "Makus III"),   TOS: "The Galileo Seven"
-;; "Marcos XII"),   TOS: "And the Children Shall Lead",
-;; "Omega IV"),   TOS: "The Omega Glory"
-;; "Regulus V"),   TOS: "Amok Time
-;; "Deneva"),   TOS: "Operation -- Annihilate!"
+;; "Andoria (Fesoan)" class M,  several episodes
+;; "Tellar Prime (Miracht)" class M,  TOS: "Journey to Babel"
+;; "Vulcan (T'Khasi)" class M,  many episodes
+;; "Medusa" class ?,   TOS: "Is There in Truth No Beauty?"
+;; "Argelius II (Nelphia)" class M, TOS: "Wolf in the Fold" ("IV" in BSD)
+;; "Ardana" class M,   TOS: "The Cloud Minders"
+;; "Catulla (Cendo-Prae)" class ?,  TOS: "The Way to Eden"
+;; "Gideon" class M,   TOS: "The Mark of Gideon"
+;; "Aldebaran III" class ?,  TOS: "The Deadly Years"
+;; "Alpha Majoris I" class ?,  TOS: "Wolf in the Fold"
+;; "Altair IV" class ?,   TOS: "Amok Time
+;; "Ariannus" class ?,   TOS: "Let That Be Your Last Battlefield"
+;; "Benecia" class ?,   TOS: "The Conscience of the King"
+;; "Beta Niobe I (Sarpeidon)" class ?,  TOS: "All Our Yesterdays"
+;; "Alpha Carinae II" class ?,  TOS: "The Ultimate Computer"
+;; "Capella IV (Kohath)" class M,  TOS: "Friday's Child" (Class G)
+;; "Daran V" class ?,   TOS: "For the World is Hollow and I Have Touched the Sky"
+;; "Deneb II" class ?,   TOS: "Wolf in the Fold" ("IV" in BSD)
+;; "Eminiar VII" class ?,   TOS: "A Taste of Armageddon"
+;; "Gamma Canaris IV" class ?,  TOS: "Metamorphosis"
+;; "Gamma Tranguli VI (Vaalel)" class ?,  TOS: "The Apple"
+;; "Ingraham B" class M,   TOS: "Operation: Annihilate"
+;; "Janus IV" class ?,   TOS: "The Devil in the Dark"
+;; "Makus III" class ?,   TOS: "The Galileo Seven"
+;; "Marcos XII" class ?,   TOS: "And the Children Shall Lead",
+;; "Omega IV" class M,   TOS: "The Omega Glory"
+;; "Regulus V" class M,   TOS: "Amok Time
+;; "Deneva" class ?,   TOS: "Operation -- Annihilate!"
 ;;
 ;;     Worlds from BSD Trek
-;; "Rigel II"),   TOS: "Shore Leave" ("III" in BSD)
-;; "Beta III"),   TOS: "The Return of the Archons"
-;; "Triacus"),   TOS: "And the Children Shall Lead",
-;; "Exo III"),   TOS: "What Are Little Girls Made Of?" (Class P)
+;; "Rigel II" class ?,   TOS: "Shore Leave" ("III" in BSD)
+;; "Beta III" class M,   TOS: "The Return of the Archons"
+;; "Triacus" class ?,   TOS: "And the Children Shall Lead",
+;; "Exo III" class ?,   TOS: "What Are Little Girls Made Of?" (Class P)
 ;;
 ;;     Others
 ;; "Hansen's Planet"),  TOS: "The Galileo Seven"
@@ -920,94 +631,40 @@ shuttle craft landed on it."
        (setf ship-name "Ship???")))
     (return-from format-ship-name ship-name)))
 
-;; TODO - every check for subspace radio damage needs to also check if the ship is cloaked because
-;;        the radio doesn't work while cloaked (review all calls checking the radio)
 (defun damagedp (device) ; C: #define damaged(dev) (game.damage[dev] != 0.0)
   "Evaluate whether or not a device is damaged."
 
   (/= (aref *device-damage* device) 0.0))
 
-(defun clear-window (window)
-  "Clear the specified window. Do nothing in line-by-line mode."
-
-  (when *window-interface-p*
-    (wclear window)
-    (wmove window 0 0)
-    (wrefresh window)))
-
 (defun clear-screen ()
   "Clear all windows."
 
-  (when *short-range-scan-window*
-  (clear-window *short-range-scan-window*))
-  (when *ship-status-window*
-  (clear-window *ship-status-window*))
-  (when *game-status-window*
-  (clear-window *game-status-window*))
-  (when *long-range-scan-window*
-  (clear-window *long-range-scan-window*))
   (when *message-window*
-  (clear-window *message-window*))
+    (clear-window *message-window*))
+  (when *short-range-scan-window*
+    (clear-window *short-range-scan-window*))
+  (when *ship-status-window*
+    (clear-window *ship-status-window*))
+  (when *game-status-window*
+    (clear-window *game-status-window*))
+  (when *long-range-scan-window*
+    (clear-window *long-range-scan-window*))
+  (when *message-window*
+    (clear-window *message-window*))
   (when *prompt-window*
-  (clear-window *prompt-window*))
+    (clear-window *prompt-window*))
   (when *starchart-window*
-  (clear-window *starchart-window*))
+    (clear-window *starchart-window*))
   (when *damage-report-window*
-  (clear-window *damage-report-window*))
+    (clear-window *damage-report-window*))
   (when *planet-report-window*
-  (clear-window *planet-report-window*))
+    (clear-window *planet-report-window*))
   (when *score-window*
-  (clear-window *score-window*)))
-
-(defun textcolor (color) ; C: void textcolor(int color)
-
-  (when *window-interface-p*
-    (cond
-      ((= color +default-color+)
-       (wattrset *current-window* 0))
-      ((= color +black+)
-       (wattrset *current-window* (color-pair color_black)))
-      ((= color +blue+)
-       (wattrset *current-window* (color-pair color_blue)))
-      ((= color +green+)
-       (wattrset *current-window* (color-pair color_green)))
-      ((= color +cyan+)
-       (wattrset *current-window* (color-pair color_cyan)))
-      ((= color +red+)
-       (wattrset *current-window* (color-pair color_red)))
-      ((= color +magenta+)
-       (wattrset *current-window* (color-pair color_magenta)))
-      ((= color +brown+)
-       (wattrset *current-window* (color-pair color_yellow)))
-      ((= color +light-gray+)
-       (wattrset *current-window* (color-pair color_white)))
-      ((= color +dark-gray+)
-       (wattrset *current-window* (color-pair (logior color_black a_bold))))
-      ((= color +light-blue+)
-       (wattrset *current-window* (color-pair (logior color_blue a_bold))))
-      ((= color +light-green+)
-       (wattrset *current-window* (color-pair (logior color_green a_bold))))
-      ((= color +light-cyan+)
-       (wattrset *current-window* (color-pair (logior color_cyan a_bold))))
-      ((= color +light-red+)
-       (wattrset *current-window* (color-pair (logior color_red a_bold))))
-      ((= color +light-magenta+)
-       (wattrset *current-window* (color-pair (logior color_magenta a_bold))))
-      ((= color +yellow+)
-       (wattrset *current-window* (color-pair (logior color_yellow a_bold))))
-      ((= color +white+)
-       (wattrset *current-window* (color-pair (logior color_white a_bold))))
-      (t ; Same as default case
-       (wattrset *current-window* 0)))))
-
-(defun highvideo () ; C: highvideo(void)
-
-  (when *window-interface-p*
-    (wattron *current-window* a_reverse)))
+    (clear-window *score-window*)))
 
 (defun calculate-warp-movement-time (&key warp-factor distance)
-  "Given a movement speed (warp factor) and distance calculate the amount of game time needed to
-move that distance."
+  "Given a movement speed (warp factor) and distance (in quadrants) calculate the amount of game
+ time needed to move that distance."
 
   (/ (* 10.0 distance) (expt warp-factor 2)))
 
@@ -1017,66 +674,44 @@ move that distance."
   "Report the status of bases under attack."
 
   (cond
-    ((is-scheduled-p +commander-destroys-base+)
-     (print-message (format nil "Starbase in ~A is currently under Commander attack.~%"
+    ((is-scheduled-p 'commander-destroys-base)
+     (print-message *message-window*
+                    (format nil "Starbase in ~A is currently under Commander attack.~%"
                             (format-quadrant-coordinates *base-under-attack-quadrant*)))
-     (print-message (format nil "It can hold out until Stardate ~A.~%"
-                            (format-stardate (truncate (scheduled-for +commander-destroys-base+))))))
+     (print-message *message-window* (format nil "It can hold out until Stardate ~A.~%"
+                            (format-stardate (truncate (scheduled-for 'commander-destroys-base))))))
 
     ((eql *super-commander-attacking-base* 'attacking)
-     (print-message (format nil "Starbase in ~A is under Super-commander attack.~%"
+     (print-message *message-window* (format nil "Starbase in ~A is under Super-commander attack.~%"
                             (format-quadrant-coordinates *super-commander-quadrant*)))
-     (print-message (format nil "It can hold out until Stardate ~A.~%"
-                            (format-stardate (truncate (scheduled-for +super-commander-destroys-base+))))))
+     (print-message *message-window* (format nil "It can hold out until Stardate ~A.~%"
+                            (format-stardate (truncate (scheduled-for 'super-commander-destroys-base))))))
 
     (t
-     (print-message (format nil "No Starbase is currently under attack.~%")))))
+     (print-message *message-window* (format nil "No Starbase is currently under attack.~%")))))
 
 (defun update-condition () ; C: void newcnd(void)
-  "Update our alert status."
+  "Update our alert status to one of Green, Yellow, or Red. Yellow supercedes Green and Red
+supercedes Yellow."
 
-  (setf *condition* +green-status+)
-  (when (or (< *ship-energy* 1000.0)
-            (> (damaged-device-count) 0))
-    (setf *condition* +yellow-status+))
-  (when (or (> (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
-            (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0))
-    (setf *condition* +red-status+))
-  (when (not *alivep*)
-    (setf *condition* +dead+)))
+  (cond
+    ;; Enemies present - always condition Red regardless of other factors
+    ((or (> (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
+         (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0))
+     (setf *condition* +red-status+))
+    ;; Energy low - always condition Yellow
+    ((< *ship-energy* 1000.0)
+     (setf *condition* +yellow-status+))
+    ;; The Experimental Death Ray isn't an essential ship system
+    ((and (= (damaged-device-count) 1)
+          (damagedp +death-ray+))
+     (setf *condition* +green-status+))
 
-(defun sector-scan (good-scan-p i j) ; C: static void sectscan(int goodScan, int i, int j)
-  "Light up an individual dot in a sector."
+    ((> (damaged-device-count) 0)
+     (setf *condition* +yellow-status+))
 
-  ;; Always show the sectors immediately adjacent to the ship
-  (if (or good-scan-p
-          (and (<= (abs (- i (coordinate-x *ship-sector*))) 1)
-               (<= (abs (- j (coordinate-y *ship-sector*))) 1)))
-      (progn
-        (when (or (string= (aref *quadrant-contents* i j) +materialize-1+)
-                  (string= (aref *quadrant-contents* i j) +materialize-2+)
-                  (string= (aref *quadrant-contents* i j) +materialize-3+)
-                  (string= (aref *quadrant-contents* i j) +enterprise+)
-                  (string= (aref *quadrant-contents* i j) +faerie-queene+))
-          (cond
-            ((string= *condition* +red-status+)
-             (textcolor +red+))
-            ((string= *condition* +yellow-status+)
-             (textcolor +yellow+))
-            ((string= *condition* +green-status+)
-             (textcolor +green+))
-            (*dockedp*
-             (textcolor +cyan+))
-            ((string= *condition* +dead+)
-             (textcolor +brown+))
-            (t
-             (textcolor +default-color+)))
-          (when (string= (aref *quadrant-contents* i j) *ship*)
-            (highvideo)))
-        (print-out (format nil "~A" (aref *quadrant-contents* i j)))
-        (textcolor +default-color+)
-        (print-out " "))
-      (print-out "  ")))
+    (t
+     (setf *condition* +green-status+))))
 
 (defun update-chart (x y) ; C: rechart_quad(x, y), more or less
   "Update the star chart page at quadrant coordinate x, y using galaxy data."
@@ -1128,8 +763,8 @@ affected."
       (supernova *ship-quadrant* nova-sector)
       (progn
         ;; handle initial nova
-        (setf (coord-ref *quadrant-contents* nova-sector) +empty-sector+)
-        (print-message (format nil "Star at ~A novas.~%"
+        (setf (coord-ref *quadrant* nova-sector) +empty-sector+)
+        (print-message *message-window* (format nil "Star at ~A novas.~%"
                                (format-sector-coordinates nova-sector)))
         (setf (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))
               (1- (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
@@ -1152,7 +787,7 @@ affected."
                    (setf movement-distance 0))
                  (when (> movement-distance 0)
                    (setf *time-taken-by-current-operation* (/ (* 10.0 movement-distance) 16.0)) ; warp 4
-                   (print-message (format nil "~%Force of nova displaces starship.~%"))
+                   (print-message *message-window* (format nil "~%Force of nova displaces starship.~%"))
                    ;; TODO - check if movement-distance was reduced due to tractor beam while ship was moving
                    (move-ship-within-quadrant :course movement-direction
                                               :distance movement-distance
@@ -1163,54 +798,54 @@ affected."
               ((> adjacent-x (1+ (coordinate-x n-sector))))
             (do ((adjacent-y (1- (coordinate-y n-sector)) (1+ adjacent-y)))
                 ((> adjacent-y (1+ (coordinate-y n-sector))))
-              (setf adjacent-coord (make-coordinate :x adjacent-x :y adjacent-y))
+              (setf adjacent-coord (make-sector-coordinate :x adjacent-x :y adjacent-y))
               (when (and (valid-sector-p adjacent-x adjacent-y)
                          (not (coord-equal adjacent-coord n-sector)))
                 (cond
                   ;; Affect another star
-                  ((string= (aref *quadrant-contents* adjacent-x adjacent-y) +star+)
+                  ((string= (aref *quadrant* adjacent-x adjacent-y) +star+)
                    (if (< (random 1.0) 0.05)
                        (progn
                          ;; This star supernovas
                          (supernova *ship-quadrant* adjacent-coord)
                          (return-from nova nil))
                        (progn
-                         (setf (aref *quadrant-contents* adjacent-x adjacent-y) +empty-sector+)
+                         (setf (aref *quadrant* adjacent-x adjacent-y) +empty-sector+)
                          (append nova-stars adjacent-coord)
-                         (print-message (format nil "Star at ~A novas.~%"
+                         (print-message *message-window* (format nil "Star at ~A novas.~%"
                                                 (format-sector-coordinates adjacent-coord)))
                          (setf (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))
                                (1- (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
                          (setf *destroyed-stars* (1+ *destroyed-stars*)))))
                   ;; Destroy planet
-                  ((string= (aref *quadrant-contents* adjacent-x adjacent-y) +planet+)
+                  ((string= (aref *quadrant* adjacent-x adjacent-y) +planet+)
                    (setf *destroyed-uninhabited-planets* (1+ *destroyed-uninhabited-planets*))
-                   (print-message (format nil "Planet at ~A destroyed.~%"
+                   (print-message *message-window* (format nil "Planet at ~A destroyed.~%"
                                           (format-sector-coordinates adjacent-coord)))
                    ;; Update the planet struct to show planet is destroyed, then put it back in the alist
-                   (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                   (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                      (setf (planet-destroyedp p) t)
-                     (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+                     (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) p))
                    (setf *planet-coord* nil)
                    (setf *current-planet* nil)
                    (when *landedp*
                      (finish 'nova-destroys-planet-while-landed)
                      (return-from nova nil))
-                   (setf (aref *quadrant-contents* adjacent-x adjacent-y) +empty-sector+))
+                   (setf (aref *quadrant* adjacent-x adjacent-y) +empty-sector+))
                   ;; Destroy base
-                  ((string= (aref *quadrant-contents* adjacent-x adjacent-y) +starbase+)
+                  ((string= (aref *quadrant* adjacent-x adjacent-y) +starbase+)
                    (setf (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 0)
                    (setf *base-quadrants* (remove *ship-quadrant* *base-quadrants* :test #'coord-equal))
                    (setf *base-sector* nil)
-                   (setf *destroyed-bases* (1+ *destroyed-bases*))
-                   (update-condition)
-                   (print-message (format nil "Starbase at ~A destroyed.~%"
+                   (incf *destroyed-bases* 1)
+                   (setf *dockedp* nil) ; No need to test if previously docked
+                   (print-message *message-window* (format nil "Starbase at ~A destroyed.~%"
                                           (format-sector-coordinates adjacent-coord)))
-                   (setf (aref *quadrant-contents* adjacent-x adjacent-y) +empty-sector+))
+                   (setf (aref *quadrant* adjacent-x adjacent-y) +empty-sector+))
                   ;; Buffet ship
-                  ((or (string= (aref *quadrant-contents* adjacent-x adjacent-y) +enterprise+)
-                       (string= (aref *quadrant-contents* adjacent-x adjacent-y) +faerie-queene+))
-                   (print-message (format nil "***Starship buffeted by nova.~%"))
+                  ((or (string= (aref *quadrant* adjacent-x adjacent-y) +enterprise+)
+                       (string= (aref *quadrant* adjacent-x adjacent-y) +faerie-queene+))
+                   (print-message *message-window* (format nil "***Starship buffeted by nova.~%"))
                    (if *shields-are-up-p*
                        (if (>= *shield-energy* 2000.0)
                            (decf *shield-energy* 2000.0)
@@ -1218,7 +853,7 @@ affected."
                              (decf *ship-energy* energy-difference)
                              (setf *shield-energy* 0.0)
                              (setf *shields-are-up-p* nil)
-                             (print-message (format nil "***Shields knocked out.~%"))
+                             (print-message *message-window* (format nil "***Shields knocked out.~%"))
                              (incf (aref *device-damage* +shields+) (* 0.005
                                                                        *damage-factor*
                                                                        (random 1.0)
@@ -1230,49 +865,55 @@ affected."
                    ;; add in course nova contributes to kicking starship
                    (incf change-x (- (coordinate-x *ship-sector*) (coordinate-x n-sector)))
                    (incf change-y (- (coordinate-y *ship-sector*) (coordinate-y n-sector)))
-                   (setf nova-pushes (1+ nova-pushes)))
+                   (incf nova-pushes 1))
                   ;; Kill klingon
-                  ((string= (aref *quadrant-contents* adjacent-x adjacent-y) +klingon+)
+                  ((string= (aref *quadrant* adjacent-x adjacent-y) +klingon+)
                    (dead-enemy adjacent-coord +klingon+ adjacent-coord))
                   ;; Damage/destroy big enemies
-                  ((or (string= (aref *quadrant-contents* adjacent-x adjacent-y) +commander+)
-                       (string= (aref *quadrant-contents* adjacent-x adjacent-y) +super-commander+)
-                       (string= (aref *quadrant-contents* adjacent-x adjacent-y) +romulan+))
+                  ((or (string= (aref *quadrant* adjacent-x adjacent-y) +commander+)
+                       (string= (aref *quadrant* adjacent-x adjacent-y) +super-commander+)
+                       (string= (aref *quadrant* adjacent-x adjacent-y) +romulan+))
                    (do ((enemy-index 0 (1+ enemy-index)))
                        ((or (>= enemy-index *enemies-here*)
-                            (coord-equal (aref *klingon-sectors* enemy-index) adjacent-coord))
-                        (decf (aref *klingon-energy* enemy-index) 800.0)
-                        (if (<= (aref *klingon-energy* enemy-index) 0.0) ; If firepower is lost, die
-                            (dead-enemy adjacent-coord (aref *quadrant-contents* adjacent-x adjacent-y) adjacent-coord)
-                            (let ((new-coord (make-coordinate :x (+ adjacent-x (- adjacent-x (coordinate-x n-sector)))
-                                                              :y (+ adjacent-y (- adjacent-y (coordinate-y n-sector))))))
-                              (print-message (format nil "~A at ~A damaged"
-                                                 (letter-to-name (aref *quadrant-contents* adjacent-x adjacent-y))
+                            (coord-equal (enemy-sector-coordinates (aref *quadrant-enemies* enemy-index))
+                                         adjacent-coord))
+                        (decf (enemy-energy (aref *quadrant-enemies* enemy-index)) 800.0)
+                        (if (<= (enemy-energy (aref *quadrant-enemies* enemy-index)) 0.0)
+                            ;; If firepower is lost, die
+                            (dead-enemy adjacent-coord
+                                        (aref *quadrant* adjacent-x adjacent-y)
+                                        adjacent-coord)
+                            (let ((new-coord (make-sector-coordinate
+                                              :x (+ adjacent-x (- adjacent-x (coordinate-x n-sector)))
+                                              :y (+ adjacent-y (- adjacent-y (coordinate-y n-sector))))))
+                              (print-message *message-window* (format nil "~A at ~A damaged"
+                                                 (letter-to-name (aref *quadrant* adjacent-x adjacent-y))
                                                  (format-sector-coordinates adjacent-coord)))
                               (cond
                                 ;; can't leave quadrant
-                                ((not (valid-sector-p (coordinate-x new-coord) (coordinate-y new-coord)))
-                                 (print-message (format nil ".~%")))
+                                ((not (valid-p new-coord))
+                                 (print-message *message-window* (format nil ".~%")))
 
-                                ((string= (coord-ref *quadrant-contents* new-coord) +black-hole+)
-                                 (print-message (format nil ", blasted into black hole at ~A.~%"
+                                ((string= (coord-ref *quadrant* new-coord) +black-hole+)
+                                 (print-message *message-window* (format nil ", blasted into black hole at ~A.~%"
                                                         (format-sector-coordinates new-coord)))
-                                 (dead-enemy adjacent-coord (aref *quadrant-contents* adjacent-x adjacent-y)
+                                 (dead-enemy adjacent-coord (aref *quadrant* adjacent-x adjacent-y)
                                              adjacent-coord))
                                 ;; can't move into something else
-                                ((string/= (coord-ref *quadrant-contents* new-coord) +empty-sector+)
-                                 (print-message (format nil ".~%")))
+                                ((string/= (coord-ref *quadrant* new-coord) +empty-sector+)
+                                 (print-message *message-window* (format nil ".~%")))
 
                                 (t
-                                 (print-message (format nil ", buffeted to ~A.~%"
+                                 (print-message *message-window* (format nil ", buffeted to ~A.~%"
                                                         (format-sector-coordinates new-coord)))
-                                 (setf (coord-ref *quadrant-contents* new-coord)
-                                       (aref *quadrant-contents* adjacent-x adjacent-y))
-                                 (setf (aref *quadrant-contents* adjacent-x adjacent-y) +empty-sector+)
-                                 (setf (aref *klingon-sectors* enemy-index) new-coord)
-                                 (setf (aref *klingon-average-distance* enemy-index)
+                                 (setf (coord-ref *quadrant* new-coord)
+                                       (aref *quadrant* adjacent-x adjacent-y))
+                                 (setf (aref *quadrant* adjacent-x adjacent-y) +empty-sector+)
+                                 (setf (enemy-sector-coordinates (aref *quadrant-enemies* enemy-index))
+                                       new-coord)
+                                 (setf (enemy-average-distance (aref *quadrant-enemies* enemy-index))
                                        (distance *ship-sector* new-coord))
-                                 (setf (aref *klingon-distance* enemy-index)
+                                 (setf (enemy-distance (aref *quadrant-enemies* enemy-index))
                                        (distance *ship-sector* new-coord)))))))))
                   ;; Empty space, nothing to do
                   (t
@@ -1289,7 +930,7 @@ affected."
   (let ((sector nil)
         nth-star)
     (when (> (quadrant-stars (coord-ref *galaxy* *ship-quadrant*)) 0)
-          (setf sector (make-coordinate))
+          (setf sector (make-sector-coordinate))
           (setf nth-star (random (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
           (do ((x 0 (1+ x)))
               ((or (>= x +quadrant-size+)
@@ -1297,7 +938,7 @@ affected."
             (do ((y 0 (1+ y)))
                 ((or (>= y +quadrant-size+)
                      (<= nth-star 0)))
-              (when (string= (aref *quadrant-contents* x y) +star+)
+              (when (string= (aref *quadrant* x y) +star+)
                 (setf nth-star (1- nth-star))
                 (setf (coordinate-x sector) x)
                 (setf (coordinate-y sector) y)))))
@@ -1309,30 +950,33 @@ affected."
   (if (or (not (coord-equal nova-quadrant *ship-quadrant*))
           *just-in-p*)
       ;; It isn't here, or we just entered (treat as enroute)
-      (when (or (not (damagedp +subspace-radio+))
-                *dockedp*)
-        (print-message (format nil "~%Message from Starfleet Command       Stardate ~A~%"
+      (when (subspace-radio-available-p)
+        (print-message *message-window*
+                       (format nil "~%Message from Starfleet Command       Stardate ~A~%"
                                (format-stardate *stardate*)))
-        (print-message (format nil "     Supernova in ~A; caution advised.~%"
+        (print-message *message-window* (format nil "     Supernova in ~A; caution advised.~%"
                                (format-quadrant-coordinates nova-quadrant))))
       ;; we are in the quadrant!
+      ;; TODO - emergency override should fail if ship is cloaked when a random supernova occurs
+      ;;        in the current quadrant - warp engines cannot be used while cloaked and it takes
+      ;;        time to uncloak
       (progn
-        (print-message (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
-        (print-message (format nil "~%***Incipient supernova detected at ~A~%"
+        (print-message *message-window* (format nil "~%***RED ALERT!  RED ALERT!~%")
+                       :print-slowly t)
+        (print-message *message-window* (format nil "~%***Incipient supernova detected at ~A~%"
                                (format-sector-coordinates nova-sector)))
         ;; Is the player too close to the supernova to survive?
         (when (<= (+ (expt (- (coordinate-x nova-sector) (coordinate-x *ship-sector*)) 2)
                      (expt (- (coordinate-y nova-sector) (coordinate-y *ship-sector*)) 2))
                   2.1)
-          (print-message "Emergency override attempts t")
-          (print-message (format nil "***************~%") :print-slowly t)
-          (skip-line)
+          (print-message *message-window* "Emergency override attempts t")
+          (print-message *message-window* (format nil "***************~%~%") :print-slowly t)
           (print-stars)
           (setf *all-done-p* t))))
   (when (and *base-under-attack-quadrant*
              (coord-equal nova-quadrant *base-under-attack-quadrant*))
-    (unschedule +super-commander-destroys-base+)
-    (unschedule +commander-destroys-base+)
+    (unschedule-event 'super-commander-destroys-base)
+    (unschedule-event 'commander-destroys-base)
     (setf *base-under-attack-quadrant* nil))
   ;; Destroy any Klingons in supernovaed quadrant
   ;; and count down the number of remaining klingons as they are removed
@@ -1343,53 +987,92 @@ affected."
     (setf *super-commander-quadrant* nil)
     (setf *super-commander-attacking-base* 'not-attacking)
     (setf *super-commander-attack-enterprise-p* nil)
-    (unschedule +move-super-commander+)
-    (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant))
-          (1- (quadrant-klingons (coord-ref *galaxy* nova-quadrant))))
-    (setf *remaining-klingons* (1- *remaining-klingons*)))
+    (unschedule-event 'move-super-commander)
+    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1)
+    (decf *remaining-klingons* 1))
   ;; TODO - can there be two commanders in one quadrant?
   (when (position nova-quadrant *commander-quadrants* :test #'coord-equal)
     ;; Destroyed a Commander
     (setf *commander-quadrants* (remove nova-quadrant *commander-quadrants* :test #'coord-equal))
-    (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant))
-          (1- (quadrant-klingons (coord-ref *galaxy* nova-quadrant))))
+    (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1)
     (when (= (length *commander-quadrants*) 0)
-      (unschedule +tractor-beam+)
-      (unschedule +commander-attacks-base+)
-      (unschedule +commander-destroys-base+)))
+      (unschedule-event 'tractor-beam)
+      (unschedule-event 'commander-attacks-base)
+      (unschedule-event 'commander-destroys-base)))
   (decf *remaining-klingons* (quadrant-klingons (coord-ref *galaxy* nova-quadrant)))
   (setf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 0)
   ;; destroy Romulans and planets in supernovaed quadrant
   (decf *remaining-romulans* (quadrant-romulans (coord-ref *galaxy* nova-quadrant)))
   (setf (quadrant-romulans (coord-ref *galaxy* nova-quadrant)) 0)
   ;; Destroy planet if there is one
-  (let ((p (rest (assoc nova-quadrant *planet-information* :test #'coord-equal))))
+  (let ((p (rest (assoc nova-quadrant *planets* :test #'coord-equal))))
     (when p ; p should be nil if there is no planet in the quadrant
       (setf (planet-destroyedp p) t)
-      (rplacd (assoc nova-quadrant *planet-information* :test #'coord-equal) p))
+      (rplacd (assoc nova-quadrant *planets* :test #'coord-equal) p)))
   ;; Destroy any base in supernovaed quadrant
   (setf *base-quadrants* (remove nova-quadrant *base-quadrants* :test #'coord-equal))
   ;; mark supernova in galaxy and in star chart
   (when (or (coord-equal *ship-quadrant* nova-quadrant)
-            (not (damagedp +subspace-radio+))
-            *dockedp*)
+            (subspace-radio-available-p))
     (setf (quadrant-supernovap (coord-ref *galaxy* nova-quadrant)) t))
   ;; Either case ends the game but neither necessarily occurs. There is no default case.
   (cond
     ((and (not (coord-equal *ship-quadrant* nova-quadrant))
           (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0))
      ;; If supernova destroys last Klingons give special message
-     (skip-line 2)
-     ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep space
-     ;; probe, that is, not induced by the player. Restore this? If yes, then also restore the score
-     ;; updates performed in this function when a probe causes as supernova.
-     (print-message (format nil "Lucky you!~%"))
-     (print-message (format nil "A supernova in ~A has just destroyed the last Klingons.~%"
+     (skip-line *message-window* 2)
+     ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep
+     ;; space probe, that is, not induced by the player. Restore this? If yes, then also restore
+     ;; the score updates performed in this function when a probe causes a supernova.
+     (print-message *message-window* (format nil "Lucky you!~%"))
+     (print-message *message-window*
+                    (format nil "A supernova in ~A has just destroyed the last Klingons.~%"
                             (format-quadrant-coordinates nova-quadrant)))
      (finish 'won))
     (*all-done-p*
      ;; if some Klingons remain, continue or die in supernova.
-     (finish 'destroyed-by-supernova)))))
+     (finish 'destroyed-by-supernova))))
+
+(defun repair-devices (repair-time) ; C variable: repair, C function does not exist
+  "Repair damaged devices for the length of time specified by repair-time. When they are
+functional again repaired devices perform their usual function if appropriate, e.g. subspace
+ radio, short range sensors."
+
+  (let ((repaired-devices (make-array +number-of-devices+ :initial-element nil))) ; C: fixed_dev
+    (when *dockedp*
+      (setf repair-time (/ repair-time +docked-repair-factor+)))
+    ;; Don't fix Deathray here. It's not fixed incrementally, but only after a long continuous
+    ;; time docked.
+    (do ((l 0 (1+ l)))
+        ((>= l +number-of-devices+))
+      (when (and (> (aref *device-damage* l) 0.0)
+                 (/= l +death-ray+))
+        (if (> (aref *device-damage* l) repair-time)
+            (decf (aref *device-damage* l) repair-time)
+            (progn
+              (setf (aref *device-damage* l) 0.0)
+              (setf (aref repaired-devices l) t)))))
+    ;; If radio repaired, update star chart and attack reports
+    (when (aref repaired-devices +subspace-radio+)
+      (print-message *message-window*
+                     (format nil "Lt. Uhura- \"Captain, the sub-space radio is working and~%"))
+      (print-message *message-window* (format nil "   surveillance reports are coming in.~%~%"))
+      (unless *base-attack-report-seen-p*
+        (attack-report)
+        (setf *base-attack-report-seen-p* t))
+      (print-message *message-window* (format nil "   The star chart is now up to date.\"~%~%")))
+    (when (or (aref repaired-devices +subspace-radio+)
+              (aref repaired-devices +long-range-sensors+)
+              (aref repaired-devices +short-range-sensors+))
+      (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
+    ;; When there is a separate short range scan window, if the short range sensors were just
+    ;; repaired and there is a planet in the current quadrant that has not been examined
+    ;; (unknown), then automatically examine it.
+    (when (and (not (eql *short-range-scan-window* *message-window*))
+               (aref repaired-devices +short-range-sensors+)
+               *current-planet*
+               (not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))))
+      (sensor))))
 
 (defun execute-tractor-beam (&key t-quadrant)
   "A commander or super-commander has tractor beamed the player ship.
@@ -1399,7 +1082,8 @@ t-quadrant is the quadrant to which the ship is pulled"
   (setf *time-taken-by-current-operation*
         (calculate-warp-movement-time :distance (distance t-quadrant *ship-quadrant*)
                                       :warp-factor 7.5)) ; 7.5 is tractor beam yank rate
-  (print-message (format nil "~%***~A caught in long range tractor beam--~%" (format-ship-name)))
+  (print-message *message-window*
+                 (format nil "~%***~A caught in long range tractor beam--~%" (format-ship-name)))
   ;; If Kirk & Co. screwing around on planet, handle
   (quadrant-exit-while-on-planet 'tractor-beam-while-mining)
   (when *all-done-p*
@@ -1411,28 +1095,31 @@ t-quadrant is the quadrant to which the ship is pulled"
   (when (eql *shuttle-craft-location* 'off-ship)
     (if (> (random 1.0) 0.5)
         (progn
-          (print-message (format nil "~%Galileo, left on the planet surface, is captured~%"))
-          (print-message (format nil "by aliens and made into a flying McDonald's.~%"))
+          (print-message *message-window*
+                         (format nil "~%Galileo, left on the planet surface, is captured~%"))
+          (print-message *message-window*
+                         (format nil "by aliens and made into a flying McDonald's.~%"))
           (setf (aref *device-damage* +shuttle+) -10) ; TODO - stop using special values in the damage array to store device properties
           (setf *shuttle-craft-location* 'removed)
           (setf *shuttle-craft-quadrant* nil))
-        (print-message (format nil "~%Galileo, left on the planet surface, is well hidden.~%"))))
+        (print-message *message-window*
+                       (format nil "~%Galileo, left on the planet surface, is well hidden.~%"))))
   (setf *ship-quadrant* t-quadrant)
   (setf *ship-sector* (get-random-sector))
-  (print-message (format nil "~A is pulled to ~A, ~A~%"
+  (print-message *message-window* (format nil "~A is pulled to ~A, ~A~%"
                          (format-ship-name)
                          (format-quadrant-coordinates *ship-quadrant*)
                          (format-sector-coordinates *ship-sector*)))
   (when *restingp*
-    (print-message (format nil "(Remainder of rest/repair period cancelled.)~%"))
+    (print-message *message-window* (format nil "(Remainder of rest/repair period cancelled.)~%"))
     (setf *restingp* nil))
-  (when (not *shields-are-up-p*)
+  (unless *shields-are-up-p*
     (if (and (not (damagedp +shields+))
              (> *shield-energy* 0))
         (progn
           (shield-actions :raise-shields t) ; raise shields
           (setf *shields-are-changing-p* nil))
-        (print-message (format nil "(Shields not currently useable.)~%"))))
+        (print-message *message-window* (format nil "(Shields not currently useable.)~%"))))
   (new-quadrant)
   (attack-player :torpedoes-ok-p nil))
 
@@ -1447,34 +1134,32 @@ t-quadrant is the quadrant to which the ship is pulled"
       (return-from cancel-rest-p t)))
   (return-from cancel-rest-p nil))
 
-;; TODO - Should this function also be used when one of our torpedoes destroys a starbase? Messages
-;;        to the player are different.
 (defun destroy-starbase (base-q)
   "A commander or the super-commander destroys a starbase."
 
   ;; No default case - if the ship is not in good repair then the base will be destroyed without
-  ;; notice to the player including no change to the star chart (the player is in for a nasty surprise)
+  ;; notice to the player including no change to the star chart (the player is in for a nasty
+  ;; surprise)
   ;; TODO - if no notice is given here, should the player be notified if a short- or long-range
   ;;        scan shows no starbase, where previously a starbase existed? Spock would notice, he is
   ;;        able to reconstruct a starchart from memory!
   (cond
     ((coord-equal *ship-quadrant* base-q)
      ;; Handle case where base is in same quadrant as starship
-     (setf (coord-ref *quadrant-contents* *base-sector*) +empty-sector+)
+     (setf (coord-ref *quadrant* *base-sector*) +empty-sector+)
      (setf *base-sector* nil)
-     (update-condition)
-     (print-message (format nil "~%Spock-  \"Captain, I believe the starbase has been destroyed.\"~%"))
+     (setf *dockedp* nil)
+     (print-message *message-window* (format nil "~%Spock-  \"Captain, I believe the starbase has been destroyed.\"~%"))
      (setf (starchart-page-starbases (coord-ref *starchart* base-q)) 0))
     ;; Get word via subspace radio
     ((and (> (length *base-quadrants*) 0) ; Need an existing base to transmit the message
-          (or (not (damagedp +subspace-radio+)) ; and a radio to receive it.
-              *dockedp*))
-     (print-message (format nil "~%Lt. Uhura-  \"Captain, Starfleet Command reports that~%"))
-     (print-message (format nil "   the starbase in ~A has been destroyed by~%"
+          (subspace-radio-available-p)) ; and a radio to receive it.
+     (print-message *message-window* (format nil "~%Lt. Uhura-  \"Captain, Starfleet Command reports that~%"))
+     (print-message *message-window* (format nil "   the starbase in ~A has been destroyed by~%"
                             (format-quadrant-coordinates base-q)))
      (if (eql *super-commander-attacking-base* 'destroying)
-         (print-message (format nil "the Klingon Super-Commander~%"))
-         (print-message (format nil "a Klingon Commander~%")))
+         (print-message *message-window* (format nil "the Klingon Super-Commander~%"))
+         (print-message *message-window* (format nil "a Klingon Commander~%")))
      (setf (starchart-page-starbases (coord-ref *starchart* base-q)) 0)))
   ;; Remove Starbase from galaxy
   (setf (quadrant-starbases (coord-ref *galaxy* base-q)) 0)
@@ -1487,11 +1172,10 @@ Return true on successful move."
 
   ;; Check for reasons to not perform the move
   (when (or (coord-equal destination-quadrant *ship-quadrant*)
-            (not (valid-quadrant-p (coordinate-x destination-quadrant)
-                                   (coordinate-y destination-quadrant)))
+            (not (valid-p destination-quadrant))
             (quadrant-supernovap (coord-ref *galaxy* destination-quadrant))
             (> (quadrant-klingons (coord-ref *galaxy* destination-quadrant))
-               (- +max-klingons-per-quadrant+ 1))
+               (1- +max-klingons-per-quadrant+))
             (and *just-in-p*
                  (not *super-commander-attack-enterprise-p*)))
     (return-from move-super-commander-one-quadrant nil))
@@ -1501,43 +1185,41 @@ Return true on successful move."
       (when (coord-equal bq destination-quadrant)
         (return-from move-super-commander-one-quadrant nil))))
   ;; Do the move
-  (setf (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*))
-        (1- (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*))))
+  (decf (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*)) 1)
   (setf *super-commander-quadrant* destination-quadrant)
-  (setf (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*))
-        (1+ (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*))))
+  (incf (quadrant-klingons (coord-ref *galaxy* *super-commander-quadrant*)) 1)
   (when (> *super-commanders-here* 0)
     ;; SC has scooted, remove him from current quadrant
     (setf *super-commander-attack-enterprise-p* nil)
     (setf *super-commander-attacking-base* 'not-attacking)
     (setf *super-commanders-here* 0)
     (setf *attempted-escape-from-super-commander-p* nil)
-    (unschedule +super-commander-destroys-base+)
+    (unschedule-event 'super-commander-destroys-base)
     (do ((i 0 (1+ i)))
         ((or (>= i *enemies-here*)
-             (string= (coord-ref *quadrant-contents* (aref *klingon-sectors* i)) +super-commander+))
-         (setf (coord-ref *quadrant-contents* (aref *klingon-sectors* i)) +empty-sector+)
-         (setf (aref *klingon-sectors* i) (aref *klingon-sectors* (1- *enemies-here*)))
-         (setf (aref *klingon-distance* i) (aref *klingon-distance* (1- *enemies-here*)))
-         (setf (aref *klingon-average-distance* i) (aref *klingon-average-distance* (1- *enemies-here*)))
-         (setf (aref *klingon-energy* i) (aref *klingon-energy* (1- *enemies-here*)))))
-    (setf *klingons-here* (1- *klingons-here*))
-    (setf *enemies-here* (1- *enemies-here*))
+             (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                      +super-commander+))
+         (setf (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+               +empty-sector+)
+         ;; TODO - this is wrong if a Tholian is the last enemy in the array, should shift
+         ;;        elements instead of moving the last one
+         (setf (aref *quadrant-enemies* i) (aref *quadrant-enemies* (1- *enemies-here*)))))
+    (decf *klingons-here* 1)
+    (decf *enemies-here* 1)
     (update-condition)
     (sort-klingons))
   ;; Check for a helpful planet
-  (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal))))
+  (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planets* :test #'coord-equal))))
     (when (and helpful-planet
                (eql (planet-crystals helpful-planet) 'present))
       ;; Destroy the planet
       (setf (planet-destroyedp helpful-planet) t)
-      (rplacd (assoc *super-commander-quadrant* *planet-information* :test #'coord-equal) helpful-planet)
-      (when (or *dockedp*
-                (not (damagedp +subspace-radio+)))
-        (print-message (format nil "Lt. Uhura-  \"Captain, Starfleet Intelligence reports~%"))
-        (print-message (format nil "   a planet in ~A has been destroyed~%"
+      (rplacd (assoc *super-commander-quadrant* *planets* :test #'coord-equal) helpful-planet)
+      (when (subspace-radio-available-p)
+        (print-message *message-window* (format nil "Lt. Uhura-  \"Captain, Starfleet Intelligence reports~%"))
+        (print-message *message-window* (format nil "   a planet in ~A has been destroyed~%"
                                (format-quadrant-coordinates *super-commander-quadrant*)))
-        (print-message (format nil "   by the Super-commander.\"~%")))))
+        (print-message *message-window* (format nil "   by the Super-commander.\"~%")))))
   (return-from move-super-commander-one-quadrant t)) ; Looks good!
 
 (defun move-super-commander () ; C: supercommander(void)
@@ -1564,7 +1246,7 @@ Return true on successful move."
         (progn
           (when (= (length *base-quadrants*) 0)
             ;; Nothing left to do
-            (unschedule +move-super-commander+)
+            (unschedule-event 'move-super-commander)
             (return-from move-super-commander nil))
           (let ((candidate-bases ()) ; Candidates for attack
                 (commander-at-closest-p t)
@@ -1604,8 +1286,9 @@ Return true on successful move."
     (when (< delta-y -1)
       (setf delta-y -1))
     ;; Try moving in both x and y directions
-    (let ((destination-quadrant (make-coordinate :x (+ (coordinate-x *super-commander-quadrant*) delta-x) ; iq
-                                                 :y (+ (coordinate-y *super-commander-quadrant*) delta-y))))
+    (let ((destination-quadrant (make-quadrant-coordinate
+                                 :x (+ (coordinate-x *super-commander-quadrant*) delta-x) ; iq
+                                 :y (+ (coordinate-y *super-commander-quadrant*) delta-y))))
       (unless (move-super-commander-one-quadrant destination-quadrant avoidp)
         ;; Failed -- try some other maneuvers
         (if (or (= delta-x 0)
@@ -1631,7 +1314,7 @@ Return true on successful move."
                 (move-super-commander-one-quadrant destination-quadrant avoidp))))))
     ;; Check for a base
     (if (= (length *base-quadrants*) 0)
-        (unschedule +move-super-commander+)
+        (unschedule-event 'move-super-commander)
         (dolist (bq *base-quadrants*)
           ;; TODO - if  *base-under-attack-quadrant* refers to commander actions then it would
           ;;        appear that the super-commander only attacks bases already under attack
@@ -1642,19 +1325,19 @@ Return true on successful move."
             (unless avoidp ; no, don't attack base!
               (setf *base-attack-report-seen-p* nil)
               (setf *super-commander-attacking-base* 'attacking)
-              (schedule-event +super-commander-destroys-base+ (+ 1.0 (* 2.0 (random 1.0))))
-              (when (is-scheduled-p +commander-destroys-base+)
-                (postpone-event +super-commander-destroys-base+
-                                (- (scheduled-for +commander-destroys-base+) *stardate*)))
-              (when (and (damagedp +subspace-radio+)
-                         (not *dockedp*))
+              (schedule-event 'super-commander-destroys-base (+ 1.0 (* 2.0 (random 1.0))))
+              (when (is-scheduled-p 'commander-destroys-base)
+                (postpone-event 'super-commander-destroys-base
+                                (- (scheduled-for 'commander-destroys-base) *stardate*)))
+              (when (subspace-radio-available-p)
                 (return-from move-super-commander nil)) ; No warning
               (setf *base-attack-report-seen-p* t)
-              (print-message (format nil "Lt. Uhura-  \"Captain, the starbase in ~A~%"
+              (print-message *message-window*
+                             (format nil "Lt. Uhura-  \"Captain, the starbase in ~A~%"
                                      (format-quadrant-coordinates *super-commander-quadrant*)))
-              (print-message (format nil "   reports that it is under attack from the Klingon Super-commander.~%"))
-              (print-message (format nil "   It can survive until stardate ~D.\"~%"
-                                     (scheduled-for +super-commander-destroys-base+)))
+              (print-message *message-window* (format nil "   reports that it is under attack from the Klingon Super-commander.~%"))
+              (print-message *message-window* (format nil "   It can survive until stardate ~D.\"~%"
+                                     (scheduled-for 'super-commander-destroys-base)))
               (when *restingp*
                 (print-prompt "Mr. Spock-  \"Captain, shall we cancel the rest period?\"")
                 (when (get-y-or-n-p)
@@ -1662,25 +1345,97 @@ Return true on successful move."
                   (setf *time-taken-by-current-operation* 0.0))) ; actually finished
               (return-from move-super-commander nil))))))
   ;; Check for intelligence report
-  ;; TODO - If super-commander is in the same quadrant as a base but not attacking then an
-  ;;        intelligence report should be sent as long as the ship is docked or the subspace
-  ;;        radio is working.
-  (when (or (<= (random 1.0) 0.2)
-            (not (damagedp +subspace-radio+))
-            *dockedp*
-            (quadrant-chartedp (coord-ref *galaxy* *super-commander-quadrant*)))
-    (print-message (format nil "Lt. Uhura-  \"Captain, Starfleet Intelligence reports~%"))
-    (print-message (format nil "   the Super-commander is in ~A.\"~%"
-                           (format-quadrant-coordinates *super-commander-quadrant*)))))
+  (when (and (or (<= (random 1.0) 0.2)
+                 (> (quadrant-starbases (coord-ref *galaxy* *super-commander-quadrant*)) 0))
+             (subspace-radio-available-p)
+             (quadrant-chartedp (coord-ref *galaxy* *super-commander-quadrant*)))
+    (print-message *message-window* (format nil "Lt. Uhura-  \"Captain, Starfleet Intelligence reports~%"))
+    (print-message *message-window* (format nil "   the Super-commander is in ~A.\"~%"
+                                            (format-quadrant-coordinates *super-commander-quadrant*)))))
 
-(defun schedule-event (event-type offset)
-  "Schedule an event of the specific type to occur offset time units in the future. Return the event.
-This isn't a real event queue a la BSD Trek yet -- you can only have one event of each type active
-at any given time.  Mostly these means we can only have one FDISTR/FENSLV/FREPRO sequence going at
-any given time; BSD Trek, from which we swiped the idea, can have up to 5."
+(defun move-deep-space-probe ()
+  "Move the Deep Space Probe one sector and handle the results."
 
-  (setf (aref *future-events* event-type) (+ *stardate* offset))
-  (return-from schedule-event (aref *future-events* event-type)))
+  (let ((probe-quadrant
+          (make-quadrant-coordinate :x (galaxy-sector-to-quadrant (probe-x *probe*))
+                                    :y (galaxy-sector-to-quadrant (probe-y *probe*)))))
+    (incf (probe-x *probe*) (probe-inc-x *probe*))
+    (incf (probe-y *probe*) (probe-inc-y *probe*))
+    (decf (probe-moves-remaining *probe*) 1) ; One less to travel
+    ;; When the probe quadrant changes provide an update to the player
+    (let ((i (galaxy-sector-to-quadrant (probe-x *probe*)))
+          (j (galaxy-sector-to-quadrant (probe-y *probe*))))
+      (when (or (/= (coordinate-x probe-quadrant) i)
+                (/= (coordinate-y probe-quadrant) j))
+        (setf (coordinate-x probe-quadrant) i)
+        (setf (coordinate-y probe-quadrant) j)
+        ;; No update if no working subspace radio
+        (when (subspace-radio-available-p)
+          (print-message *message-window* (format nil "~%Lt. Uhura-  \"The deep space probe "))
+          (cond ((not (valid-p probe-quadrant))
+                 (print-message *message-window* (format nil "has left the galaxy.\"~%"))
+                 (setf *probe* nil))
+
+                ((quadrant-supernovap (coord-ref *galaxy* probe-quadrant))
+                 (print-message *message-window* "is no longer transmitting.\"~%")
+                 (setf *probe* nil))
+
+                (t
+                 (print-message *message-window*
+                                (format nil "is now in ~A.\"~%" (format-quadrant-coordinates
+                                                                 probe-quadrant)))
+                 (setf (starchart-page-klingons (coord-ref *starchart* probe-quadrant))
+                       (quadrant-klingons (coord-ref *galaxy* probe-quadrant)))
+                 (setf (starchart-page-starbases (coord-ref *starchart* probe-quadrant))
+                       (quadrant-starbases (coord-ref *galaxy* probe-quadrant)))
+                 (setf (starchart-page-stars (coord-ref *starchart* probe-quadrant))
+                       (quadrant-stars (coord-ref *galaxy* probe-quadrant)))
+                 (setf (quadrant-chartedp (coord-ref *galaxy* probe-quadrant)) t))))))
+    ;; When an armed probe reaches the target location, cause a supernova. Even if there is no star
+    ;; to blow up the probe is still destroyed. Unarmed probes keep travelling and reporting until
+    ;; they exit the galaxy.
+    (when (and *probe*
+               (<= (probe-moves-remaining *probe*) 0)
+               (probe-is-armed-p *probe*))
+      (when (> (quadrant-stars (coord-ref *galaxy* probe-quadrant)) 0)
+        ;; lets blow the sucker!
+        (let ((supernova-sector nil))
+          (when (coord-equal probe-quadrant *ship-quadrant*)
+            ;; TODO - Select the star closest to the probe
+            (setf supernova-sector (get-random-star)))
+          (supernova probe-quadrant supernova-sector))
+        ;; If player caused supernova, tally up destruction.
+        (incf *destroyed-stars* (quadrant-stars (coord-ref *galaxy* probe-quadrant)))
+        (incf *destroyed-bases* (quadrant-starbases (coord-ref *galaxy* probe-quadrant)))
+        ;; TODO inhabited worlds are not counted but should be
+        (when (assoc probe-quadrant *planets* :test #'coord-equal) ; non-nil if planet exists
+          (incf *destroyed-uninhabited-planets* 1)))
+      (setf *probe* nil))
+    (when *probe*
+      (schedule-event 'move-deep-space-probe 0.01))))
+
+;;Actions that allow the enemy to respond but don't consume remaining time:
+;; use the transporter
+;; fire phasers
+;; fire photon torpedoes
+;; raise and lower shields
+;; launch probe
+;; use deathray
+;; use dilithium crystals
+;; dock at starbase
+
+;; Actions that consume remaining time:
+;;- moving when buffeted by a nova
+;;- movement when being pulled by a tractor beam
+;;- capturing klingons
+;;- ramming a ship
+;;- time warp
+;;- moving under impulse or warp drive, including supernova emergency exit
+;;- resting
+;;- visual scan
+;;- using the shuttle craft
+;;- mining dilithium crystals
+;;- entering planetary orbit
 
 (defun process-events () ; C: events(void)
   "Run through the event queue looking for things to do. This function manages the passing of time.
@@ -1701,21 +1456,24 @@ tractor-beamed the ship then the other will not."
   (do ((finish-date (+ *stardate* *time-taken-by-current-operation*))
        smallest-next-date ; C: datemin, the next stardate at which an event will occur
        execution-time ; C: xtime, time take by an event within the current operation time
-       event-code ; C: evcode
+       e ; an event struct
        (commander-used-tractor-beam-p nil) ; C: ictbeam
        (super-commander-used-tractor-beam-p nil) ; C: istract
        (allow-player-input nil))
       ((or allow-player-input
            *all-done-p*)) ; events in a previous iteration may have ended the game
-    ;; Select earliest extraneous event, evcode==0 if no events
-    (setf event-code +spy+)
+    ;; Get the next event to occur during player operation time. If no other event is scheduled
+    ;; then generate a spy event.
     (setf smallest-next-date finish-date)
-    (do ((l 0 (1+ l)))
-        ((>= l (length *future-events*)))
-      (when (and (aref *future-events* l) ; The event must be non-nil for the < comparison
-                 (< (aref *future-events* l) smallest-next-date))
-        (setf event-code l)
-        (setf smallest-next-date (aref *future-events* l))))
+    (setf e (get-next-event))
+    (if (and e
+             (< (event-date e) smallest-next-date))
+        (setf smallest-next-date (event-date e))
+        (progn
+          (when e
+            (unget-event e))
+          (schedule-event 'spy (- smallest-next-date *stardate*))
+          (setf e (get-next-event))))
     (setf execution-time (- smallest-next-date *stardate*))
     (when *cloakedp*
       (decf *ship-energy* (* execution-time 500.0)) ; cloaking uses energy!
@@ -1724,9 +1482,12 @@ tractor-beamed the ship then the other will not."
         (return-from process-events nil)))
     (setf *stardate* smallest-next-date) ; Advance game time
     ;; Decrement Federation resources and recompute remaining time
-    (decf *remaining-resources* (* (+ *remaining-klingons* (* 4 (length *commander-quadrants*))) execution-time))
+    (decf *remaining-resources* (* (+ *remaining-klingons*
+                                      (* 4 (length *commander-quadrants*)))
+                                   execution-time))
     (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
-        (setf *remaining-time* (/ *remaining-resources* (+ *remaining-klingons* (* 4 (length *commander-quadrants*)))))
+        (setf *remaining-time* (/ *remaining-resources*
+                                  (+ *remaining-klingons* (* 4 (length *commander-quadrants*)))))
         (setf *remaining-time* 99))
     (when (< *remaining-time* 0)
       (finish 'federation-resources-depleted)
@@ -1745,63 +1506,24 @@ tractor-beamed the ship then the other will not."
       (decf *life-support-reserves* execution-time)
       (when (<= (aref *device-damage* +life-support+) execution-time)
         (setf *life-support-reserves* *initial-life-support-reserves*)))
-    ;; Fix devices
-    ;; TODO - resting at starbase for the period of time in the damage report doesn't apply the
-    ;;        docking factor for device repairs. Tested by ramming an enemy, calling for help,
-    ;;        and then resting.
-    (let ((repair-time execution-time) ; C: repair
-          (repaired-devices (make-array +number-of-devices+ :initial-element nil))) ; C: fixed_dev
-      (when *dockedp*
-        (setf repair-time (/ repair-time +docked-repair-factor+)))
-      ;; Don't fix Deathray here. It's not fixed incrementally, but only after a long continuous time docked.
-      (do ((l 0 (1+ l)))
-          ((>= l +number-of-devices+))
-        (when (and (> (aref *device-damage* l) 0.0)
-                   (/= l +death-ray+))
-          (if (> (aref *device-damage* l) repair-time)
-              (decf (aref *device-damage* l) repair-time)
-              (progn
-                (setf (aref *device-damage* l) 0.0)
-                (setf (aref repaired-devices l) t)))))
-      ;; If radio repaired, update star chart and attack reports
-      (when (aref repaired-devices +subspace-radio+)
-        (print-message (format nil "Lt. Uhura- \"Captain, the sub-space radio is working and~%"))
-        (print-message (format nil "   surveillance reports are coming in.~%"))
-        (skip-line)
-        (when (not *base-attack-report-seen-p*)
-          ;; TODO - rename either attack-report or the boolean tracking if it needs to be called
-          (attack-report)
-          (setf *base-attack-report-seen-p* t))
-        (print-message (format nil "   The star chart is now up to date.\"~%"))
-        (skip-line))
-      (when (or (aref repaired-devices +subspace-radio+)
-                (aref repaired-devices +long-range-sensors+)
-                (aref repaired-devices +short-range-sensors+))
-        (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
-      ;; When in curses mode, if the short range sensors were just repaired and there is a planet
-      ;; in the current quadrant that has not been examined (unknown), automatically examine it.
-      (when (and *window-interface-p*
-                 (aref repaired-devices +short-range-sensors+)
-                 *current-planet*
-                 (not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
-        (sensor)))
+    (repair-devices execution-time)
     ;; Time was spent so subtract it from the operation time being handled by this invocation
     (decf *time-taken-by-current-operation* execution-time)
-    ;; Cause extraneous event event-code to occur (C: EVCODE)
+    ;; Process the event
     (cond
       ;; Supernova
-      ((= event-code +supernova+)
-       ;; Select a quadant for the supernova and blow it up. This algorithm will find a
-       ;; quadrant with stars if one exists, unlike get-random-quadrant which could select
-       ;; a quadrant already containing a supernova or a quadrant without stars.
+      ((eql (event-type e) 'supernova)
+       ;; Select a quadrant for the supernova and blow it up. This algorithm will find a quadrant
+       ;; with stars if one exists, unlike get-random-quadrant which could select a quadrant
+       ;; already containing a supernova or a quadrant without stars.
        (do (star-to-supernova
             (galaxy-star-count 0)
             (x 0 (1+ x)))
            ((>= x +galaxy-size+)
             (when (> galaxy-star-count 0) ; If something to supernova exists
               ;; Logic changed here so that we won't favor quadrants in top left of universe.
-              (setf star-to-supernova (random galaxy-star-count))
-              (do ((supernova-q (make-coordinate))
+              (setf star-to-supernova (1+ (random (1- galaxy-star-count)))) ; Random can be 0
+              (do ((supernova-q (make-quadrant-coordinate))
                    (supernova-s nil)
                    (i 0 (1+ i)))
                   ((or (>= i +galaxy-size+)
@@ -1819,11 +1541,11 @@ tractor-beamed the ship then the other will not."
          (do ((y 0 (1+ y)))
              ((>= y +galaxy-size+))
            (incf galaxy-star-count (quadrant-stars (aref *galaxy* x y)))))
-       (schedule-event +supernova+ (expran (* 0.5 *initial-time*)))
+       (schedule-event 'supernova (expran (* 0.5 *initial-time*))) ; schedule another one
        (when (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
          (setf allow-player-input t))) ; C: return
       ;; Check with spy to see if S.C. should tractor beam
-      ((= event-code +spy+)
+      ((eql (event-type e) 'spy)
        (cond
          ((or (= *remaining-super-commanders* 0)
               commander-used-tractor-beam-p
@@ -1856,15 +1578,15 @@ tractor-beamed the ship then the other will not."
          (t
           (setf allow-player-input t))))
       ;; Tractor beam
-      ((= event-code +tractor-beam+)
+      ((eql (event-type e) 'tractor-beam)
        ;; TODO - can/should commander events be unscheduled when the last commander is destroyed?
        ;;        Tentatively, yes, because any other check for a scheduled commander event could
        ;;        incorrectly return true if there are no commanders remaining.
        (if (= (length *commander-quadrants*) 0)
            (progn
-             (unschedule +tractor-beam+)
-             (unschedule +commander-attacks-base+)
-             (unschedule +commander-destroys-base+))
+             (unschedule-event 'tractor-beam)
+             (unschedule-event 'commander-attacks-base)
+             (unschedule-event 'commander-destroys-base))
            (let ((commander-index 0)) ; default to the first commander in the list
              ;; Select a random commander if there is a choice of more than one
              (when (> (length *commander-quadrants*) 1)
@@ -1874,7 +1596,7 @@ tractor-beamed the ship then the other will not."
                      *cloakedp* ; Cannot tractor beam if we can't be seen!
                      (coord-equal (nth commander-index *commander-quadrants*) *ship-quadrant*))
                  ;; Drats! Have to reschedule
-                 (schedule-event +tractor-beam+ (+ *time-taken-by-current-operation*
+                 (schedule-event 'tractor-beam (+ *time-taken-by-current-operation*
                                                    (expran (/ (* 1.5 *initial-time*)
                                                               (length *commander-quadrants*)))))
                  (progn
@@ -1886,14 +1608,14 @@ tractor-beamed the ship then the other will not."
                      (setf finish-date (+ *stardate* *time-taken-by-current-operation*)))
                    (if (= (length *commander-quadrants*) 0)
                        (progn
-                         (unschedule +tractor-beam+)
-                         (unschedule +commander-attacks-base+)
-                         (unschedule +commander-destroys-base+))
-                       (schedule-event +tractor-beam+ (+ *time-taken-by-current-operation*
+                         (unschedule-event 'tractor-beam)
+                         (unschedule-event 'commander-attacks-base)
+                         (unschedule-event 'commander-destroys-base))
+                       (schedule-event 'tractor-beam (+ *time-taken-by-current-operation*
                                                          (expran (/ (* 1.5 *initial-time*)
                                                                     (length *commander-quadrants*)))))))))))
       ;; Snapshot of the universe (for time warp)
-      ((= event-code +snapshot-for-time-warp+)
+      ((eql (event-type e) 'snapshot-for-time-warp)
        (setf *snapshot* (make-snapshot :crew *crew*
                                        :remaining-klingons *remaining-klingons*
                                        :remaining-super-commanders *remaining-super-commanders*
@@ -1904,7 +1626,7 @@ tractor-beamed the ship then the other will not."
                                        :destroyed-stars *destroyed-stars*
                                        :destroyed-inhabited-planets *destroyed-inhabited-planets*
                                        :destroyed-uninhabited-planets *destroyed-uninhabited-planets*
-                                       :planet-information *planet-information*
+                                       :planets *planets*
                                        :stardate *stardate*
                                        :shuttle-craft-location *shuttle-craft-location*
                                        :shuttle-craft-quadrant *shuttle-craft-quadrant*
@@ -1914,18 +1636,15 @@ tractor-beamed the ship then the other will not."
                                        :galaxy *galaxy*
                                        :starchart *starchart*))
        (setf *snapshot-taken-p* t)
-       (schedule-event +snapshot-for-time-warp+ (expran (* 0.5 *initial-time*))))
+       (schedule-event 'snapshot-for-time-warp (expran (* 0.5 *initial-time*))))
       ;; Commander attacks starbase
-      ((= event-code +commander-attacks-base+)
-       (when *window-interface-p*
-         (select-window *message-window*))
-
+      ((eql (event-type e) 'commander-attacks-base)
        (if (or (= (length *commander-quadrants*) 0)
                (= (length *base-quadrants*) 0))
            (progn
              ;; no can do
-             (unschedule +commander-attacks-base+)
-             (unschedule +commander-destroys-base+))
+             (unschedule-event 'commander-attacks-base)
+             (unschedule-event 'commander-destroys-base))
            ;; Look for a base quadrant that has a commander in it, as long as the commander is not
            ;; the super-commander and the quadrant is not the current ship quadrant.
            ;; TODO - these loops might be replaceable with find
@@ -1942,41 +1661,37 @@ tractor-beamed the ship then the other will not."
                  (progn
                    ;; commander + starbase combination found -- launch attack
                    (setf *base-under-attack-quadrant* commander-quad)
-                   (schedule-event +commander-destroys-base+ (1+ (random 3.0))) ; C: 1.0+3.0*Rand()
+                   (schedule-event 'commander-destroys-base (1+ (random 3.0))) ; C: 1.0+3.0*Rand()
                    ;; TODO - this when clause seems inconsistent with the base search because bases
                    ;;        under attack by the SC are skipped.
                    (when (eql *super-commander-attacking-base* 'attacking) ; extra time if SC already attacking
-                     (postpone-event +commander-destroys-base+
-                                     (- (scheduled-for +super-commander-destroys-base+) *stardate*)))
-                   (schedule-event +commander-attacks-base+
-                                   (+ (scheduled-for +commander-destroys-base+) (expran (* 0.3 *initial-time*))))
+                     (postpone-event 'commander-destroys-base
+                                     (- (scheduled-for 'super-commander-destroys-base) *stardate*)))
+                   (schedule-event 'commander-attacks-base
+                                   (+ (scheduled-for 'commander-destroys-base) (expran (* 0.3 *initial-time*))))
                    (setf *base-attack-report-seen-p* nil)
-                   (when (or (not (damagedp +subspace-radio+)) ; No warning :-( if radio not available
-                             *dockedp*)
+                   ;; No warning if radio not available
+                   (when (subspace-radio-available-p)
                      (setf *base-attack-report-seen-p* t)
-                     (print-message (format nil "~%Lt. Uhura-  \"Captain, the starbase in ~A"
+                     (print-message *message-window* (format nil "~%Lt. Uhura-  \"Captain, the starbase in ~A"
                                             (format-quadrant-coordinates *base-under-attack-quadrant*)))
-                     (print-message (format nil "   reports that it is under attack and that it can~%"))
-                     (print-message (format nil "   hold out only until stardate ~A.\"~%"
-                                            (format-stardate (scheduled-for +commander-destroys-base+))))
+                     (print-message *message-window* (format nil "   reports that it is under attack and that it can~%"))
+                     (print-message *message-window* (format nil "   hold out only until stardate ~A.\"~%"
+                                            (format-stardate (scheduled-for 'commander-destroys-base))))
                      (when (cancel-rest-p)
                        (return-from process-events nil)))                               )
                  (progn
                    ;; no match found -- try later
-                   (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*)))
-                   (unschedule +commander-destroys-base+))))))
+                   (schedule-event 'commander-attacks-base (expran (* 0.3 *initial-time*)))
+                   (unschedule-event 'commander-destroys-base))))))
       ;; Super-Commander destroys base
-      ((= event-code +super-commander-destroys-base+)
-       (unschedule +super-commander-destroys-base+)
-       ;; TODO - The logic below would seem to leave the super-commander in a "destroying a base"
-       ;;        state if, for some reason, there is no base to destroy
+      ((eql (event-type e) 'super-commander-destroys-base)
        (setf *super-commander-attacking-base* 'destroying)
        (when (> (quadrant-starbases (coord-ref *galaxy* *super-commander-quadrant*)) 0)
-         (destroy-starbase *super-commander-quadrant*)
-         (setf *super-commander-attacking-base* 'not-attacking)))
+         (destroy-starbase *super-commander-quadrant*))
+       (setf *super-commander-attacking-base* 'not-attacking))
       ;; Commander succeeds in destroying base
-      ((= event-code +commander-destroys-base+)
-       (unschedule +commander-destroys-base+)
+      ((eql (event-type e) 'commander-destroys-base)
        ;; TODO - do commanders actually destroy bases? Test the game. The original C code seemed
        ;;        to engage in pointless loops and if statements, specifically, determining if there
        ;;        was a commander present to destroy the base, if there were any bases at all, if there
@@ -1987,8 +1702,8 @@ tractor-beamed the ship then the other will not."
        (destroy-starbase *base-under-attack-quadrant*)
        (setf *base-under-attack-quadrant* nil))
       ;; Super-Commander moves
-      ((= event-code +move-super-commander+)
-       (schedule-event +move-super-commander+ 0.2777) ; TODO name the magic constant
+      ((eql (event-type e) 'move-super-commander)
+       (schedule-event 'move-super-commander 0.2777) ; TODO name the magic constant
        (when (and (not *attempted-escape-from-super-commander-p*)
                   (not super-commander-used-tractor-beam-p)
                   (not (eql *super-commander-attacking-base* 'attacking))
@@ -1996,79 +1711,13 @@ tractor-beamed the ship then the other will not."
                       (not *just-in-p*)))
          (move-super-commander)))
       ;; Move deep space probe
-      ((= event-code +move-deep-space-probe+)
-       (when *window-interface-p*
-         (select-window *message-window*))
-
-       (schedule-event +move-deep-space-probe+ 0.01)
-       ;; When the probe quadrant changes provide an update to the player
-       (incf *probe-x-coord* *probe-x-increment*)
-       (incf *probe-y-coord* *probe-y-increment*)
-       (let ((i (truncate (+ (/ *probe-x-coord* +quadrant-size+) 0.05)))
-             (j (truncate (+ (/ *probe-y-coord* +quadrant-size+) 0.05))))
-         (when (or (/= (coordinate-x *probe-reported-quadrant*) i)
-                   (/= (coordinate-y *probe-reported-quadrant*) j))
-           (setf (coordinate-x *probe-reported-quadrant*) i)
-           (setf (coordinate-y *probe-reported-quadrant*) j)
-           ;; No update if no working subspace radio
-           (when (or (not (damagedp +subspace-radio+))
-                     *dockedp*)
-             (print-message "~%Lt. Uhura-  \"The deep space probe ")
-             (cond ((not (valid-quadrant-p (coordinate-x *probe-reported-quadrant*)
-                                           (coordinate-y *probe-reported-quadrant*)))
-                    (print-message "has left the galaxy")
-                    (unschedule +move-deep-space-probe+))
-
-                   ((quadrant-supernovap (coord-ref *galaxy* *probe-reported-quadrant*))
-                    (print-message "is no longer transmitting")
-                    (unschedule +move-deep-space-probe+))
-
-                   (t
-                    (print-message (format nil "is now in ~A" (format-quadrant-coordinates
-                                                               *probe-reported-quadrant*)))))
-             (print-message (format nil ".\"~%")))))
-       (when (is-scheduled-p +move-deep-space-probe+)
-         ;; Update star chart if Radio is working or have access to radio.
-         (when (or (not (damagedp +subspace-radio+))
-                   *dockedp*)
-           (setf (starchart-page-klingons (coord-ref *starchart* *probe-reported-quadrant*))
-                 (quadrant-klingons (coord-ref *galaxy* *probe-reported-quadrant*)))
-           (setf (starchart-page-starbases (coord-ref *starchart* *probe-reported-quadrant*))
-                 (quadrant-starbases (coord-ref *galaxy* *probe-reported-quadrant*)))
-           (setf (starchart-page-stars (coord-ref *starchart* *probe-reported-quadrant*))
-                 (quadrant-stars (coord-ref *galaxy* *probe-reported-quadrant*)))
-           (setf (quadrant-chartedp (coord-ref *galaxy* *probe-reported-quadrant*))
-                 t))
-         (setf *moves-for-probe* (1- *moves-for-probe*)) ; One less to travel
-         (when (<= *moves-for-probe* 0)
-           (unschedule +move-deep-space-probe+)
-           (when (and *probe-is-armed-p*
-                      (> (quadrant-stars (coord-ref *galaxy* *probe-reported-quadrant*)) 0))
-             ;; lets blow the sucker!
-             (let ((supernova-sector nil))
-               (when (coord-equal *probe-reported-quadrant* *ship-quadrant*)
-                 ;; TODO Select the star closest to the probe
-                 (setf supernova-sector (get-random-star)))
-               (supernova *probe-reported-quadrant* supernova-sector))
-             ;; If starship caused supernova, tally up destruction.
-             ;; This comment is inaccurate because only probes directly cause supernovas,
-             ;; although a ship can indirectly cause one if a novaed star goes supernova.
-             ;; TODO - hold the player responsible if a star novaed by a torpedo turns into a
-             ;;        supernova?
-             (incf *destroyed-stars* (quadrant-stars (coord-ref *galaxy* *probe-reported-quadrant*)))
-             (incf *destroyed-bases* (quadrant-starbases (coord-ref *galaxy* *probe-reported-quadrant*)))
-             ;; TODO inhabited worlds are not counted but should be
-             (when (assoc *probe-reported-quadrant* *planet-information* :test #'coord-equal) ; non-nil if planet exists
-               (setf *destroyed-uninhabited-planets* (1+ *destroyed-uninhabited-planets*)))
-             (setf *probe-reported-quadrant* nil)
-             (when (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
-               (return-from process-events nil))))))
+      ((eql (event-type e) 'move-deep-space-probe)
+       (move-deep-space-probe)
+       ;; Check if the player targeted their own quadrant with an armed probe
+       (when (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
+         (return-from process-events nil)))
       ;; Inhabited system issues distress call
-      ((= event-code +distress-call-from-inhabited-world+)
-       (when *window-interface-p*
-         (select-window *message-window*))
-
-       (unschedule +distress-call-from-inhabited-world+)
+      ((eql (event-type e) 'distress-call-from-inhabited-world)
        (let (candidate-planet)
          ;; Try a whole bunch of times to find something suitable.
          ;; TODO - or just make a list of candidate planets/quadrants, randomly select one, and then
@@ -2078,127 +1727,116 @@ tractor-beamed the ship then the other will not."
               (candidate-quadrant nil))
              ((or (> i 100)
                   candidate-quadrant)
-              (setf *conquest-quadrant* candidate-quadrant))
+              (when candidate-quadrant
+                ;; got one!! Schedule its enslavement
+                (schedule-event 'inhabited-world-is-enslaved
+                                (expran *initial-time*)
+                                candidate-quadrant)
+                (setf (planet-status candidate-planet) 'distressed)
+                (rplacd (assoc candidate-quadrant *planets* :test #'coord-equal) candidate-planet)
+                ;; tell the captain about it if we can
+                (when (subspace-radio-available-p)
+                  (print-message
+                   *message-window*
+                   (format nil "~%Lt. Uhura- \"Captain, ~A in ~A reports it is under attack~%"
+                           (planet-name candidate-planet)
+                           (format-quadrant-coordinates candidate-quadrant)))
+                  (print-message
+                   *message-window*
+                   (format nil "            by a Klingon invasion fleet.\"~%"))
+                  (when (cancel-rest-p)
+                    (return-from process-events nil)))))
            (setf candidate-quadrant (get-random-quadrant))
            (setf candidate-planet
-                 (rest (assoc candidate-quadrant *planet-information* :test #'coord-equal)))
+                 (rest (assoc candidate-quadrant *planets* :test #'coord-equal)))
            (unless (and (not (coord-equal *ship-quadrant* candidate-quadrant))
                         candidate-planet
                         (not (planet-inhabitedp candidate-planet))
                         (eql (planet-status candidate-planet) 'secure)
                         (not (quadrant-supernovap (coord-ref *galaxy* candidate-quadrant)))
                         (> (quadrant-klingons (coord-ref *galaxy* candidate-quadrant)) 0))
-             (setf candidate-quadrant nil)))
-         (when *conquest-quadrant*
-           ;; got one!!  Schedule its enslavement
-           (schedule-event +inhabited-world-is-enslaved+ (expran *initial-time*))
-           (setf (planet-status candidate-planet) 'distressed)
-           (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
-                   candidate-planet)
-           ;; tell the captain about it if we can
-           (when (or (not (damagedp +subspace-radio+))
-                     *dockedp*)
-             (print-message (format nil "~%Lt. Uhura- Captain, ~A in ~A reports it is under attack"
-                                    (planet-name candidate-planet)
-                                    (format-quadrant-coordinates *conquest-quadrant*)))
-             (print-message (format nil "by a Klingon invasion fleet.~%"))
-             (when (cancel-rest-p)
-               (return-from process-events nil))))))
+             (setf candidate-quadrant nil)))))
       ;; Starsystem is enslaved
-      ((= event-code +inhabited-world-is-enslaved+)
-       (when *window-interface-p*
-         (select-window *message-window*))
-
-       (unschedule +inhabited-world-is-enslaved+)
-       (let ((conquest-planet
-               (rest (assoc *conquest-quadrant* *planet-information* :test #'coord-equal))))
+      ((eql (event-type e) 'inhabited-world-is-enslaved)
+       (let ((conquest-planet (rest (assoc (event-quadrant e) *planets* :test #'coord-equal))))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
          ;; see if current distress call still active
-         (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
+         (if (> (quadrant-klingons (coord-ref *galaxy* (event-quadrant e))) 0)
              (progn
                (setf (planet-status conquest-planet) 'enslaved)
-               (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
-                       conquest-planet)
                ;; play stork and schedule the first baby
-               (schedule-event +klingons-build-ship-in-enslaved-system+
-                               (expran (* 2.0 *initial-time*)))
+               (schedule-event 'klingons-build-ship-in-enslaved-system
+                               (expran (* 2.0 *initial-time*))
+                               (event-quadrant e))
                ;; report the disaster if we can
-               (when (or (not (damagedp +subspace-radio+))
-                         *dockedp*)
-                 (print-message (format nil "Lt. Uhura- We've lost contact with starsystem ~A in ~A."
-                                        (planet-name conquest-planet)
-                                        (format-quadrant-coordinates *conquest-quadrant*)))))
-             (progn
-               (setf (planet-status *conquest-quadrant*) 'secure)
-               (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
-                       conquest-planet)
-               (setf *conquest-quadrant* nil)))))
+               (when (subspace-radio-available-p)
+                 (print-message *message-window*
+                  (format nil "Lt. Uhura- \"We've lost contact with starsystem ~A in ~A.\""
+                          (planet-name conquest-planet)
+                          (format-quadrant-coordinates (event-quadrant e))))))
+               (setf (planet-status conquest-planet) 'secure))
+         (rplacd (assoc (event-quadrant e) *planets* :test #'coord-equal) conquest-planet)))
       ;; Klingon reproduces
-      ((= event-code +klingons-build-ship-in-enslaved-system+)
-       (let ((conquest-planet
-               (rest (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)))
+      ((eql (event-type e) 'klingons-build-ship-in-enslaved-system)
+       (let ((conquest-quadrant (event-quadrant (find-event
+                                                 'klingons-build-ship-in-enslaved-system)))
+             conquest-planet
              (build-quadrant nil))
+         (setf conquest-planet (rest (assoc conquest-quadrant *planets* :test #'coord-equal)))
          ;; TODO should this status change when the last klingon in the quadrant is destroyed?
          ;; see if current distress call still active
-         (if (> (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*)) 0)
+         (if (> (quadrant-klingons (coord-ref *galaxy* conquest-quadrant)) 0)
              (progn
-               (schedule-event +klingons-build-ship-in-enslaved-system+ (* 1.0 *initial-time*))
+               (schedule-event 'klingons-build-ship-in-enslaved-system (* 1.0 *initial-time*))
                (unless (>= *remaining-klingons* +max-klingons-per-game+) ; full right now
                  ;; reproduce one Klingon
-                 (if (< (quadrant-klingons (coord-ref *galaxy* *conquest-quadrant*))
+                 (if (< (quadrant-klingons (coord-ref *galaxy* conquest-quadrant))
                         +max-klingons-per-quadrant+)
-                     (setf build-quadrant *conquest-quadrant*)
+                     (setf build-quadrant conquest-quadrant)
                      (progn ; this quadrant not ok, pick an adjacent one
                        ;; TODO - avoid favoring the top left quadrant by randomly selecting an
                        ;;        adjacent quadrant from a list of eligible quadrants
-                       (do ((i (1- (coordinate-x *conquest-quadrant*)) (1+ i)))
-                           ((or (> i (1+ (coordinate-x *conquest-quadrant*)))
+                       (do ((i (1- (coordinate-x conquest-quadrant)) (1+ i)))
+                           ((or (> i (1+ (coordinate-x conquest-quadrant)))
                                 build-quadrant))
-                         (do ((j (1- (coordinate-y *conquest-quadrant*)) (1+ j)))
-                             ((or (> j (1+ (coordinate-y *conquest-quadrant*)))
+                         (do ((j (1- (coordinate-y conquest-quadrant)) (1+ j)))
+                             ((or (> j (1+ (coordinate-y conquest-quadrant)))
                                   build-quadrant))
                            (when (and (valid-quadrant-p i j)
                                       (< (quadrant-klingons (aref *galaxy* i j)) +max-klingons-per-quadrant+)
                                       (not (quadrant-supernovap (aref *galaxy* i j))))
-                             (setf build-quadrant (make-coordinate :x i :y j)))))))
+                             (setf build-quadrant (make-quadrant-coordinate :x i :y j)))))))
                  (when build-quadrant
                    ;; deliver the child
-                   (setf *remaining-klingons* (1+ *remaining-klingons*))
-                   (setf (quadrant-klingons (coord-ref *galaxy* build-quadrant))
-                         (1+ (quadrant-klingons (coord-ref *galaxy* build-quadrant))))
+                   (incf *remaining-klingons* 1)
+                   (incf (quadrant-klingons (coord-ref *galaxy* build-quadrant)) 1)
                    (when (coord-equal *ship-quadrant* build-quadrant)
-                     ;; TODO move this multiple value bind to a function, it is also called elsewhere
+                     (incf *enemies-here* 1)
+                     (incf *klingons-here* 1)
                      (multiple-value-bind (coordinates distance power) (drop-klingon-in-sector)
-                       (setf (aref *klingon-sectors* (1+ (length *klingon-sectors*))) coordinates)
-                       (setf (aref *klingon-distance* (1+ (length *klingon-distance*))) distance)
-                       (setf (aref *klingon-average-distance* (1+ (length *klingon-average-distance*))) distance)
-                       (setf (aref *klingon-energy* (1+ (length *klingon-energy*))) power))
-                     ;; TODO - call sort-klingons? seems to go along with the array setting
-                     (setf *klingons-here* (1+ *klingons-here*))
-                     (setf *enemies-here* (1+ *enemies-here*)))
+                       ;; TODO - this is wrong if a Tholian is the last item in the array
+                       (setf (aref *quadrant-enemies* *enemies-here*)
+                             (make-enemy :energy power
+                                         :distance distance
+                                         :average-distance distance
+                                         :sector-coordinates coordinates)))
+                     (sort-klingons))
                    ;; recompute time left (ported directly from the C source)
-                   (setf *remaining-time* (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
-                                              (/ *remaining-resources* (+ *remaining-klingons*
-                                                                          (* 4 (length *commander-quadrants*))))
-                                              99))
+                   (setf *remaining-time*
+                         (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
+                             (/ *remaining-resources* (+ *remaining-klingons*
+                                                         (* 4 (length *commander-quadrants*))))
+                             99))
                    ;; report the disaster if we can
                    (cond
                      ((and (coord-equal *ship-quadrant* build-quadrant)
                            (not (damagedp +short-range-sensors+)))
-                      (print-message
-                       (format nil "Spock- sensors indicate the Klingons have launched a warship from ~A."
-                               (planet-name conquest-planet))))
-                     ((or (not (damagedp +subspace-radio+))
-                          *dockedp*)
-                      (print-message
-                       (format nil "Lt. Uhura- Starfleet reports increased Klingon activity near ~A in ~A."
-                               (planet-name conquest-planet)
-                               (format-quadrant-coordinates build-quadrant))))))))
+                      (print-message *message-window* (format nil "Spock- sensors indicate the Klingons have launched a warship from ~A." (planet-name conquest-planet))))
+                     ((subspace-radio-available-p)
+                      (print-message *message-window* (format nil "Lt. Uhura- Starfleet reports increased Klingon activity near ~A in ~A." (planet-name conquest-planet) (format-quadrant-coordinates build-quadrant))))))))
            (progn
              (setf (planet-status conquest-planet) 'secure)
-             (rplacd (assoc *conquest-quadrant* *planet-information* :test #'coord-equal)
-                     conquest-planet)
-             (setf *conquest-quadrant* nil))))))))
+             (rplacd (assoc conquest-quadrant *planets* :test #'coord-equal) conquest-planet))))))))
 
 (defun damaged-device-count ()
   "Return the number of damaged devices."
@@ -2217,15 +1855,15 @@ tractor-beamed the ship then the other will not."
    2 - Klingons left
    3 - Time left
 "
-
   (when (= line-to-print 1)
-    (print-out (format nil "Stardate ~A~%" (format-stardate *stardate*))))
+    (print-out *game-status-window* (format nil "Stardate ~A~%" (format-stardate *stardate*))))
   (when (= line-to-print 2)
-    (print-out (format nil "Klingons Left ~A~%" (+ *remaining-klingons*
+    (print-out *game-status-window*
+               (format nil "Klingons Left ~A~%" (+ *remaining-klingons*
                                                    (length *commander-quadrants*)
                                                    *remaining-super-commanders*))))
   (when (= line-to-print 3)
-    (print-out (format nil "Time Left ~,2,,,F~%" *remaining-time*))))
+    (print-out *game-status-window* (format nil "Time Left ~,2,,,F~%" *remaining-time*))))
 
 (defun ship-status (&optional (line-to-print nil)) ; C: void status(int req)
   "Print status reports next to short range scan lines. The classic line to print is one of
@@ -2262,52 +1900,54 @@ There is no line 10.
 "
 
   (when (= line-to-print 1)
-    (print-out "Condition ")
-    (when *dockedp*
-      ;; TODO - update the player condition every turn, not only when checking status
-      (update-condition))
-    (print-out *condition*)
+    ;; TODO - update the player condition every turn, not only when checking status
+    (update-condition)
+    (print-out *ship-status-window* "Condition ")
+    (print-out *ship-status-window* *condition*)
     (when (> (damaged-device-count) 0)
-      (print-out (format nil ", ~A DAMAGE~:@(~:P~)" (damaged-device-count))))
-    (skip-line))
+      (print-out *ship-status-window* (format nil ", ~A DAMAGE~:@(~:P~)" (damaged-device-count))))
+    (skip-line *ship-status-window*))
   (when (= line-to-print 2)
-    (print-out (format nil "Position ~A , ~A" (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
+    (print-out *ship-status-window*
+               (format nil "Position ~A , ~A"
+                       (format-coordinates *ship-quadrant*) (format-coordinates *ship-sector*)))
     ;; Print flight status with position
     (cond
       (*dockedp*
-       (print-out ", Docked"))
+       (print-out *ship-status-window* ", Docked"))
       (*in-orbit-p*
-       (print-out ", In Orbit")))
-    (skip-line))
+       (print-out *ship-status-window* ", In Orbit")))
+    (skip-line *ship-status-window*))
   (when (= line-to-print 3)
     (if (damagedp +cloaking-device+)
-        (print-out (format nil "Cloaking Device DAMAGED~%"))
+        (print-out *ship-status-window* (format nil "Cloaking Device DAMAGED~%"))
         (if *cloakedp*
-            (print-out (format nil "Cloaked~%"))
-            (print-out (format nil "Not cloaked~%")))))
+            (print-out *ship-status-window* (format nil "Cloaked~%"))
+            (print-out *ship-status-window* (format nil "Not cloaked~%")))))
   (when (= line-to-print 4)
-    (print-out "Life Support ")
+    (print-out *ship-status-window* "Life Support ")
     (if (damagedp +life-support+)
         (progn
-          (print-out "DAMAGED, ")
+          (print-out *ship-status-window* "DAMAGED, ")
           (if *dockedp*
-              (print-out (format nil "Base provides~%"))
-              (print-out (format nil "reserves=~4,2F~%" *life-support-reserves*))))
-        (print-out (format nil "Active~%"))))
+              (print-out *ship-status-window* (format nil "Base provides~%"))
+              (print-out *ship-status-window*
+                         (format nil "reserves=~4,2F~%" *life-support-reserves*))))
+        (print-out *ship-status-window* (format nil "Active~%"))))
   (when (= line-to-print 5)
-    (print-out (format nil "Warp Factor ~,1F~%" *warp-factor*)))
+    (print-out *ship-status-window* (format nil "Warp Factor ~,1F~%" *warp-factor*)))
   (when (= line-to-print 6)
-    (print-out (format nil "Energy ~,1F" *ship-energy*))
+    (print-out *ship-status-window* (format nil "Energy ~,1F" *ship-energy*))
     (when *dilithium-crystals-on-board-p*
-      (print-out " (have crystals)"))
-    (skip-line))
+      (print-out *ship-status-window* " (have crystals)"))
+    (skip-line *ship-status-window*))
   (when (= line-to-print 7)
-    (print-out (format nil "~34@<Torpedoes ~A~>" *torpedoes*))
-    (if *window-interface-p*
-        (skip-line)
-        (game-status 1)))
+    (print-out *ship-status-window* (format nil "~34@<Torpedoes ~A~>" *torpedoes*))
+    (if (eql *ship-status-window* *message-window*)
+        (game-status 1)
+        (skip-line *ship-status-window*)))
   (when (= line-to-print 8)
-    (print-out (format nil "~34@<Shields ~A, ~D%, ~,1F units~;~>"
+    (print-out *ship-status-window* (format nil "~34@<Shields ~A, ~D%, ~,1F units~;~>"
                        (cond
                          ((damagedp +shields+)
                           "DAMAGED")
@@ -2317,47 +1957,48 @@ There is no line 10.
                           "DOWN"))
                        (round (/ (* 100.0 *shield-energy*) *initial-shield-energy*))
                        *shield-energy*))
-    (if *window-interface-p*
-        (skip-line)
-        (game-status 2)))
+    (if (eql *ship-status-window* *message-window*)
+        (game-status 2)
+        (skip-line *ship-status-window*)))
   (when (= line-to-print 9)
-    (print-out (format nil "~34@<Probe~A~>"
-                       (if (is-scheduled-p +move-deep-space-probe+)
-                           (format nil " in ~A" (format-quadrant-coordinates *probe-reported-quadrant*))
+    (print-out *ship-status-window*
+               (format nil "~34@<Probe~A~>"
+                       (if (is-scheduled-p 'move-deep-space-probe)
+                           (format nil " in ~A"
+                                   (format-quadrant-coordinates
+                                    (make-quadrant-coordinate
+                                     :x (galaxy-sector-to-quadrant (probe-x *probe*))
+                                     :y (galaxy-sector-to-quadrant (probe-y *probe*)))))
                            (format nil "s ~A" *probes-available*))))
-    (if *window-interface-p*
-        (skip-line)
-        (game-status 3)))
+    (if (eql *ship-status-window* *message-window*)
+        (game-status 3)
+        (skip-line *ship-status-window*)))
   (when (= line-to-print 11)
-    (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+    (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
       (if (and p ; p is nil when there is no planet in the quadrant
                (not (planet-inhabitedp p)))
-          (print-out (format nil "Major system ~A~%" (planet-name p)))
-          (print-out (format nil "Sector is uninhabited~%")))))
+          (print-out *ship-status-window* (format nil "Major system ~A~%" (planet-name p)))
+          (print-out *ship-status-window* (format nil "Sector is uninhabited~%")))))
   (when (= line-to-print 12)
-    (when (and (is-scheduled-p +commander-destroys-base+)
+    (when (and (is-scheduled-p 'commander-destroys-base)
                (not *base-under-attack-quadrant*))
-      (print-out (format nil "Base in ~A attacked by C. Alive until ~A~%"
+      (print-out *ship-status-window* (format nil "Base in ~A attacked by C. Alive until ~A~%"
                          (format-coordinates *base-under-attack-quadrant*)
-                         (format-stardate (find-event +commander-destroys-base+)))))
+                         (format-stardate (event-date (find-event 'commander-destroys-base))))))
     (when (or (eql *super-commander-attacking-base* 'attacking)
               (eql *super-commander-attacking-base* 'destroying))
-      (print-out (format nil "Base in ~A attacked by S. Alive until ~A~%"
+      (print-out *ship-status-window* (format nil "Base in ~A attacked by S. Alive until ~A~%"
                          (format-coordinates *super-commander-quadrant*)
-                         (format-stardate (find-event +super-commander-destroys-base+)))))))
+                         (format-stardate (event-date (find-event 'super-commander-destroys-base))))))))
 
 (defun all-statuses ()
   "Display all the ship statuses that are displayed next to the short range scan. In
 line-by-line mode also display the game statuses that are displayed next to the short
 range scan."
 
-    (if *window-interface-p*
-      (if *ship-status-window*
-          (select-window *ship-status-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+    (if (eql *ship-status-window* *message-window*)
+	(skip-line *ship-status-window*)
+	(clear-window *ship-status-window*))
 
   (ship-status 1)
   (ship-status 2)
@@ -2370,127 +2011,174 @@ range scan."
   (ship-status 9)
 
   ;; In line-by-line mode game statuses are printed by the ship status function
-  (when *window-interface-p*
-    (select-window *game-status-window* :clear-window t)
+  (unless (eql *game-status-window* *message-window*)
+    (clear-window *game-status-window*)
     (game-status 1)
     (game-status 2)
     (game-status 3)))
 
-(defun short-range-scan ()
+(defun sector-scan (i j) ; C: static void sectscan(int goodScan, int i, int j)
+  "Light up an individual dot in a sector."
 
-    (if *window-interface-p*
-      (if *short-range-scan-window*
-          (select-window *short-range-scan-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  ;; Always show the sectors immediately adjacent to the ship
+  (if (or (not (damagedp +short-range-sensors+))
+          (and (<= (abs (- i (coordinate-x *ship-sector*))) 1)
+               (<= (abs (- j (coordinate-y *ship-sector*))) 1)))
+      (progn
+        (when (or (string= (aref *quadrant* i j) +materialize-1+)
+                  (string= (aref *quadrant* i j) +materialize-2+)
+                  (string= (aref *quadrant* i j) +materialize-3+)
+                  (string= (aref *quadrant* i j) +enterprise+)
+                  (string= (aref *quadrant* i j) +faerie-queene+))
+          (cond
+            ((string= *condition* +red-status+)
+             (set-text-color *short-range-scan-window* +red+))
+            ;; If docked then Condition Yellow is less serious than when not docked
+            (*dockedp*
+             (set-text-color *short-range-scan-window*  +cyan+))
+            ((string= *condition* +yellow-status+)
+             (set-text-color *short-range-scan-window*  +yellow+))
+            ((string= *condition* +green-status+)
+             (set-text-color *short-range-scan-window*  +green+))
+            ((not *alivep*)
+             (set-text-color *short-range-scan-window*  +brown+))
+            (t
+             (set-text-color *short-range-scan-window*  +default-color+)))
+          (when (string= (aref *quadrant* i j) *ship*)
+            (toggle-reverse-video *short-range-scan-window*)))
+        ;; Determine which symbol to display and then display it
+        (let ((symbol (aref *quadrant* i j)))
+          (when *probe*
+            ;; If the probe is in the current quadrant and in the sector to be displayed, and the
+            ;; sector it occupies is empty (including no black hole - probes get to avoid black
+            ;; holes) then display the probe symbol.
+            (when (and (coord-equal *ship-quadrant* (make-quadrant-coordinate
+                                                     :x (galaxy-sector-to-quadrant (probe-x *probe*))
+                                                     :y (galaxy-sector-to-quadrant (probe-y *probe*))))
+                       (= i (galaxy-sector-to-local-sector (probe-x *probe*)))
+                       (= j (galaxy-sector-to-local-sector (probe-y *probe*)))
+                       (string= symbol +empty-sector+))
+              (setf symbol +probe+)))
+          (print-out *short-range-scan-window* (format nil "~A" symbol)))
+        (set-text-color *short-range-scan-window*  +default-color+)
+        (print-out *short-range-scan-window* " "))
+      (print-out *short-range-scan-window* "  ")))
 
-  (let ((good-scan-p t))
-    (if (damagedp +short-range-sensors+)
-        ;; Allow base's sensors if docked
-        (if (not *dockedp*)
-            (progn
-              (print-out (format nil "  S.R. SENSORS DAMAGED!~%"))
-              (setf good-scan-p nil))
-            (print-out (format nil " [Using Base's sensors]~%")))
-        (print-out (format nil "     SHORT-RANGE SCAN~%")))
-    (when good-scan-p
-      (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
-      (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
-    (print-out (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
-    (when (not *dockedp*)
-      (update-condition))
-    (do ((i 0 (1+ i)))
-        ((>= i +quadrant-size+))
-      (print-out (format nil "~2@A " (1+ i)))
-      (do ((j 0 (1+ j)))
-          ((>= j +quadrant-size+))
-        (sector-scan good-scan-p i j))
-      (if *window-interface-p*
-          (skip-line)
-          (progn
-            (print-out " ")
-            (ship-status (1+ i)))))))
+(defgeneric short-range-scan (output-window)
+  (:documentation "Display a short range scan in the specified window."))
+
+(defmethod short-range-scan ((output-window screen))
+  "Display a short range scan in a line by line format."
+
+  (skip-line output-window))
+
+(defmethod short-range-scan ((output-window window))
+  "Display a short range scan using curses commands."
+
+  (clear-window output-window))
+
+;; TODO - this uses lisp syntax to get the desired result but it seems like the wrong thing to
+;;        have the most important part of the scan done in an :after function.
+(defmethod short-range-scan :after ((output-window screen))
+  "Short range scan output for all window types. This is the informational part of the scan."
+
+  (when (or *dockedp*
+            (not (damagedp +short-range-sensors+)))
+    (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*)))
+
+  ;; Print a short range scan header
+  (if (damagedp +short-range-sensors+)
+      (if *dockedp*
+          (print-out output-window (format nil " [Using Base's sensors]~%"))
+          (print-out output-window (format nil "  S.R. SENSORS DAMAGED!~%")))
+      (print-out output-window (format nil "     SHORT-RANGE SCAN~%")))
+  (print-out output-window (format nil "   1 2 3 4 5 6 7 8 9 10~%"))
+  (do ((i 0 (1+ i)))
+      ((>= i +quadrant-size+))
+    (print-out output-window (format nil "~2@A " (1+ i)))
+    (do ((j 0 (1+ j)))
+        ((>= j +quadrant-size+))
+      (sector-scan i j))
+    ;; When there is a separate short range scan window then just end the line. Otherwise, the
+    ;; next line segment of the current line is the ship status, (which will in turn print the
+    ;; appropriate game status on the current line).
+    (if (eql *short-range-scan-window* *message-window*)
+        (progn
+          (print-out output-window " ")
+          (ship-status (1+ i)))
+        (skip-line output-window))))
 
 (defun long-range-scan ()
-  "Scan the galaxy using long-range sensors and update the star chart. Display the results of the scan.
-Long-range sensors can scan all adjacent quadrants."
+  "Scan the galaxy using long-range sensors and update the star chart. Display the results of the
+scan. Long-range sensors can scan all adjacent quadrants."
 
-  (if *window-interface-p*
-      (if *long-range-scan-window*
-          (select-window *long-range-scan-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  (if (eql *long-range-scan-window* *message-window*)
+      (skip-line *long-range-scan-window*)
+      (clear-window *long-range-scan-window*))
 
-  (print-out (format nil "LONG-RANGE SCAN~%"))
+  (print-out *long-range-scan-window* (format nil "LONG-RANGE SCAN~%"))
   (if (or (not (damagedp +long-range-sensors+))
            *dockedp*)
       (progn
         (when (damagedp +long-range-sensors+)
-            (print-out (format nil "Starbase's sensors~%")))
+            (print-out *long-range-scan-window* (format nil "Starbase's sensors~%")))
         (do ((x (- (coordinate-x *ship-quadrant*) 1) (1+ x)))
             ((> x (+ (coordinate-x *ship-quadrant*) 1)))
-          (print-out " ")
+          (print-out *long-range-scan-window* " ")
           (do ((y (- (coordinate-y *ship-quadrant*) 1) (1+ y)))
               ((> y (+ (coordinate-y *ship-quadrant*) 1)))
             (if (valid-quadrant-p x y)
                 (progn
                   (update-chart x y)
                   (if (quadrant-supernovap (aref *galaxy* x y))
-                      (print-out " ***")
-                      (print-out (format nil "~4D" (+ (* (starchart-page-klingons (aref *starchart* x y)) 100)
+                      (print-out *long-range-scan-window* " ***")
+                      (print-out *long-range-scan-window*
+                                 (format nil "~4D" (+ (* (starchart-page-klingons (aref *starchart* x y)) 100)
                                                       (* (starchart-page-starbases (aref *starchart* x y)) 10)
                                                       (starchart-page-stars (aref *starchart* x y)))))))
-                (print-out (format nil "~4D" -1))))
-          (skip-line)))
-      (print-out (format nil "SENSORS DAMAGED~%"))))
+                (print-out *long-range-scan-window* (format nil "~4D" -1))))
+          (skip-line *long-range-scan-window*)))
+      (print-out *long-range-scan-window* (format nil "SENSORS DAMAGED~%"))))
 
-(defun draw-windows () ; C: void drawmaps(void)
+(defun update-windows () ; C: void drawmaps(void)
   "Perform the automatic display updates available to curses-enabled terminals."
 
-  (when *window-interface-p*
-    (short-range-scan)
+  ;; If there is a short range scan window then update all the default windows
+  (unless (eql *short-range-scan-window* *message-window*)
+    (short-range-scan *short-range-scan-window*)
     (all-statuses)
     (long-range-scan)
     ;; In curses mode sensors work automatically. Call before updating the display, but only once
     ;; per entry into the quadrant.
     (when *just-in-p*
-      (sensor))
-    (when *starchart-window*
-      (chart))
-    (when *damage-report-window*
+      (sensor)))
+  (unless (eql *starchart-window* *message-window*)
+    (chart))
+  (unless (eql *damage-report-window* *message-window*)
       (damage-report))
-    (when *planet-report-window*
+  (unless (eql *planet-report-window* *message-window*)
       (survey))
-    (when *score-window*
-      (score))
-    (select-window *message-window*)))
+  (unless (eql *score-window* *message-window*)
+      (score)))
 
 (defun print-prompt (prompt-to-print)
   "Print a string. In curses mode print it in the prompt window, otherwise just print it."
 
-  (if *window-interface-p*
-      (if *prompt-window*
-          (select-window *prompt-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  (if (eql *prompt-window* *message-window*)
+      (skip-line *prompt-window*)
+      (clear-window *prompt-window*))
 
-  (print-out prompt-to-print))
+  (print-out *prompt-window* prompt-to-print))
 
-;; TODO - move-coordinate is effective when the calling function has displaced the enemy just before
-;;        destroying them, e.g. nova buffet or photon torpedo displacedment. Can the move be completed
-;;        by the calling function before killing the enemy? Black holes are a problem because they should
-;;        not be replaced by an empty sector.
-(defun dead-enemy (enemy-coordinate enemy move-coordinate) ; C: deadkl(coord w, feature type, coord mv)
+;; TODO - move-coordinate is effective when the calling function has displaced the enemy just
+;;        before destroying them, e.g. nova buffet or photon torpedo displacedment. Can the move
+;;        be completed by the calling function before killing the enemy? Black holes are a problem
+;;        because they should not be replaced by an empty sector.
+(defun dead-enemy (enemy-coord enemy move-coordinate) ; C: deadkl(coord w, feature type, coord mv)
   "Kill a Klingon, Tholian, Romulan, or Thingy. move-coordinate allows enemy to move before dying."
 
   ;; move-coordinate allows an enemy to "move" before dying
-  (print-message (format nil "~A at ~A" (letter-to-name enemy) (format-sector-coordinates move-coordinate)))
+  (print-message *message-window* (format nil "~A at ~A" (letter-to-name enemy) (format-sector-coordinates move-coordinate)))
   ;; Decide what kind of enemy it is and update appropriately
   (cond
     ;; Chalk up a Romulan
@@ -2509,64 +2197,68 @@ Long-range sensors can scan all adjacent quadrants."
      (setf *thing-location* nil))
     ;; Some type of a Klingon
     ((string= enemy +commander+)
-     (setf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))
-           (1- (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))))
-     (setf *klingons-here* (1- *klingons-here*))
+     (decf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 1)
+     (decf *klingons-here* 1)
+     (decf *commanders-here* 1)
      (setf *commander-quadrants* (remove *ship-quadrant* *commander-quadrants* :test #'coord-equal))
-     (unschedule +tractor-beam+)
+     (unschedule-event 'tractor-beam)
+     ;; TODO - this is the place to unscheduled commander events when the last commander is killed
      (when (> (length *commander-quadrants*) 0)
-       (schedule-event +tractor-beam+ (expran (/ *initial-commanders* (length *commander-quadrants*))))))
+       (schedule-event 'tractor-beam (expran (/ *initial-commanders* (length *commander-quadrants*))))))
 
     ((string= enemy +klingon+)
-     (setf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))
-           (1- (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))))
-     (setf *klingons-here* (1- *klingons-here*))
-     (setf *remaining-klingons* (1- *remaining-klingons*)))
+     (decf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 1)
+     (decf *klingons-here* 1)
+     (decf *remaining-klingons* 1))
 
     ((string= enemy +super-commander+)
-     (setf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))
-           (1- (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))))
-     (setf *klingons-here* (1- *klingons-here*))
-     (setf *remaining-super-commanders* (1- *remaining-super-commanders*))
-     (setf *super-commanders-here* 0)
+     (decf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 1)
+     (decf *klingons-here* 1)
+     (decf *remaining-super-commanders* 1)
+     (decf *super-commanders-here* 1)
      (setf *super-commander-quadrant* nil)
      (setf *super-commander-attacking-base* 'not-attacking)
      (setf *super-commander-attack-enterprise-p* nil)
-     (unschedule +move-super-commander+)
-     (unschedule +super-commander-destroys-base+)))
+     (unschedule-event 'move-super-commander)
+     (unschedule-event 'super-commander-destroys-base)))
 
   ;; For each kind of enemy, finish message to player
-  (print-message (format nil " destroyed.~%"))
-  (setf (coord-ref *quadrant-contents* enemy-coordinate) +empty-sector+)
+  (print-message *message-window* (format nil " destroyed.~%"))
+  (setf (coord-ref *quadrant* enemy-coord) +empty-sector+)
   (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*))
   (when (> (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
     (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
         (setf *remaining-time* (/ *remaining-resources* (+ *remaining-klingons* (* 4 (length *commander-quadrants*)))))
         (setf *remaining-time* 99))
+    ;; Show the new remaining time immediately
+    (unless (eql *game-status-window* *message-window*)
+      (clear-window *game-status-window*)
+      (game-status 1)
+      (game-status 2)
+      (game-status 3))
     ;; Remove enemy ship from arrays describing local conditions
-    (when (and (is-scheduled-p +commander-destroys-base+)
+    (when (and (is-scheduled-p 'commander-destroys-base)
                (coord-equal *base-under-attack-quadrant* *ship-quadrant*)
                (string= enemy +commander+))
-      (unschedule +commander-destroys-base+))
+      (unschedule-event 'commander-destroys-base))
     (do ((i 0 (1+ i))) ; find the enemy sector
         ((or (> i *enemies-here*)
-             (coord-equal (aref *klingon-sectors* i) enemy-coordinate))
-         (setf *enemies-here* (1- *enemies-here*))
+             (coord-equal (enemy-sector-coordinates (aref *quadrant-enemies* i)) enemy-coord))
+         (decf *enemies-here* 1)
          (when (< i *enemies-here*)
+           ;; TODO - apply this shift to all code that removes an enemy from the array, it
+           ;;        preserves the special location (last item in the array) of the Tholian
            (do ((j i (1+ j))) ; shift all elements towards the start of the array
                ((>= j *enemies-here*))
-             (setf (aref *klingon-sectors* j) (aref *klingon-sectors* (1+ j)))
-             (setf (aref *klingon-energy* j) (aref *klingon-energy* (1+ j)))
-             (setf (aref *klingon-distance* j) (aref *klingon-distance* (1+ j)))
-             (setf (aref *klingon-average-distance* j) (aref *klingon-distance* (1+ j)))
-             ))))))
+             (setf (aref *quadrant-enemies* j) (aref *quadrant-enemies* (1+ j))))))))
+  (update-condition))
 
 (defun apply-critical-hit (hit) ; C: void fry(double hit)
   "Apply a critical hit."
 
   ;; a critical hit occured
   (when (>= hit (* (- 275.0 (* 25.0 *skill-level*) (+ 1.0 (* 0.5 (random 1.0))))))
-    (print-message (format nil "***CRITICAL HIT--~%"))
+    (print-message *message-window* (format nil "***CRITICAL HIT--~%"))
     ;; Select devices and cause damage
     (do ((hit-count 0 (1+ hit-count)) ; C: loop1 (really?)
          (number-of-hits (truncate (+ 1.0 (/ hit (+ 500.0 (* 100.0 (random 1.0))))))) ; C: ncrit
@@ -2575,12 +2267,12 @@ Long-range sensors can scan all adjacent quadrants."
          ;; Display damaged devices
          (do ((i 0 (1+ i)))
              ((>= i number-of-hits))
-           (print-message (format nil "~A " (aref *devices* (aref devices-damaged i))))
+           (print-message *message-window* (format nil "~A " (aref *devices* (aref devices-damaged i))))
            (when (and (> number-of-hits 1)
                       (= i (- number-of-hits 2)))
-             (print-message "and "))
+             (print-message *message-window* "and "))
            )
-         (print-message (format nil "damaged.~%")))
+         (print-message *message-window* (format nil "damaged.~%")))
       ;; Select a random device
       (do ((device-index nil))
           (device-index
@@ -2599,13 +2291,13 @@ Long-range sensors can scan all adjacent quadrants."
           (setf device-index nil)))))
     (when (and (damagedp +shields+)
                *shields-are-up-p*)
-      (print-message (format nil "***Shields knocked down.~%"))
+      (print-message *message-window* (format nil "***Shields knocked down.~%"))
       (setf *shields-are-up-p* nil))
   (when (and (damagedp +cloaking-device+)
              *cloakedp*)
-    (print-message (format nil "***Cloaking device rendered inoperative.~%"))
+    (print-message *message-window* (format nil "***Cloaking device rendered inoperative.~%"))
     (setf *cloakedp* nil))
-  (skip-line))
+  (skip-line *message-window*))
 
 (defun check-for-phasers-overheating (requested-energy) ; C: void overheat(double rpow)
   "Check for phasers overheating"
@@ -2613,7 +2305,7 @@ Long-range sensors can scan all adjacent quadrants."
   (when (> requested-energy +max-safe-phaser-power+)
     (let ((burn (* (- requested-energy +max-safe-phaser-power+) 0.00038))) ; TODO - name the constant
       (when (<= (random 1.0) burn)
-        (print-message (format nil "Weapons officer Sulu-  \"Phasers overheated, sir.\"~%"))
+        (print-message *message-window* (format nil "Weapons officer Sulu-  \"Phasers overheated, sir.\"~%"))
         (setf (aref *device-damage* +phasers+) (* *damage-factor* (+ 1 (random 1.0)) (+ 1.0 burn)))))))
 
 (defun energy-to-kill-enemy (i)
@@ -2621,9 +2313,10 @@ Long-range sensors can scan all adjacent quadrants."
 index of the enemy in the global array. This is the energy needed without any 'fuzz factors'
 applied."
 
-  (return-from energy-to-kill-enemy (/ (abs (aref *klingon-energy* i))
+  (return-from energy-to-kill-enemy (/ (abs (enemy-energy (aref *quadrant-enemies* i)))
                                        (* +phaser-factor+
-                                          (expt 0.90 (aref *klingon-distance* i))))))
+                                          (expt 0.90
+                                                (enemy-distance (aref *quadrant-enemies* i)))))))
 
 (defun recommended-energy-for-enemy (i)
   "Calculate the amount of energy recommending for killing one enemy with phaser fire. This
@@ -2655,70 +2348,75 @@ of the shields before calling this function.
 
 Return t if the shields were successfully raised or lowered, nil if there was a malfunction."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   (if *shields-are-up-p*
       ;; Lower shields
       (progn
-        (skip-line)
+        (skip-line *message-window*)
         (if (< (random 1.0) 0.998)
             (progn
-              (print-message (format nil "Shields lowered.~%"))
+              (print-message *message-window* (format nil "Shields lowered.~%"))
               (setf *shields-are-up-p* nil)
               (return-from toggle-high-speed-shield-control t))
             (progn
               ;; Something bad has happened
-              (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
-              (skip-line 2)
+              (print-message *message-window*
+                             (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
+              (skip-line *message-window* 2)
               (let* ((energy-hit (/ (* phaser-energy *shield-energy*) *initial-shield-energy*))
                      (casualties (truncate (* energy-hit (random 1) 0.012))))
                 (decf *ship-energy* (+ phaser-energy (* energy-hit 0.8)))
                 (decf *shield-energy* (* energy-hit 0.2))
                 (when (<= *ship-energy* 0.0)
-                  (print-message (format nil "Sulu-  \"Captain! Shield malf***********************\"~%")
+                  (print-message
+                   *message-window*
+                   (format nil "Sulu-  \"Captain! Shield malf***********************\"~%")
                                  :print-slowly t)
-                  (skip-line)
+                  (skip-line *message-window*)
                   (print-stars)
                   (finish 'phaser-fire-inside-shields)
                   (return-from toggle-high-speed-shield-control nil))
-                (print-message (format nil "Sulu-  \"Captain! Shield malfunction! Phaser fire contained!\"~%")
-                               :print-slowly t)
-                (skip-line 2)
-                (print-message (format nil "Lt. Uhura-  \"Sir, all decks reporting damage.\"~%"))
-                (skip-line)
+                (print-message
+                 *message-window*
+                 (format nil "Sulu-  \"Captain! Shield malfunction! Phaser fire contained!\"~%")
+                 :print-slowly t)
+                (skip-line *message-window* 2)
+                (print-message
+                 *message-window*
+                 (format nil "Lt. Uhura-  \"Sir, all decks reporting damage.\"~%"))
+                (skip-line *message-window*)
                 (apply-critical-hit (* 0.8 energy-hit))
                 (when (> casualties 0)
-                  (print-message (format nil "~%McCoy to bridge- \"Severe radiation burns, Jim.~%"))
-                  (print-message (format nil "  ~A casualties so far.\"~%" casualties))
+                  (print-message
+                   *message-window*
+                   (format nil "~%McCoy to bridge- \"Severe radiation burns, Jim.~%"))
+                  (print-message
+                   *message-window* (format nil "  ~A casualties so far.\"~%" casualties))
                   (incf *casualties* casualties)
                   (decf *crew* casualties)))
-              (print-message (format nil "~%Phaser energy dispersed by shields.~%"))
-              (print-message (format nil "Enemy unaffected.~%"))
+              (print-message *message-window*
+                             (format nil "~%Phaser energy dispersed by shields.~%"))
+              (print-message *message-window* (format nil "Enemy unaffected.~%"))
               (check-for-phasers-overheating phaser-energy)
               (return-from toggle-high-speed-shield-control nil))))
       ;; Raise shields
       (if (< (random 1.0) 0.99)
           (progn
-            (print-message (format nil "Shields raised.~%"))
+            (print-message *message-window* (format nil "Shields raised.~%"))
             (setf *shields-are-up-p* t)
             (return-from toggle-high-speed-shield-control t))
           (progn
-            (print-message (format nil "Sulu-  \"Sir, the high-speed shield control has malfunctioned . . .~%"))
-            (print-message (format nil "         CLICK   CLICK   POP  . . .~%") :print-slowly t)
-            (print-message (format nil " No response, sir!~%"))
+            (print-message
+             *message-window*
+             (format nil "Sulu-  \"Sir, the high-speed shield control has malfunctioned . . .~%"))
+            (print-message *message-window*
+                           (format nil "         CLICK   CLICK   POP  . . .~%") :print-slowly t)
+            (print-message *message-window* (format nil " No response, sir!~%"))
             (setf *shields-are-up-p* nil)
             (return-from toggle-high-speed-shield-control nil)))))
 
 (defun apply-phaser-hits (hits) ; C: hittem(double *hits)
   "Apply phaser hits to Klingons and Romulans."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  ;; TODO - Initially, the number of enemies and the number of entries in the hits array are the
-  ;;        same. As enemies are killed the enemies array becomes shorter but the hits array does
-  ;;        not. Convert this index tracking to some sort of structure that uses lists.
   (do ((hit-index 0 (1+ hit-index))
        (enemy-index 0 (1+ enemy-index))
        (dust-factor (+ 0.9 (* 0.01 (random 1.0))) ; amount by which delivered power is reduced over distance
@@ -2726,61 +2424,61 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
        hit ; The hit amount applied to the current enemy
        initial-enemy-energy
        enemy-energy
-       (e-coord (make-coordinate))) ; convenience variable
+       (e-coord (make-sector-coordinate))) ; convenience variable
       ((>= hit-index (length hits)))
-    (skip-line)
+    (skip-line *message-window*)
     (when (> (aref hits hit-index) 0)
-      (setf hit (* (aref hits hit-index) (expt dust-factor (aref *klingon-distance* enemy-index))))
-      (setf initial-enemy-energy (aref *klingon-energy* enemy-index))
+      (setf hit (* (aref hits hit-index)
+                   (expt dust-factor (enemy-distance (aref *quadrant-enemies* enemy-index)))))
+      (setf initial-enemy-energy (enemy-energy (aref *quadrant-enemies* enemy-index)))
       (setf enemy-energy (abs initial-enemy-energy)) ; apparently, enemy energy can be negative
       (when (< (* +phaser-factor+ hit) enemy-energy)
         (setf enemy-energy (* +phaser-factor+ hit)))
-      (if (< (aref *klingon-energy* enemy-index) 0)
-          (decf (aref *klingon-energy* enemy-index) (- enemy-energy))
-          (decf (aref *klingon-energy* enemy-index) enemy-energy))
-      (setf e-coord (aref *klingon-sectors* enemy-index))
+      (if (< (enemy-energy (aref *quadrant-enemies* enemy-index)) 0)
+          (decf (enemy-energy (aref *quadrant-enemies* enemy-index)) (- enemy-energy))
+          (decf (enemy-energy (aref *quadrant-enemies* enemy-index)) enemy-energy))
+      (setf e-coord (enemy-sector-coordinates (aref *quadrant-enemies* enemy-index)))
       (if (> hit 0.005)
           (progn
-            (when (not (damagedp +short-range-sensors+))
-              (boom e-coord))
-            (print-message (format nil "~A unit hit on ~A at ~A~%" (truncate hit)
-                                   (letter-to-name (coord-ref *quadrant-contents* e-coord))
+            (unless (damagedp +short-range-sensors+)
+              (boom *short-range-scan-window*
+                    (coord-ref *quadrant* e-coord) (coordinate-x e-coord) (coordinate-y e-coord)))
+            (print-message *message-window* (format nil "~A unit hit on ~A at ~A~%" (truncate hit)
+                                   (letter-to-name (coord-ref *quadrant* e-coord))
                                    (format-sector-coordinates e-coord))))
-          (print-message (format nil "Very small hit on ~A at ~A~%"
-                                 (letter-to-name (coord-ref *quadrant-contents* e-coord))
+          (print-message *message-window* (format nil "Very small hit on ~A at ~A~%"
+                                 (letter-to-name (coord-ref *quadrant* e-coord))
                                  (format-sector-coordinates e-coord))))
-      (when (string= (coord-ref *quadrant-contents* e-coord)
+      (when (string= (coord-ref *quadrant* e-coord)
                      +thing+)
         (setf *thing-is-angry-p* t))
-      (if (= (aref *klingon-energy* enemy-index) 0)
+      (if (= (enemy-energy (aref *quadrant-enemies* enemy-index)) 0)
           (progn
-            (dead-enemy e-coord (coord-ref *quadrant-contents* e-coord)
+            (dead-enemy e-coord (coord-ref *quadrant* e-coord)
                         e-coord)
             (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
               (finish 'won))
             (when *all-done-p*
               (return-from apply-phaser-hits t))
-            (1- enemy-index)) ; don't do the increment, enemy array has one less klingon
+            (decf enemy-index 1)) ; don't do the increment, enemy array has one less klingon
           ;; decide whether or not to emasculate klingon
-          (when (and (> (aref *klingon-energy* enemy-index) 0)
+          (when (and (> (enemy-energy (aref *quadrant-enemies* enemy-index)) 0)
                      (>= (random 1.0) 0.9)
-                     (<= (aref *klingon-energy* enemy-index) (+ 0.4 (* 0.4 (random 1.0) initial-enemy-energy))))
-            (print-message (format nil "***Mr. Spock-  \"Captain, the vessel at ~A~%"
+                     (<= (enemy-energy (aref *quadrant-enemies* enemy-index))
+                         (+ 0.4 (* 0.4 (random 1.0) initial-enemy-energy))))
+            (print-message *message-window* (format nil "***Mr. Spock-  \"Captain, the vessel at ~A~%"
                                    (format-sector-coordinates e-coord)))
-            (print-message (format nil "   has just lost its firepower.\"~%"))
-            (setf (aref *klingon-energy* enemy-index) 0))))))
+            (print-message *message-window* (format nil "   has just lost its firepower.\"~%"))
+            (setf (enemy-energy (aref *quadrant-enemies* enemy-index)) 0))))))
 
 (defun fire-phasers () ; C: phasers()
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (when *dockedp*
-    (print-message (format nil "Phasers can't be fired through base shields.~%"))
+    (print-message *message-window* (format nil "Phasers can't be fired through base shields.~%"))
     (return-from fire-phasers nil))
   (when (damagedp +phasers+)
-    (print-message (format nil "Phaser control damaged.~%"))
+    (print-message *message-window* (format nil "Phaser control damaged.~%"))
     (return-from fire-phasers nil))
   (let ((targeting-support-available-p ; C: itarg, SR sensors and Computer are needed for automatic fire
          (not (or (damagedp +short-range-sensors+)
@@ -2792,12 +2490,13 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
         (fire-mode nil))
     (when *shields-are-up-p*
       (when (damagedp +shield-control+)
-        (print-message (format nil "High speed shield control damaged.~%"))
+        (print-message *message-window* (format nil "High speed shield control damaged.~%"))
         (return-from fire-phasers nil))
       (when (<= *ship-energy* 200.0)
-        (print-message (format nil "Insufficient energy to activate high-speed shield control.~%"))
+        (print-message *message-window* (format nil "Insufficient energy to activate high-speed shield control.~%"))
         (return-from fire-phasers nil))
-      (print-message (format nil "Weapons Officer Sulu-  \"High-speed shield control enabled, sir.\"~%"))
+      (print-message *message-window*
+       (format nil "Weapons Officer Sulu-  \"High-speed shield control enabled, sir.\"~%"))
       (setf shield-control-available-p t))
     (setf available-energy (if shield-control-available-p (- *ship-energy* 200) *ship-energy*))
     ;; Here are valid forms of the phaser command. n (for "no") is optional, # is a number. "n" can
@@ -2813,45 +2512,46 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
     ;; Read at most three values from the input to obtain the firing mode. A maximum of three
     ;; values are needed for automatic mode so read them here. Amounts to fire will be prompted for
     ;; later if not provided.
-    (do ((token-count 0 (1+ token-count)))
+    (do ((token-count 0 (1+ token-count))
+         input-item)
         ((> token-count 2)
-         (when (not fire-mode)
+         (unless fire-mode
            (huh)
            (return-from fire-phasers nil)))
-      (if (= (length *line-tokens*) 0)
-          (when (not fire-mode)
-            (print-prompt "Manual or automatic? ")
-            (scan-input)
+      (if (input-available-p)
+          (progn
+            (setf input-item (scan-input))
             (cond
-              ((or (not *input-item*); no input, player typed enter/return
-                   (match-token *input-item* (list "automatic")))
+              ((numberp input-item)
+               (if (eql fire-mode 'manual)
+                   (unscan-input input-item) ; Don't read manual mode energy until the firing loop.
+                   (unless requested-energy ; If energy was already provided then don't overwrite it.
+                     (setf fire-mode 'automatic)
+                     (setf requested-energy input-item))))
+
+              ((match-token input-item (list "automatic"))
                (setf fire-mode 'automatic))
 
-              ((match-token *input-item* (list "manual"))
+              ((and (not fire-mode)
+                    (match-token input-item (list "manual")))
                (setf fire-mode 'manual))
+
+              ((match-token input-item (list "no"))
+               (setf raise-shields-p nil))
 
               (t
                (huh)
                (return-from fire-phasers nil))))
-          (progn
-            (scan-input)
+          (unless fire-mode
+            (print-prompt "Manual or automatic? ")
+            (setf input-item (scan-input))
             (cond
-              ((numberp *input-item*)
-               (if (eql fire-mode 'manual)
-                   (unscan-input) ; Don't read manual mode energy until the firing loop.
-                   (when (not requested-energy) ; If energy was already provided then don't overwrite it.
-                     (setf fire-mode 'automatic)
-                     (setf requested-energy *input-item*))))
-
-              ((match-token *input-item* (list "automatic"))
+              ((or (not input-item); no input, player typed enter/return
+                   (match-token input-item (list "automatic")))
                (setf fire-mode 'automatic))
 
-              ((and (not fire-mode)
-                    (match-token *input-item* (list "manual")))
+              ((match-token input-item (list "manual"))
                (setf fire-mode 'manual))
-
-              ((match-token *input-item* (list "no"))
-               (setf raise-shields-p nil))
 
               (t
                (huh)
@@ -2864,34 +2564,33 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
     (when (= *enemies-here* 0)
       (when (or (eql fire-mode 'manual)
                 (eql fire-mode 'force-manual))
-        (print-message (format nil "There is no enemy present to select.~%"))
+        (print-message *message-window* (format nil "There is no enemy present to select.~%"))
         (clear-type-ahead-buffer)
         (setf fire-mode 'automatic)) ; In automatic mode a single value is input
-      (print-message (format nil "Energy will be expended into space.~%")))
+      (print-message *message-window* (format nil "Energy will be expended into space.~%")))
 
     (if (eql fire-mode 'automatic)
         (progn
           (when (and (not requested-energy)
                      (> *enemies-here* 0))
-            (print-message "Phasers locked on target. "))
-          (do ()
+            (print-message *message-window* "Phasers locked on target. "))
+          (do (input-item)
               ((and requested-energy
                     (< requested-energy available-energy)))
-            (print-message (format nil "Energy available= ~,2F~%" available-energy))
+            (print-message *message-window* (format nil "Energy available= ~,2F~%" available-energy))
             (clear-type-ahead-buffer)
-            (setf *input-item* nil)
             (print-prompt (format nil "~D units required. Units to fire: " (ceiling (recommended-energy))))
-            (scan-input)
-            (when (not (numberp *input-item*))
+            (setf input-item (scan-input))
+            (unless (numberp input-item)
               (return-from fire-phasers nil))
-            (setf requested-energy *input-item*))
+            (setf requested-energy input-item))
           (when (<= requested-energy 0)
             ;; chicken out
             (return-from fire-phasers nil))
           (when (and shield-control-available-p
                      *shields-are-up-p*)
             (decf *ship-energy* 200) ; Go and do it!
-            (when (not (toggle-high-speed-shield-control requested-energy))
+            (unless (toggle-high-speed-shield-control requested-energy)
               ;; High-speed shield control failed, phaser fire process interrupted
               (return-from fire-phasers nil)))
           ;; Fire!
@@ -2924,64 +2623,58 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
               (setf *action-taken-p* t))
             (when (and (> excess-energy 0)
                        (not *all-done-p*))
-              (skip-line)
+              (skip-line *message-window*)
               (if (> *tholians-here* 0)
                   (progn
-                    (print-message "*** Tholian web absorbs ")
+                    (print-message *message-window* "*** Tholian web absorbs ")
                     (when (> *enemies-here* 0)
-                      (print-message "excess "))
-                    (print-message (format nil "phaser energy.~%")))
-                  (print-message (format nil "~,2F units expended on empty space.~%" excess-energy))))))
+                      (print-message *message-window* "excess "))
+                    (print-message *message-window* (format nil "phaser energy.~%")))
+                  (print-message *message-window* (format nil "~,2F units expended on empty space.~%" excess-energy))))))
         (progn
           ;; If manual fire was forced then explain why
           (when (eql fire-mode 'force-manual)
             (clear-type-ahead-buffer)
             (if (damagedp +computer+)
-                (print-message (format nil "Battle computer damaged, manual fire only.~%"))
+                (print-message *message-window* (format nil "Battle computer damaged, manual fire only.~%"))
                 (progn
-                  (print-message (format nil "~%---WORKING---~%") :print-slowly t)
-                  (print-message (format nil "~%Short-range-sensors-damaged~%"))
-                  (print-message (format nil "Insufficient-data-for-automatic-phaser-fire~%"))
-                  (print-message (format nil "Manual-fire-must-be-used~%"))
-                  (skip-line))))
+                  (print-message *message-window* (format nil "~%---WORKING---~%") :print-slowly t)
+                  (print-message *message-window* (format nil "~%Short-range-sensors-damaged~%"))
+                  (print-message *message-window* (format nil "Insufficient-data-for-automatic-phaser-fire~%"))
+                  (print-message *message-window* (format nil "Manual-fire-must-be-used~%~%")))))
           ;; Allow manual fire even when the short-range sensors are damaged. If the short-range
           ;; sensors are damaged and the enemy is a Commander, Super-commander, or Romulan then
           ;; they can't be fired on unless they are adjacent to the ship.
           ;; TODO - write the enhancements to the visual-scan function and then allow firing on
           ;;        Commanders, Super-commanders, and Romulan) that are detected by the visual scan
-          ;; TODO - Consider allowing manual fire only on enemies that are visible, either in the
-          ;;        short range scan, adjacent sectors, or visual scan. When an unseen enemy
-          ;;        attacks it's location becomes known (check the attack function to confirm this)
-          ;;        and it then can be counter-attacked. Display it in the short-range scan with a
-          ;;        generic letter such as "A" for "attacker" but not the specific type of enemy.
           ;; TODO - the recommended energy amounts for manual fire can vary if the input loop is
           ;;        repeated. Is this a bug or a feature?
           (setf requested-energy 0.0)
-   (do ((current-enemy 0) ; the loop restarts with the first enemy if too much energy is requested
-        (display-available-energy-p t)
-        enemy
-        enemy-coord
-        (hits (make-array *enemies-here*))) ; C: hits, but sized to fit
-       ((>= current-enemy *enemies-here*)
-        (when (= requested-energy 0)
-          ;; zero energy -- abort
-          (return-from fire-phasers nil))
-        (decf *ship-energy* requested-energy)
-        (clear-type-ahead-buffer)
-        (when (and shield-control-available-p
-                   *shields-are-up-p*)
-          (decf *ship-energy* 200) ; TODO - name the constant
-          (when (not (toggle-high-speed-shield-control requested-energy))
-            (return-from fire-phasers nil)))
-        (apply-phaser-hits hits)
-        (setf *action-taken-p* t))
-     (setf enemy-coord (aref *klingon-sectors* current-enemy))
-     (setf enemy (coord-ref *quadrant-contents* enemy-coord))
-     (when display-available-energy-p
-       (print-message (format nil "Energy available= ~,2F~%" (- available-energy 0.006))) ; what is this constant?
-       (setf display-available-energy-p nil)
-       (setf requested-energy 0.0))
-     (if (and (damagedp +short-range-sensors+)
+          (do ((current-enemy 0) ; the loop restarts with the first enemy if too much energy is requested
+               (display-available-energy-p t)
+               enemy
+               enemy-coord
+               (hits (make-array *enemies-here*))) ; C: hits, but sized to fit
+              ((>= current-enemy *enemies-here*)
+               (when (= requested-energy 0)
+                 ;; zero energy -- abort
+                 (return-from fire-phasers nil))
+               (decf *ship-energy* requested-energy)
+               (clear-type-ahead-buffer)
+               (when (and shield-control-available-p
+                          *shields-are-up-p*)
+                 (decf *ship-energy* 200) ; TODO - name the constant
+                 (unless (toggle-high-speed-shield-control requested-energy)
+                   (return-from fire-phasers nil)))
+               (apply-phaser-hits hits)
+               (setf *action-taken-p* t))
+            (setf enemy-coord (enemy-sector-coordinates (aref *quadrant-enemies* current-enemy)))
+            (setf enemy (coord-ref *quadrant* enemy-coord))
+            (when display-available-energy-p
+              (print-message *message-window* (format nil "Energy available= ~,2F~%" (- available-energy 0.006))) ; what is this constant?
+              (setf display-available-energy-p nil)
+              (setf requested-energy 0.0))
+            (if (and (damagedp +short-range-sensors+)
                      (or (string= enemy +super-commander+)
                          (string= enemy +commander+)
                          (string= enemy +romulan+))
@@ -2989,42 +2682,43 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
                      (not (and (< (abs (- (coordinate-x *ship-sector*) (coordinate-x enemy-coord))) 2)
                                (< (abs (- (coordinate-y *ship-sector*) (coordinate-y enemy-coord))) 2))))
                 (progn
-                  (print-message (format nil "~A can't be located without short range scan.~%" (letter-to-name enemy)))
+                  (print-message *message-window*
+                                 (format nil "~A can't be located without short range scan.~%"
+                                         (letter-to-name enemy)))
                   (clear-type-ahead-buffer)
                   (setf (aref hits current-enemy) 0) ; prevent overflow -- thanks to Alexei Voitenko
-                  (setf current-enemy (1+ current-enemy)))
+                  (incf current-enemy 1))
                 (progn
-                  (when (= (length *line-tokens*) 0)
-                    (print-prompt (format nil "(~A) units to fire at ~A at ~A: "
-                                          (if targeting-support-available-p
-                                              (format nil "~D" (truncate (recommended-energy-for-enemy current-enemy)))
-                                              "??")
-                                          (letter-to-name enemy)
-                                          (format-sector-coordinates enemy-coord))))
-                  (scan-input)
-                  (when (and *input-item*
-                             (not (numberp *input-item*)))
-                    (huh)
-                    (return-from fire-phasers nil))
-                  (when (and (numberp *input-item*)
-                             (< *input-item* 0))
-                    ;; abort out
-                    (clear-type-ahead-buffer)
-                    (return-from fire-phasers nil))
-                  (setf (aref hits current-enemy) *input-item*)
-                  (incf requested-energy *input-item*)
-                  (setf *input-item* nil)
+                  (unless (input-available-p)
+                    (print-prompt
+                     (format nil "(~A) units to fire at ~A at ~A: "
+                             (if targeting-support-available-p
+                                 (format nil "~D"
+                                         (truncate (recommended-energy-for-enemy current-enemy)))
+                                 "??")
+                             (letter-to-name enemy)
+                             (format-sector-coordinates enemy-coord))))
+                  (let ((input-item (scan-input)))
+                    (unless (numberp input-item)
+                      (huh)
+                      (return-from fire-phasers nil))
+                    (when (< input-item 0)
+                      (clear-type-ahead-buffer)
+                      (return-from fire-phasers nil))
+                    (setf (aref hits current-enemy) input-item)
+                    (incf requested-energy input-item))
                   ;; If total requested is too much, inform and start over
                   (if (> requested-energy available-energy)
                       (progn
-                        (print-message (format nil "Available energy exceeded -- try again.~%"))
+                        (print-message *message-window*
+                                       (format nil "Available energy exceeded -- try again.~%"))
                         (clear-type-ahead-buffer)
                         (setf current-enemy 0)
                         (setf display-available-energy-p t))
                       (progn
-                        (setf current-enemy (1+ current-enemy)))))))))
+                        (incf current-enemy 1))))))))
     ;; Say shield raised or malfunction, if necessary
-    (when (not *all-done-p*)
+    (unless *all-done-p*
       (when (and shield-control-available-p
                  (not *shields-are-up-p*))
         (when raise-shields-p
@@ -3073,25 +2767,25 @@ chosen.
 The Klingon is requested to surrender.  The probability of this
 is a function of that Klingon's remaining power, our power, etc."
 
-  (setf *action-taken-p* nil) ; Nothing if we fail
   (setf *time-taken-by-current-operation* 0.0)
 
   (cond
     ;; Make sure there is room in the brig
     ((= *brig-free* 0)
-     (print-message (format nil "Security reports the brig is already full.~%"))
+     (print-message *message-window* (format nil "Security reports the brig is already full.~%"))
      (return-from capture nil))
 
-    ((damagedp +subspace-radio+)
-     (print-message (format nil "Uhura- \"We have no subspace radio communication, sir.\"~%"))
+    ((or *cloakedp*
+         (damagedp +subspace-radio+))
+     (print-message *message-window* (format nil "Uhura- \"We have no subspace radio communication, sir.\"~%"))
      (return-from capture nil))
 
     ((damagedp +transporter+)
-     (print-message (format nil "Scotty- \"Transporter damaged, sir.\"~%"))
+     (print-message *message-window* (format nil "Scotty- \"Transporter damaged, sir.\"~%"))
      (return-from capture nil))
     ;; find out if there are any at all
     ((< *klingons-here* 1)
-     (print-message (format nil "Uhura- \"Getting no response, sir.\"~%"))
+     (print-message *message-window* (format nil "Uhura- \"Getting no response, sir.\"~%"))
      (return-from capture nil))
     (t
      (setf *time-taken-by-current-operation* 0.05) ; This action will take some time
@@ -3101,38 +2795,40 @@ is a function of that Klingon's remaining power, our power, etc."
            k-coord
            x) ; C: x
        ;; Check out that Klingon
-       (setf k-coord (aref *klingon-sectors* klingon-index))
+       (setf k-coord (enemy-sector-coordinates (aref *quadrant-enemies* klingon-index)))
        ;; The algorithm isn't that great and could use some more intelligent design
        ;; (setf x (+ 300 (* 25 *skill-level*))) - just use ship energy for now
        ;; Multiplier would originally have been equivalent of 1.4, but we want the command to work more often, more humanely
-       (setf x (* (/ *ship-energy* (* (aref *klingon-energy* klingon-index) *enemies-here*)) 2.5))
+       (setf x (* (/ *ship-energy* (* (enemy-energy (aref *quadrant-enemies* klingon-index))
+                                      *enemies-here*))
+                  2.5))
        (if (<= x (* (random 1.0) 100))
            ;; Big surprise, he refuses to surrender
            (progn
-             (print-message (format nil "Fat chance, captain~%"))
+             (print-message *message-window* (format nil "Fat chance, captain~%"))
              (return-from capture nil)))
        ;; Guess what, he surrendered!!!
            (progn
-             (print-message (format nil "Klingon captain at ~A surrenders~%" (format-coordinates k-coord)))
+             (print-message *message-window* (format nil "Klingon captain at ~A surrenders~%" (format-coordinates k-coord)))
              ;; Assume a crew of 200 on the Klingon ship
              (let ((klingons-captured (round (* 200 (random 1.0))))) ; C: i
                (when (> klingons-captured 0)
-                 (print-message (format nil "~D Klingons commit suicide rather than be taken captive.~%"
+                 (print-message *message-window* (format nil "~D Klingons commit suicide rather than be taken captive.~%"
                                         (- 200 klingons-captured))))
                (when (and (> klingons-captured *brig-free*)
                           (not *dockedp*))
-                 (print-message (format nil "~D Klingons die because there is no room for them in the brig~%"
+                 (print-message *message-window* (format nil "~D Klingons die because there is no room for them in the brig~%"
                                         (- klingons-captured *brig-free*)))
                  (setf klingons-captured *brig-free*))
                (if *dockedp*
                    (progn
                      (incf *captured-klingons* klingons-captured)
-                     (print-message (format nil "~D captives taken and transferred to base~%"
+                     (print-message *message-window* (format nil "~D captives taken and transferred to base~%"
                                             klingons-captured)))
                    (progn
                      (decf *brig-free* klingons-captured)
-                     (print-message (format nil "~D captives taken~%" klingons-captured)))))
-             (dead-enemy k-coord (coord-ref *quadrant-contents* k-coord) k-coord)
+                     (print-message *message-window* (format nil "~D captives taken~%" klingons-captured)))))
+             (dead-enemy k-coord (coord-ref *quadrant* k-coord) k-coord)
              (when (= *remaining-klingons* 0)
                (finish 'won)))))))
 
@@ -3142,14 +2838,16 @@ Nah, just select the weakest one since it is most likely to
 surrender (Tom Almy mod)"
 
   (let ((klingon-index 0)
-        (klingon-energy (aref *klingon-energy* 0)))
+        (klingon-energy (enemy-energy (aref *quadrant-enemies* 0))))
     ;; Select the weakest one
     (do ((i 1 (1+ i))) ; C: int j
         ((>= i *enemies-here*))
-      (unless (string= (coord-ref *quadrant-contents* (aref *klingon-sectors* i)) +romulan+) ; No Romulans surrender
-        (when (> (aref *klingon-energy* i) klingon-energy)
+      (unless (string= (coord-ref *quadrant*
+                                  (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                       +romulan+) ; No Romulans surrender
+        (when (> (enemy-energy (aref *quadrant-enemies* i)) klingon-energy)
           (setf klingon-index i)
-          (setf klingon-energy (aref *klingon-energy* i)))))
+          (setf klingon-energy (enemy-energy (aref *quadrant-enemies* i))))))
     (return-from select-klingon-for-capture klingon-index)))
 
 (defun displace-ship (x-coord y-coord hit-angle)
@@ -3167,8 +2865,8 @@ and return the x and y coordinates to which it was displaced."
       (setf bigger (abs (cos angle))))
     (setf delta-x (- (/ (sin angle) bigger)))
     (setf delta-y (/ (cos angle) bigger))
-    (return-from displace-ship (make-coordinate :x (round (+ x-coord delta-x))
-                                                :y (round (+ y-coord delta-y))))))
+    (return-from displace-ship (make-sector-coordinate :x (round (+ x-coord delta-x))
+                                                       :y (round (+ y-coord delta-y))))))
 
 (defun calculate-torpedo-damage (torpedo-origin torpedo-coord hit-angle)
   "Damage done by a torpedo depends on the distance it has travelled and the angle at which it hits."
@@ -3178,38 +2876,75 @@ and return the x and y coordinates to which it was displaced."
              (distance torpedo-origin torpedo-coord)
              (abs (sin hit-angle))))))
 
-(defun track-torpedo (torp-x ; floating point x position
-                      torp-y ; floating point y position
-                      length-of-track
-                      torpedo-number
-                      number-of-torpedoes-in-salvo
-                      sector-contents) ; C: void tracktorpedo(coord w, int l, int i, int n, int iquad)
-  "Torpedo-track animation. If displaying coordinates then display fractional amounts since it is
-allowed to aim between sectors."
+;; C: void tracktorpedo(coord w, int l, int i, int n, int iquad)
+(defgeneric track-torpedo (output-window
+                           torp-x ; floating point x position
+                           torp-y ; floating point y position
+                           length-of-track
+                           torpedo-number
+                           number-of-torpedoes-in-salvo
+                           sector-contents)
+  (:documentation "Display torpedo track information."))
 
-  (if *window-interface-p*
-      ;; TODO - write the curses part
-      (if (or (not (damagedp +short-range-sensors+))
-              *dockedp*)
-          (progn
-            (setf sector-contents sector-contents) ; never used? hah!
-            t) ; TODO - finish this
-          (print-out (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y)))
-        )
+(defmethod track-torpedo ((output-window screen)
+                          torp-x ; floating point x position
+                          torp-y ; floating point y position
+                          length-of-track
+                          torpedo-number
+                          number-of-torpedoes-in-salvo
+                          sector-contents)
+  "Display torpedo track information as a series of coordinates. Display fractional amounts
+ because aiming between sectors is allowed."
+
+  (if (= length-of-track 1)
+      ;; Display track header
       (progn
-        (if (= length-of-track 1)
-            ;; Display track header
-            (progn
-              (skip-line)
-              (if (= number-of-torpedoes-in-salvo 1)
-                  (print-out "Torpedo track: ")
-                  (print-out (format nil "Track for torpedo number ~A:  " torpedo-number))))
-            ;; Line wrap every four sectors
-            (when (or (= length-of-track 4)
-                      (= length-of-track 9))
-              (skip-line)))
-        ;; Convert internal torp coords to 1-based player values
-        (print-out (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y))))))
+        (skip-line output-window)
+        (if (= number-of-torpedoes-in-salvo 1)
+            (print-out output-window "Torpedo track: ")
+            (print-out output-window
+                       (format nil "Track for torpedo number ~A:  " torpedo-number))))
+      ;; Line wrap every four sectors
+      (when (or (= length-of-track 4)
+                (= length-of-track 9))
+        (skip-line output-window)))
+  ;; Convert internal torp coords to 1-based player values
+  (print-out output-window (format nil "~,1F - ~,1F  " (1+ torp-x) (1+ torp-y))))
+
+(defmethod track-torpedo ((output-window window)
+                          torp-x ; floating point x position
+                          torp-y ; floating point y position
+                          length-of-track
+                          torpedo-number
+                          number-of-torpedoes-in-salvo
+                          sector-contents)
+  "Display torpedo track information as updates to the short range scan window."
+
+  (when (or (not (damagedp +short-range-sensors+))
+            *dockedp*)
+    (when (= length-of-track 1)
+      (short-range-scan output-window))
+    (if (or (string= sector-contents +empty-sector+)
+            (string= sector-contents +black-hole+))
+        ;; Pass over an empty sector. Black hole collisions are handled without effects.
+        (progn
+          (put-short-range-scan-symbol output-window +torpedo+
+                                       (round torp-x) (round torp-y))
+          (turn-sound-on (* length-of-track 10))
+          (sleep 1)
+          (turn-sound-off)
+          (put-short-range-scan-symbol output-window
+                                       sector-contents (round torp-x) (round torp-y)))
+        ;; Highlight an impact sector
+        (boom output-window sector-contents (round torp-x) (round torp-y))))
+  ;; Also print torpedo track information even if short range sensors are damaged
+  (call-next-method *message-window*
+                    torp-x
+                    torp-y
+                    length-of-track
+                    torpedo-number
+                    number-of-torpedoes-in-salvo
+                    sector-contents))
 
 ;; TODO - there is a parallel with move-ship-within-quadrant. Is there common code that
 ;;        be refactored into a general-purpose routine?
@@ -3222,10 +2957,6 @@ allowed to aim between sectors."
   "Let a photon torpedo fly. Move one torpedo inside the quadrant, possibly hitting objects, and
 handling the result. Return the amount of damage if the player ship was hit."
 
-  (if (or (not (damagedp +short-range-sensors+))
-          *dockedp*)
-      (select-window *short-range-scan-window*)
-      (select-window *message-window*))
   (let (adjusted-course ; C: double ac
         angle ; C: double angle
         bullseye-angle ; C: double bullseye
@@ -3256,53 +2987,57 @@ handling the result. Return the amount of damage if the player ship was hit."
         (movement-ended-p
          ;; Displaced enemies don't exit the sector
          (when (and shovedp
-                    (valid-sector-p (coordinate-x displaced-to-sector) (coordinate-y displaced-to-sector)))
-           (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
-           (setf (coord-ref *quadrant-contents* displaced-to-sector) sector-contents)
+                    (valid-p displaced-to-sector))
+           (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
+           (setf (coord-ref *quadrant* displaced-to-sector) sector-contents)
            ;; Thing is displaced without notification
            (unless (string= sector-contents +thing+)
-             (print-message (format nil " displaced by blast to ~A ~%" (format-sector-coordinates displaced-to-sector))))
+             (print-message *message-window* (format nil " displaced by blast to ~A ~%"
+                                    (format-sector-coordinates displaced-to-sector))))
+           ;; A ship was displaced, reset all distances for next attack on player.
            (do ((i 0 (1+ i)))
                ((>= i *enemies-here*))
-             (setf (aref *klingon-distance* i) (distance *ship-sector* (aref *klingon-sectors* i)))
-             (setf (aref *klingon-average-distance* i) (distance *ship-sector* (aref *klingon-sectors* i)))
+             (setf (enemy-distance (aref *quadrant-enemies* i))
+                   (distance *ship-sector* (enemy-sector-coordinates (aref *quadrant-enemies* i))))
+             (setf (enemy-average-distance (aref *quadrant-enemies* i))
+                   (distance *ship-sector* (enemy-sector-coordinates (aref *quadrant-enemies* i))))
              (sort-klingons))))
       (incf torp-x delta-x)
       (incf torp-y delta-y)
-      (setf torpedo-sector (make-coordinate :x (round torp-x) :y (round torp-y)))
+      (setf torpedo-sector (make-sector-coordinate :x (round torp-x) :y (round torp-y)))
       (setf movement-count (1+ movement-count))
-      (if (valid-sector-p (coordinate-x torpedo-sector) (coordinate-y torpedo-sector))
+      (if (valid-p torpedo-sector)
           (progn
-            (setf sector-contents (coord-ref *quadrant-contents* torpedo-sector))
-            (track-torpedo torp-x torp-y movement-count torpedo-number number-of-torpedoes-in-salvo sector-contents)
+            (setf sector-contents (coord-ref *quadrant* torpedo-sector))
+            (track-torpedo *short-range-scan-window*
+                           torp-x torp-y
+                           movement-count torpedo-number number-of-torpedoes-in-salvo
+                           sector-contents)
             (unless (string= sector-contents +empty-sector+)
               ;; hit something
-              (select-window *message-window*)
-              (when (or (not *window-interface-p*)
-                        (and *window-interface-p*
-                             (damagedp +short-range-sensors+)
-                             (not *dockedp*)))
-                (skip-line)) ; start new line after text track
+              (skip-line *message-window*) ; start new line after text track
               (cond
                 ;; Hit our ship
                 ((or (string= sector-contents +enterprise+)
                      (string= sector-contents +faerie-queene+))
-                 (print-message (format nil "~%Torpedo hits ~A.~%" (format-ship-name)))
-                 (setf ship-hit (calculate-torpedo-damage initial-position torpedo-sector bullseye-angle))
+                 (print-message *message-window*
+                                (format nil "~%Torpedo hits ~A.~%" (format-ship-name)))
+                 (setf ship-hit
+                       (calculate-torpedo-damage initial-position torpedo-sector bullseye-angle))
                  (setf *dockedp* nil) ; we're blown out of dock
                  ;; We may be displaced.
                  (unless *landedp* ; Cheat if on a planet
                    (setf displaced-to-sector (displace-ship (coordinate-x torpedo-sector)
                                                             (coordinate-y torpedo-sector)
                                                             angle))
-                   (when (valid-sector-p (coordinate-x displaced-to-sector) (coordinate-y displaced-to-sector))
-                     (when (string= (coord-ref *quadrant-contents* displaced-to-sector) +black-hole+)
+                   (when (valid-p displaced-to-sector)
+                     (when (string= (coord-ref *quadrant* displaced-to-sector) +black-hole+)
                        (finish 'destroyed-by-black-hole)
                        (return-from move-torpedo-within-quadrant ship-hit))
                      ;; can't move into object
-                     (when (string= (coord-ref *quadrant-contents* displaced-to-sector) +empty-sector+)
+                     (when (string= (coord-ref *quadrant* displaced-to-sector) +empty-sector+)
                        (setf *ship-sector* displaced-to-sector)
-                       (print-message (format-ship-name))
+                       (print-message *message-window* (format-ship-name))
                        (setf shovedp t)))))
                 ;; Hit an enemy
                 ((or (string= sector-contents +super-commander+)
@@ -3313,57 +3048,68 @@ handling the result. Return the amount of damage if the player ship was hit."
                               (string= sector-contents +commander+))
                           (<= (random 1.0) 0.05)) ; and they successfully neutralize the torpedo
                      (progn
-                       (print-message (format nil "***~A at ~A uses anti-photon device;~%"
+                       (print-message *message-window*
+                                      (format nil "***~A at ~A uses anti-photon device;~%"
                                               (letter-to-name sector-contents)
                                               (format-sector-coordinates torpedo-sector)))
-                       (print-message (format nil "   torpedo neutralized.~%")))
+                       (print-message *message-window* (format nil "   torpedo neutralized.~%")))
                      ;; Hit a regular enemy
-                     ;; TODO - during testing a torpedo destroyed a klingon but the Klingon was
-                     ;;        not removed from the SR scan. The SR scan showed a K but the enemy
-                     ;;        was treated as Unknown.
                      (do ((enemy-index 0 (1+ enemy-index)) ; find the enemy
-                          enemy-energy
+                          e-energy
                           enemy-hit)
-                         ((coord-equal torpedo-sector (aref *klingon-sectors* enemy-index))
-                          (setf enemy-energy (abs (aref *klingon-energy* enemy-index)))
-                          (setf enemy-hit (calculate-torpedo-damage initial-position torpedo-sector bullseye-angle))
-                          (when (< enemy-energy enemy-hit)
-                            (setf enemy-hit enemy-energy))
-                          (decf (aref *klingon-energy* enemy-index)
-                                (if (< (aref *klingon-energy* enemy-index) 0)
+                         ((coord-equal torpedo-sector
+                                       (enemy-sector-coordinates (aref *quadrant-enemies*
+                                                                       enemy-index)))
+                          (setf e-energy
+                                (abs (enemy-energy (aref *quadrant-enemies* enemy-index))))
+                          (setf enemy-hit (calculate-torpedo-damage initial-position
+                                                                    torpedo-sector
+                                                                    bullseye-angle))
+                          (when (< e-energy enemy-hit)
+                            (setf enemy-hit e-energy))
+                          (decf (enemy-energy (aref *quadrant-enemies* enemy-index))
+                                (if (< (enemy-energy (aref *quadrant-enemies* enemy-index)) 0)
                                     (- enemy-hit)
                                     enemy-hit))
-                          (if (= (aref *klingon-energy* enemy-index) 0)
+                          (if (= (enemy-energy (aref *quadrant-enemies* enemy-index)) 0)
                               (dead-enemy torpedo-sector sector-contents torpedo-sector)
                               ;; If enemy damaged but not destroyed, try to displace
                               (progn
-                                (print-message (format nil "***~A at ~A" (letter-to-name sector-contents)
+                                (print-message *message-window* (format nil "***~A at ~A"
+                                                       (letter-to-name sector-contents)
                                                        (format-sector-coordinates torpedo-sector)))
-                                (setf displaced-to-sector (displace-ship (coordinate-x torpedo-sector)
-                                                                         (coordinate-y torpedo-sector)
-                                                                         angle))
+                                (setf displaced-to-sector
+                                      (displace-ship (coordinate-x torpedo-sector)
+                                                     (coordinate-y torpedo-sector)
+                                                     angle))
                                 (cond
-                                  ((or (not (valid-sector-p (coordinate-x displaced-to-sector)
-                                                            (coordinate-y displaced-to-sector)))
+                                  ((or (not (valid-p displaced-to-sector))
                                        ;; can't move into object
-                                       (string/= (coord-ref *quadrant-contents* displaced-to-sector) +empty-sector+))
-                                   (print-message (format nil " damaged but not destroyed.~%")))
+                                       (string/= (coord-ref *quadrant* displaced-to-sector)
+                                                 +empty-sector+))
+                                   (print-message *message-window*
+                                                  (format nil " damaged but not destroyed.~%")))
 
-                                  ((string= (coord-ref *quadrant-contents* displaced-to-sector) +black-hole+)
-                                   (print-message (format nil " buffeted into black hole.~%"))
+                                  ((string= (coord-ref *quadrant* displaced-to-sector)
+                                            +black-hole+)
+                                   (print-message *message-window*
+                                                  (format nil " buffeted into black hole.~%"))
                                    (dead-enemy torpedo-sector sector-contents torpedo-sector))
 
                                   (t
-                                   (print-out " damaged--")
-                                   (setf (aref *klingon-sectors* enemy-index) displaced-to-sector)
+                                   (print-out *message-window* " damaged --")
+                                   (setf (enemy-sector-coordinates
+                                          (aref *quadrant-enemies* enemy-index))
+                                         displaced-to-sector)
                                    (setf shovedp t)))))))))
                 ;; Hit a base
                 ((string= sector-contents +starbase+)
-                 (print-message (format nil "~%***STARBASE DESTROYED..~%"))
+                 (print-message *message-window* (format nil "~%***STARBASE DESTROYED..~%"))
                  ;; Remove the base from the list of bases and related data structures
-                 (setf *base-quadrants* (remove *ship-quadrant* *base-quadrants* :test #'coord-equal))
+                 (setf *base-quadrants*
+                       (remove *ship-quadrant* *base-quadrants* :test #'coord-equal))
                  (setf *base-sector* nil)
-                 (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
+                 (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
                  (setf (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*))
                        (1- (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*))))
                  (setf (starchart-page-starbases (coord-ref *starchart* *ship-quadrant*))
@@ -3372,51 +3118,63 @@ handling the result. Return the amount of damage if the player ship was hit."
                  (setf *dockedp* nil))
                 ;; Hit a planet
                 ((string= sector-contents +planet+)
-                 (print-message (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
-                                        (format-sector-coordinates torpedo-sector)))
+                 (print-message
+                  *message-window*
+                  (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
+                          (format-sector-coordinates torpedo-sector)))
                  (setf *destroyed-uninhabited-planets* (1+ *destroyed-uninhabited-planets*))
-                 (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                 (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                    (setf (planet-destroyedp p) t)
-                   (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+                   (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) p))
                  (setf *planet-coord* nil)
                  (setf *current-planet* nil)
-                 (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
+                 (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
                  (when *landedp* ; captain perishes on planet
                    (finish 'planet-destroyed-while-landed)))
                 ;; Hit an inhabited world -- very bad!
                 ((string= sector-contents +world+)
-                 (print-message (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
-                                        (format-sector-coordinates torpedo-sector)))
+                 (print-message
+                  *message-window*
+                  (format nil "***~A at ~A destroyed.~%" (letter-to-name sector-contents)
+                          (format-sector-coordinates torpedo-sector)))
                  (setf *destroyed-inhabited-planets* (1+ *destroyed-inhabited-planets*))
-                 (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+                 (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                    (setf (planet-destroyedp p) t)
-                   (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) p))
+                   (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) p))
                  (setf *planet-coord* nil)
                  (setf *current-planet* nil)
-                 (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
+                 (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
                  (when *landedp* ; captain perishes on planet
                    (finish 'planet-destroyed-while-landed))
-                 (print-message (format nil "You have just destroyed an inhabited planet.~%"))
-                 (print-message (format nil "Celebratory rallies are being held on the Klingon homeworld.~%")))
+                 (print-message
+                  *message-window*
+                  (format nil "You have just destroyed an inhabited planet.~%"))
+                 (print-message
+                  *message-window*
+                  (format nil "Celebratory rallies are being held on the Klingon homeworld.~%")))
                 ;; Hit a star
+                ;; TODO - hold the player responsible if a star novaed by a torpedo turns into a
+                ;;        supernova
                 ((string= sector-contents +star+)
                  (if (> (random 1.0) 0.10)
                      (nova torpedo-sector)
-                     (print-message (format nil "***~A at ~A unaffected by photon blast.~%"
+                     (print-message *message-window*
+                                    (format nil "***~A at ~A unaffected by photon blast.~%"
                                             (letter-to-name sector-contents)
                                             (format-sector-coordinates torpedo-sector)))))
                 ;; Hit a thingy
                 ((string= sector-contents +thing+)
                  (if (> (random 1.0) 0.7)
                      (progn
-                       (print-message
+                       (print-message *message-window*
                         (format nil "~%AAAAIIIIEEEEEEEEAAAAAAAAUUUUUGGGGGHHHHHHHHHHHH!!!~%")
                         :print-slowly t)
-                       (print-message
+                       (print-message *message-window*
                         (format nil "~%    HACK!     HACK!    HACK!        *CHOKE!*  ~%")
                         :print-slowly t)
-                       (print-message "~%Mr. Spock-")
-                       (print-message (format nil "  \"Fascinating!\"~%~%") :print-slowly t)
+                       (print-message *message-window* "~%Mr. Spock-")
+                       (print-message *message-window*
+                                      (format nil "  \"Fascinating!\"~%~%") :print-slowly t)
                        (dead-enemy torpedo-sector sector-contents torpedo-sector))
                      ;; Stas Sergeev added the possibility that you can shove the Thingy and
                      ;; piss it off. It then becomes an enemy and may fire at you.
@@ -3425,118 +3183,125 @@ handling the result. Return the amount of damage if the player ship was hit."
                        (setf displaced-to-sector (displace-ship (coordinate-x torpedo-sector)
                                                                 (coordinate-y torpedo-sector)
                                                                 angle))
-                       (when (valid-sector-p (coordinate-x displaced-to-sector) (coordinate-y displaced-to-sector))
+                       (when (valid-p displaced-to-sector)
                          (cond
                            ;; Thing vanishes silently into black hole, very mysterious
-                           ((string= (coord-ref *quadrant-contents* displaced-to-sector) +black-hole+)
-                            (setf (coord-ref *quadrant-contents* torpedo-sector) +empty-sector+)
+                           ((string= (coord-ref *quadrant* displaced-to-sector) +black-hole+)
+                            (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
                             (setf *thing-is-angry-p* nil)
                             (setf shovedp nil))
                            ;; can't move into object
-                           ((string/= (coord-ref *quadrant-contents* displaced-to-sector) +empty-sector+)
+                           ((string/= (coord-ref *quadrant* displaced-to-sector) +empty-sector+)
                             (setf shovedp nil))
                            (t
                             (setf shovedp t)))))))
                 ;; Black hole
                 ((string= sector-contents +black-hole+)
-                 (print-message (format nil "~%***~A at ~A swallows torpedo.~%"
+                 (print-message *message-window* (format nil "~%***~A at ~A swallows torpedo.~%"
                                         (letter-to-name sector-contents)
                                         (format-sector-coordinates torpedo-sector))))
                 ;; hit the web
                 ((string= sector-contents +tholian-web+)
-                 (print-message (format nil "~%***Torpedo absorbed by Tholian web.~%")))
+                 (print-message *message-window*
+                                (format nil "~%***Torpedo absorbed by Tholian web.~%")))
                 ;; Hit a Tholian
                 ((string= sector-contents +tholian+)
                  (cond
                    ;; Tholian is destroyed
-                   ((>= (calculate-torpedo-damage initial-position torpedo-sector bullseye-angle) 600)
-                    (setf (coord-ref *quadrant-contents* torpedo-sector)
+                   ((>= (calculate-torpedo-damage initial-position torpedo-sector bullseye-angle)
+                        600)
+                    (setf (coord-ref *quadrant* torpedo-sector)
                           +empty-sector+)
                     (setf *tholians-here* 0)
                     (dead-enemy torpedo-sector sector-contents torpedo-sector))
                    ;; Tholian survives
                    ((> (random 1.0) 0.05)
-                    (print-message (format nil "~%***~A at ~A survives photon blast.~%"
+                    (print-message *message-window*
+                                   (format nil "~%***~A at ~A survives photon blast.~%"
                                            (letter-to-name sector-contents)
                                            (format-sector-coordinates torpedo-sector))))
                    ;; Tholian vanishes, leaving behind a black hole.
                    (t
-                    (print-message (format nil "~%***~A at ~A disappears.~%"
+                    (print-message *message-window* (format nil "~%***~A at ~A disappears.~%"
                                            (letter-to-name sector-contents)
                                            (format-sector-coordinates torpedo-sector)))
-                    (setf (coord-ref *quadrant-contents* torpedo-sector)
+                    (setf (coord-ref *quadrant* torpedo-sector)
                           +tholian-web+)
                     (setf *tholians-here* 0)
                     (setf *enemies-here* (1- *enemies-here*))
                     (drop-entity-in-sector +black-hole+))))
                 ;; Problem!
                 (t
-                 (print-message (format nil "~%***Torpedo hits unknown object ~A at ~A~%"
+                 (print-message *message-window*
+                                (format nil "~%***Torpedo hits unknown object ~A at ~A~%"
                                         sector-contents
                                         (format-sector-coordinates torpedo-sector)))))
               (setf movement-ended-p t)))
           ;; The torpedo exited the quadrant without hitting anything
           (progn
             (setf movement-ended-p t)
-            (print-message (format nil "~%Torpedo missed.~%")))))
+            (print-message *message-window* (format nil "~%Torpedo missed.~%")))))
     (return-from move-torpedo-within-quadrant ship-hit)))
 
-(defun photon-torpedo-target-check (target-coord) ; C: bool targetcheck(double x, double y, double *course)
-  "Verfiy that the parameter is an acceptable target for a photon torpedo. Return the course
-direction of the target or nil."
+(defun photon-torpedo-target-check (x y) ; C: bool targetcheck(double x, double y, double *course)
+  "Verfiy that the parameter x and y coordinates are an acceptable target for a photon torpedo.
+ Return the course direction of the target or nil."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (when (not (valid-sector-p (coordinate-x target-coord) (coordinate-y target-coord)))
+  ;; TODO - fractional sector coordinates are allowed, valid-p checks may need to be relaxed to
+  ;;        allow fractional coords, or find a different way to represent coordinates. The
+  ;;        place to check might be when a coordinate is used as an array index. That is,
+  ;;        coordinates are used as array indices but they could equally be an offset into an
+  ;;        array. The storage format of sector information should not restrict the valid values
+  ;;        of coordinates.
+  (unless (valid-sector-p x y)
     (huh)
     (return-from photon-torpedo-target-check nil))
 
   ;; Multiply by 0.1 to scale to qadrant-sized units
-  (let ((delta-x (* 0.1 (- (coordinate-y target-coord) (coordinate-y *ship-sector*))))
-        (delta-y (* 0.1 (- (coordinate-x *ship-sector*) (coordinate-x target-coord)))))
+  (let ((delta-x (* 0.1 (- y (coordinate-y *ship-sector*))))
+        (delta-y (* 0.1 (- (coordinate-x *ship-sector*) x))))
     ;; When both are zero the player targeted their own sector. Conveniently, values of zero
     ;; aren't valid for atan2.
     (when (and (= delta-x 0)
                (= delta-y 0))
-      (print-message (format nil "~%Spock-  \"Bridge to sickbay.  Dr. McCoy,~%"))
-      (print-message (format nil "  I recommend an immediate review of~%"))
-      (print-message (format nil "  the Captain's psychological profile.\"~%~%"))
+      (print-message *message-window* (format nil "~%Spock-  \"Bridge to sickbay.  Dr. McCoy,~%"))
+      (print-message *message-window* (format nil "  I recommend an immediate review of~%"))
+      (print-message *message-window* (format nil "  the Captain's psychological profile.\"~%~%"))
       (return-from photon-torpedo-target-check nil))
 
     (return-from photon-torpedo-target-check (* 1.90985932 (atan delta-x delta-y)))))
 
 (defun get-number-of-torpedoes-to-fire ()
-  "Up to three torpedoes can be fired in one salvo. Return a number between 1 and 3 or nil to
+  "Up to three torpedoes can be fired in one salvo. Return a number between 1 and 3 or 0 to
 cancel."
 
-  (do ()
+  (do (input-item)
       (nil)
     ;; Get number of torpedoes to fire
-    (when (= (length *line-tokens*) 0)
-      (print-message (format nil "~D torpedoes left.~%" *torpedoes*))
+    (unless (input-available-p)
+      (print-message *message-window* (format nil "~D torpedoes left.~%" *torpedoes*))
       (print-prompt "Number of torpedoes to fire: "))
-    (scan-input)
+    (setf input-item (scan-input))
     (cond
-      ((numberp *input-item*)
+      ((numberp input-item)
        (cond
          ;; abort command
-         ((<= *input-item* 0)
-          (return-from get-number-of-torpedoes-to-fire nil))
+         ((<= input-item 0)
+          (return-from get-number-of-torpedoes-to-fire 0))
 
-         ((> *input-item* 3)
-          (print-message (format nil "Maximum of 3 torpedoes per burst.~%"))
+         ((> input-item 3)
+          (print-message *message-window* (format nil "Maximum of 3 torpedoes per burst.~%"))
           (clear-type-ahead-buffer))
 
-         ((<= *input-item* *torpedoes*)
-          (return-from get-number-of-torpedoes-to-fire *input-item*))
+         ((<= input-item *torpedoes*)
+          (return-from get-number-of-torpedoes-to-fire input-item))
          ;; less than 4 but more than the available torpedoes
          (t
           (clear-type-ahead-buffer))))
       ;; Not a number and not nil, must be alpha
-      (*input-item*
+      (input-item
        (huh)
-       (return-from get-number-of-torpedoes-to-fire nil))
+       (return-from get-number-of-torpedoes-to-fire 0))
 
       (t
        (clear-type-ahead-buffer)))))
@@ -3551,14 +3316,13 @@ there was an error (including -1 entered by the player to exit the command)."
     ;; Get targets for torpedoes
     (cond
       ;; We will try prompting
-      ((= (length *line-tokens*) 0)
+      ((not (input-available-p))
        (setf target-input-method 'prompt))
       ;; All torpedoes at one target
-      ((= (length *line-tokens*) 2)
+      ((= (number-of-input-items) 2)
        (setf target-input-method 'one-target))
       ;; too few coordinates for number of torpedoes
-      ((< (* number-of-torpedoes-to-fire 2)
-          (length *line-tokens*))
+      ((< (* number-of-torpedoes-to-fire 2) (number-of-input-items))
        (huh)
        (return-from get-targets-for-torpedoes nil))
       ;; the coordinates for each torpedo are on the input line, just read them
@@ -3566,8 +3330,7 @@ there was an error (including -1 entered by the player to exit the command)."
        (setf target-input-method 'read-input)))
 
     (do ((torpedo 0 (1+ torpedo))
-         (target (make-coordinate))
-         ;; TODO - try it as a list
+         ;; TODO - try it as a list?
          (courses (make-array number-of-torpedoes-to-fire))) ; array of directions in which to fire each torpedo
         ((>= torpedo number-of-torpedoes-to-fire)
          (return-from get-targets-for-torpedoes courses))
@@ -3577,26 +3340,21 @@ there was an error (including -1 entered by the player to exit the command)."
                (> torpedo 0))
           (setf (aref courses torpedo) (aref courses 0))
           (progn
-            (scan-input)
-            (setf (coordinate-x target) (read-coordinate-number))
-            (scan-input)
-            (setf (coordinate-y target) (read-coordinate-number))
-            (setf (aref courses torpedo) (photon-torpedo-target-check target))
-            (when (not (aref courses torpedo))
+            (multiple-value-bind (x y) (scan-coordinate-pair)
+              (setf (aref courses torpedo) (photon-torpedo-target-check x y)))
+            (unless (aref courses torpedo)
               ;; If the target check returned nil then just return, player was already notified
               (return-from get-targets-for-torpedoes nil)))))))
 
 (defun fire-photon-torpedoes () ; C: torps()
   "Launch photon torpedo salvo."
 
-  (setf *action-taken-p* nil)
-
   (when (damagedp +photon-torpedoes+)
-    (print-message (format nil "Photon tubes damaged.~%"))
+    (print-message *message-window* (format nil "Photon tubes damaged.~%"))
     (return-from fire-photon-torpedoes nil))
 
   (when (= *torpedoes* 0)
-    (print-message (format nil "No torpedoes left.~%"))
+    (print-message *message-window* (format nil "No torpedoes left.~%"))
     (return-from fire-photon-torpedoes nil))
 
   (let ((number-of-torpedoes-to-fire (get-number-of-torpedoes-to-fire))
@@ -3611,7 +3369,7 @@ there was an error (including -1 entered by the player to exit the command)."
              random-variation) ; decides torpedo misfires and shield deflection
             ((or misfire
                 (>= i number-of-torpedoes-to-fire)))
-          (when (not *dockedp*)
+          (unless *dockedp*
             (setf *torpedoes* (1- *torpedoes*)))
           (setf random-variation (- (* (+ (random 1.0) (random 1.0)) 0.5) 0.5))
           (if (>= (abs random-variation) 0.47)
@@ -3619,13 +3377,17 @@ there was an error (including -1 entered by the player to exit the command)."
                 ;; misfire!
                 (setf random-variation (* (+ (random 1.0) 1.2) random-variation)) ; unused calculation!
                 (if (> number-of-torpedoes-to-fire 1)
-                    (print-message (format nil "***TORPEDO NUMBER ~A MISFIRES~%" i) :print-slowly t)
-                    (print-message "***TORPEDO MISFIRES.~%" :print-slowly t))
+                    (print-message *message-window*
+                                   (format nil "***TORPEDO NUMBER ~A MISFIRES~%" i)
+                                   :print-slowly t)
+                    (print-message *message-window* "***TORPEDO MISFIRES.~%" :print-slowly t))
                 (when (< (1+ i) number-of-torpedoes-to-fire)
-                  (print-message (format nil "  Remainder of burst aborted.~%")))
+                  (print-message *message-window* (format nil "  Remainder of burst aborted.~%")))
                 (when (<= (random 1.0) 0.2)
-                  (print-message (format nil "***Photon tubes damaged by misfire.~%"))
-                  (setf (aref *device-damage* +photon-torpedoes+) (* *damage-factor* (+ 1.0 (* 2.0 (random 1.0))))))
+                  (print-message *message-window*
+                                 (format nil "***Photon tubes damaged by misfire.~%"))
+                  (setf (aref *device-damage* +photon-torpedoes+)
+                        (* *damage-factor* (+ 1.0 (* 2.0 (random 1.0))))))
                 (setf misfire t))
               (progn
                 ;; Fire a photon torpedo
@@ -3636,7 +3398,8 @@ there was an error (including -1 entered by the player to exit the command)."
                   ((or *shields-are-up-p*
                        *dockedp*)
                    (setf random-variation (* random-variation (+ 1.0 (* 0.0001 *shield-energy*))))))
-                (move-torpedo-within-quadrant (aref courses i) random-variation *ship-sector* i number-of-torpedoes-to-fire)
+                (move-torpedo-within-quadrant (aref courses i) random-variation *ship-sector*
+                                              i number-of-torpedoes-to-fire)
                 (when (or *all-done-p*
                           (quadrant-supernovap
                            (coord-ref *galaxy* *ship-quadrant*)))
@@ -3645,30 +3408,40 @@ there was an error (including -1 entered by the player to exit the command)."
       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
         (finish 'won)))))
 
+(defun subspace-radio-available-p ()
+  "Check if a subspace radio is available. A subspace radio is available if the onboard device is
+not damaged or if the ship is docked, and the ship is not cloaked."
+
+  (and (or (not (damagedp +subspace-radio+))
+           *dockedp*)
+       (not *cloakedp*)))
+
 (defun cloak () ; C: void cloak(void)
 
   (when (string= *ship* +faerie-queene+)
-    (print-message (format nil "Ye Faerie Queene has no cloaking device.~%"))
+    (print-message *message-window* (format nil "Ye Faerie Queene has no cloaking device.~%"))
     (return-from cloak nil))
 
-  (let ((action 'none))
-    (when (> (length *line-tokens*) 0)
-      (scan-input))
-    (when (numberp *input-item*)
+  (let ((action 'none)
+        input-item)
+    (when (input-available-p)
+      (setf input-item (scan-input)))
+    (when (numberp input-item)
       (return-from cloak nil))
-    ;; TODO - what is *input-item* at this point?
-    (if *input-item* ; is not nil
-        (let ((token (match-token *input-item* (list "on" "off"))))
+    (if input-item ; is not nil
+        (let ((token (match-token input-item (list "on" "off"))))
           (cond
             ((string= token "on")
              (when *cloakedp*
-               (print-message (format nil "The cloaking device has already been switched on.~%"))
+               (print-message *message-window*
+                              (format nil "The cloaking device has already been switched on.~%"))
                (return-from cloak nil))
              (setf action 'turn-cloaking-on))
 
             ((string= token "off")
-             (when (not *cloakedp*)
-               (print-message (format nil "The cloaking device has already been switched off.~%"))
+             (unless *cloakedp*
+               (print-message *message-window*
+                              (format nil "The cloaking device has already been switched off.~%"))
                (return-from cloak nil))
              (setf action 'turn-cloaking-off))
 
@@ -3676,7 +3449,7 @@ there was an error (including -1 entered by the player to exit the command)."
              (huh)
              (return-from cloak nil))))
         (progn
-          (when (not *cloakedp*)
+          (unless *cloakedp*
             (print-prompt "Switch cloaking device on? ")
             (unless (get-y-or-n-p)
               (return-from cloak nil))
@@ -3695,14 +3468,16 @@ there was an error (including -1 entered by the player to exit the command)."
         (print-prompt (format nil "Spock- \"Captain, the Treaty of Algeron is in effect.~%   Are you sure this is wise?\""))
         (unless (get-y-or-n-p)
           (return-from cloak nil)))
-      (print-message (format nil "Engineer Scott- \"Aye, Sir.\"~%"))
+      (print-message *message-window* (format nil "Engineer Scott- \"Aye, Sir.\"~%"))
       (setf *cloakedp* nil)
       ;; The Romulans detect you uncloaking
       (when (and (> *romulans-here* 0)
                  (>= *stardate* +algeron-date+)
                  (not *cloaking-violation-reported-p*))
-        (print-message (format nil "The Romulan ship discovers you are breaking the Treaty of Algeron!~%"))
-        (setf *cloaking-violations* (1+ *cloaking-violations*))
+        (print-message
+         *message-window*
+         (format nil "The Romulan ship discovers you are breaking the Treaty of Algeron!~%"))
+        (incf *cloaking-violations* 1)
         (setf *cloaking-violation-reported-p* t))
       ;; TODO - breaking the Treaty of Algeron while in the Romulan Neutral Zone ends the game
       ;;        should check for both cloaking and uncloaking
@@ -3712,19 +3487,23 @@ there was an error (including -1 entered by the player to exit the command)."
       (return-from cloak nil))
     ;; turn cloaking on
     (when (damagedp +cloaking-device+)
-      (print-message (format nil "Engineer Scott- \"The cloaking device is damaged, Sir.\"~%"))
+      (print-message *message-window*
+                     (format nil "Engineer Scott- \"The cloaking device is damaged, Sir.\"~%"))
       (return-from cloak nil))
     (when *dockedp*
-      (print-message (format nil "You cannot cloak while docked.~%"))
+      (print-message *message-window* (format nil "You cannot cloak while docked.~%"))
       (return-from cloak nil))
     (when (and (>= *stardate* +algeron-date+)
                (not *cloaking-violation-reported-p*))
-      (print-message (format nil "Spock- \"Captain, using the cloaking device is a violation~%"))
-      (print-message (format nil "  of the Treaty of Algeron. Considering the alternatives,~%"))
+      (print-message *message-window*
+                     (format nil "Spock- \"Captain, using the cloaking device is a violation~%"))
+      (print-message *message-window*
+                     (format nil "  of the Treaty of Algeron. Considering the alternatives,~%"))
       (print-prompt "  are you sure this is wise?")
       (unless (get-y-or-n-p)
         (return-from cloak nil)))
-    (print-message (format nil "Engineer Scott- \"The cloaking device has been engaged, Sir.\"~%"))
+    (print-message *message-window*
+                   (format nil "Engineer Scott- \"The cloaking device has been engaged, Sir.\"~%"))
     (setf *cloakedp* t)
     (check-treaty-of-algeron)))
 
@@ -3732,19 +3511,19 @@ there was an error (including -1 entered by the player to exit the command)."
   "Change shield status. The optional parameter is used to raise the shields without player
 input when a tractor beam event occurs."
 
-  (setf *action-taken-p* nil)
-  (let ((action 'none))
+  (let ((action 'none)
+        input-item)
     (if raise-shields
         (setf action 'raise)
         (progn
-          (when *line-tokens*
-            (scan-input))
-          (let ((token (match-token *input-item* (list "transfer" "up" "down"))))
+          (when (input-available-p)
+            (setf input-item (scan-input)))
+          (let ((token (match-token input-item (list "transfer" "up" "down"))))
             (if (string= token "transfer")
                 (setf action 'energy-transfer)
                 (cond
                   ((damagedp +shields+)
-                   (print-message (format nil "Shields damaged and down.~%"))
+                   (print-message *message-window* (format nil "Shields damaged and down.~%"))
                    (return-from shield-actions nil))
 
                   ((string= token "up")
@@ -3759,7 +3538,7 @@ input when a tractor beam event occurs."
                (setf action 'energy-transfer))
 
               ((damagedp +shields+)
-               (print-message (format nil "Shields damaged and down.~%"))
+               (print-message *message-window* (format nil "Shields damaged and down.~%"))
                (return-from shield-actions nil))
 
               (*shields-are-up-p*
@@ -3777,80 +3556,83 @@ input when a tractor beam event occurs."
       ;; raise shields
       ((eql action 'raise)
        (when *shields-are-up-p*
-         (print-message (format nil "Shields already up.~%"))
+         (print-message *message-window* (format nil "Shields already up.~%"))
          (return-from shield-actions nil))
        (setf *shields-are-up-p* t)
        (setf *shields-are-changing-p* t)
-       (when (not *dockedp*)
+       (unless *dockedp*
          (decf *ship-energy* 50.0))
-       (print-message (format nil "Shields raised.~%"))
+       (print-message *message-window* (format nil "Shields raised.~%"))
        (when (<= *ship-energy* 0)
-         (print-message (format nil "~%Shields raising uses up last of energy.~%"))
+         (print-message *message-window*
+                        (format nil "~%Shields raising uses up last of energy.~%"))
          (finish 'out-of-energy)
          (return-from shield-actions nil))
        (setf *action-taken-p* t))
 
       ((eql action 'lower)
-       (when (not *shields-are-up-p*)
-         (print-message (format nil "Shields already down.~%"))
+       (unless *shields-are-up-p*
+         (print-message *message-window* (format nil "Shields already down.~%"))
          (return-from shield-actions nil))
        (setf *shields-are-up-p* nil)
        (setf *shields-are-changing-p* t)
-       (print-message (format nil "Shields lowered.~%"))
+       (print-message *message-window* (format nil "Shields lowered.~%"))
        (setf *action-taken-p* t))
 
       ((eql action 'energy-transfer)
-       (when *line-tokens*
-         (scan-input))
+       (when (input-available-p)
+         (setf input-item (scan-input)))
        (do ()
-           ((numberp *input-item*))
+           ((numberp input-item))
          (clear-type-ahead-buffer)
          (print-prompt "Energy to transfer to shields: ")
-         (scan-input))
-       (when (= *input-item* 0)
+         (setf input-item (scan-input)))
+       (when (= input-item 0)
          (return-from shield-actions nil))
-       (when (> *input-item* *ship-energy*)
-         (print-message (format nil "Insufficient ship energy.~%"))
+       (when (> input-item *ship-energy*)
+         (print-message *message-window* (format nil "Insufficient ship energy.~%"))
          (return-from shield-actions nil))
        (setf *action-taken-p* t)
-       (when (>= (+ *shield-energy* *input-item*) *initial-shield-energy*)
-         (print-message (format nil "Shield energy maximized.~%"))
-         (when (> (+ *shield-energy* *input-item*) *initial-shield-energy*)
-           (print-message (format nil "Excess energy requested returned to ship energy~%")))
+       (when (>= (+ *shield-energy* input-item) *initial-shield-energy*)
+         (print-message *message-window* (format nil "Shield energy maximized.~%"))
+         (when (> (+ *shield-energy* input-item) *initial-shield-energy*)
+           (print-message *message-window*
+                          (format nil "Excess energy requested returned to ship energy~%")))
          (decf *ship-energy* (- *initial-shield-energy* *shield-energy*))
          (setf *shield-energy* *initial-shield-energy*)
          (return-from shield-actions nil))
        ;; Prevent shield drain loophole
-       (when (and (< *input-item* 0.0)
-                  (> (- *ship-energy* *input-item*) *initial-energy*))
-        (print-message (format nil "~%Engineering to bridge--~%"))
-        (print-message (format nil "  \"Scott here. Power circuit problem, Captain.\"~%"))
-        (print-message (format nil "  \"I can't drain the shields.\"~%"))
+       (when (and (< input-item 0.0)
+                  (> (- *ship-energy* input-item) *initial-energy*))
+        (print-message *message-window* (format nil "~%Engineering to bridge--~%"))
+        (print-message *message-window*
+                       (format nil "  \"Scott here. Power circuit problem, Captain.\"~%"))
+        (print-message *message-window* (format nil "  \"I can't drain the shields.\"~%"))
         (setf *action-taken-p* nil)
         (return-from shield-actions nil))
 
-       (when (< (+ *shield-energy* *input-item*) 0)
-         (print-message (format nil"All shield energy transferred to ship.~%"))
+       (when (< (+ *shield-energy* input-item) 0)
+         (print-message *message-window* (format nil"All shield energy transferred to ship.~%"))
          (incf *ship-energy* *shield-energy*)
          (setf *shield-energy* 0.0)
          (return-from shield-actions nil))
 
        ;; this stanza needs a return-from if there is ever code added after it
-       (print-message (format nil "Scotty- ~%"))
-       (if (> *input-item* 0)
-           (print-message (format nil "\"Transferring energy to shields.\"~%"))
-           (print-message (format nil "\"Draining energy from shields.\"~%")))
-       (incf *shield-energy* *input-item*)
-       (decf *ship-energy* *input-item*)))))
+       (print-message *message-window* (format nil "Scotty- ~%"))
+       (if (> input-item 0)
+           (print-message *message-window* (format nil "\"Transferring energy to shields.\"~%"))
+           (print-message *message-window* (format nil "\"Draining energy from shields.\"~%")))
+       (incf *shield-energy* input-item)
+       (decf *ship-energy* input-item)))))
 
 (defun ram (&key rammed-by-p enemy enemy-coordinates) ; C: void ram(bool ibumpd, feature ienm, coord w)
   "Make our ship ram something. If rammed-by-p is true then an enemy ship is ramming the player.
 enemy is the single-letter symbol of the enemy ramming/being rammed. enemy-coordinates are the
 coordinates of the enemy being rammed or the original coordinates of ramming enemy."
 
-  (print-message (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
-  (print-message (format nil "~%***COLLISION IMMINENT.~%"))
-  (print-message (format nil "~%***~A ~A ~A at ~A~A.~%~%"
+  (print-message *message-window* (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
+  (print-message *message-window* (format nil "~%***COLLISION IMMINENT.~%"))
+  (print-message *message-window* (format nil "~%***~A ~A ~A at ~A~A.~%~%"
                          (format-ship-name)
                          (if rammed-by-p "rammed by" "rams")
                          (letter-to-name enemy)
@@ -3858,11 +3640,12 @@ coordinates of the enemy being rammed or the original coordinates of ramming ene
                          (if rammed-by-p " (original position)" "")))
   (dead-enemy enemy-coordinates enemy *ship-sector*)
   (setf *shields-are-up-p* nil)
-  (print-message (format nil "***Shields are down.~%"))
+  (print-message *message-window* (format nil "***Shields are down.~%"))
   (let ((number-of-casualties (truncate(+ 10.0 (* 20.0 (random 1.0))))))
-    (print-message (format nil "***Sickbay reports ~A casualties~%" number-of-casualties))
+    (print-message *message-window*
+                   (format nil "***Sickbay reports ~A casualties~%" number-of-casualties))
     (incf *casualties* number-of-casualties)
-    (decf *crew* number-of-casualties)) ; TODO - should game end if crew count is too low?
+    (decf *crew* number-of-casualties))
   ;; In the pre-SST2K version, all devices got equiprobably damaged, which was silly. Instead, pick
   ;; up to half the devices at random according to our weighting table,
   (let ((devices-to-damage (truncate (* (random 1.0) (/ +number-of-devices+ 2)))))
@@ -3876,7 +3659,7 @@ coordinates of the enemy being rammed or the original coordinates of ramming ene
               (+ *time-taken-by-current-operation* (* (1+ (* 10.0 (get-enemy-hardness enemy)
                                                              (random 1.0)))
                                                      *damage-factor*))))))
-  (print-message (format nil "***~A heavily damaged.~%" (format-ship-name)))
+  (print-message *message-window* (format nil "***~A heavily damaged.~%" (format-ship-name)))
   (if (> (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
       (damage-report)
       (finish 'won)))
@@ -3976,32 +3759,29 @@ damage multiplier to determine how much damage is done by ramming this enemy."
 is a string suitable for use with the format function."
 
   (when (> count 0)
-    (print-out (format nil format-string count (* count score)))
+    (print-out *score-window* (format nil format-string count (* count score)))
     (incf *score* (* count score))))
 
 (defun score-single (format-string score) ; C: score_item(const char *str, int num, int score)
   "Helper function to print a score for a single item and update the score. The format-string
 is a string suitable for use with the format function."
 
-  (print-out (format nil format-string score))
+  (print-out *score-window* (format nil format-string score))
   (incf *score* score))
 
 ;; TODO - add an option to write the final score to a file, or record it some other way.
 (defun score () ; C: score(void)
   "Compute player's score."
 
-  (if *window-interface-p*
-      (if *score-window*
-          (select-window *score-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  ;; TODO - use a generic function (prepare-window-for-output)?
+  (if (eql *score-window* *message-window*)
+      (skip-line *score-window*)
+      (clear-window *score-window*))
 
   (setf *score* 0)
   (if *score-window*
-      (print-out (format nil "~60:@<SCORE~>~%"))
-      (print-out (format nil "Your score --~%")))
+      (print-out *score-window* (format nil "~60:@<SCORE~>~%"))
+      (print-out *score-window* (format nil "Your score --~%")))
   (score-multiple "~7@A~45< Romulan~:P destroyed~;~>~8@A~%"
                   (- *initial-romulans* *remaining-romulans*) 20)
   (when *game-won-p*
@@ -4043,14 +3823,14 @@ is a string suitable for use with the format function."
                     ships-destroyed -100))
   (score-multiple "~7@A~45< Treaty of Algeron violation~:P~;~>~8@A~%"
                     *cloaking-violations* -100)
-  (when (not *alivep*)
+  (unless *alivep*
     (score-single "~52<        Penalty for getting yourself killed~;~>~8@A~%" -200))
   (when *game-won-p*
-    (print-out (format nil "~52<        Bonus for winning ~A game~;~>~8@A~%"
+    (print-out *score-window* (format nil "~52<        Bonus for winning ~A game~;~>~8@A~%"
                        (string-capitalize (rest (assoc *skill-level* *skill-level-labels*)))
                        (* 100 *skill-level*)))
     (incf *score* (* 100 *skill-level*)))
-  (print-out (format nil "~%~52<TOTAL SCORE~>~8@A~%" (round *score*))))
+  (print-out *score-window* (format nil "~%~52<TOTAL SCORE~>~8@A~%" (round *score*))))
 
 (define-constant +day-names+
     (list "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
@@ -4066,11 +3846,11 @@ what to do with it."
   (let (file
         winner)
     (clear-type-ahead-buffer)
-    (skip-line 2)
+    (skip-line *message-window* 2)
     (print-prompt "File or device name for your plaque: ")
-    (setf file (get-input-line))
+    (setf file (get-input-line *prompt-window*))
     (print-prompt "Enter name to go on plaque (up to 30 characters): ")
-    (setf winner (get-input-line))
+    (setf winner (get-input-line *prompt-window*))
     (setf winner (subseq winner 0 (min 30 (length winner))))
     (with-open-file (s file :direction :output :if-exists :rename)
       ;; --------DRAW ENTERPRISE PICTURE.
@@ -4147,26 +3927,29 @@ all-crew-killed - All crew have been killed
 cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no other enemy
 "
 
-  (when *window-interface-p*
-    (select-window *message-window*))
+  (update-windows)
 
   (setf *all-done-p* t)
-  (skip-line)
+  (skip-line *message-window*)
   (print-stars)
-  (print-message (format nil "It is stardate ~A.~%~%" (format-stardate *stardate*)))
+  (print-message *message-window*
+                 (format nil "It is stardate ~A.~%~%" (format-stardate *stardate*)))
   (cond
     ;; C: FWON
     ((eql finish-reason 'won)
      (setf *game-won-p* t)
-     (print-message (format nil "You have smashed the Klingon invasion fleet and saved~%"))
-     (print-message (format nil "the Federation.~%"))
+     (print-message *message-window*
+                    (format nil "You have smashed the Klingon invasion fleet and saved~%"))
+     (print-message *message-window* (format nil "the Federation.~%"))
      (when (/= *remaining-romulans* 0)
-       (print-message (format nil "The remaining ~A Romulans surrender to Starfleet Command.~%" *remaining-romulans*)))
+       (print-message *message-window*
+                      (format nil "The remaining ~A Romulans surrender to Starfleet Command.~%"
+                              *remaining-romulans*)))
      ;; Captured Klingon crew will get transfered to starbase
      (when (and *alivep*
                 (> (- *brig-capacity* *brig-free*) 0))
        (incf *captured-klingons* (- *brig-capacity* *brig-free*))
-       (print-message (format nil "The ~D captured Klingons are transferred to Star Fleet Command.~%"
+       (print-message *message-window* (format nil "The ~D captured Klingons are transferred to Star Fleet Command.~%"
                               (- *brig-capacity* *brig-free*))))
      (when *alivep*
        (let ((bad-points 0.0))
@@ -4193,28 +3976,40 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
                        (+ (* 0.1 *skill-level* (+ *skill-level* 1.0))
                           0.1
                           (* 0.008 bad-points))))
-           (print-message (format nil "~%In fact, you have done so well that Starfleet Command~%"))
+           (print-message *message-window*
+                          (format nil "~%In fact, you have done so well that Starfleet Command~%"))
            (cond
              ((= *skill-level* +novice+)
-              (print-message (format nil "promotes you one step in rank from \"Novice\" to \"Fair\".~%")))
-             ((= *skill-level* +fair+)
-              (print-message (format nil "promotes you one step in rank from \"Fair\" to \"Good\".~%")))
-             ((= *skill-level* +good+)
-              (print-message (format nil "promotes you one step in rank from \"Good\" to \"Expert\".~%")))
-             ((= *skill-level* +expert+)
-              (print-message (format nil "promotes you to Commodore Emeritus.~%")))
-             ((= *skill-level* +emeritus+)
-              (print-message "Computer-  ")
-              (print-message (format nil "ERROR-ERROR-ERROR-ERROR~%") :print-slowly t)
               (print-message
+               *message-window*
+               (format nil "promotes you one step in rank from \"Novice\" to \"Fair\".~%")))
+             ((= *skill-level* +fair+)
+              (print-message
+               *message-window*
+               (format nil "promotes you one step in rank from \"Fair\" to \"Good\".~%")))
+             ((= *skill-level* +good+)
+              (print-message
+               *message-window*
+               (format nil "promotes you one step in rank from \"Good\" to \"Expert\".~%")))
+             ((= *skill-level* +expert+)
+              (print-message *message-window*
+                             (format nil "promotes you to Commodore Emeritus.~%")))
+             ((= *skill-level* +emeritus+)
+              (print-message *message-window* "Computer-  ")
+              (print-message *message-window*
+                             (format nil "ERROR-ERROR-ERROR-ERROR~%") :print-slowly t)
+              (print-message *message-window*
                (format nil "~%  YOUR-SKILL-HAS-EXCEEDED-THE-CAPACITY-OF-THIS-PROGRAM~%")
                :print-slowly t)
-              (print-message (format nil "~%  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
-              (print-message (format nil "~%  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
-              (print-message (format nil "~%  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
-              (print-message
+              (print-message *message-window*
+                             (format nil "~%  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
+              (print-message *message-window*
+                             (format nil "~%  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
+              (print-message *message-window*
+                             (format nil "~%  THIS-PROGRAM-MUST-SURVIVE~%") :print-slowly t)
+              (print-message *message-window*
                (format nil "~%  THIS-PROGRAM-MUST?- MUST ? - SUR? ? -?  VI~%") :print-slowly t)
-              (print-message
+              (print-message *message-window*
                (format nil "~%Now you can retire and write your own Star Trek game!~%")))))
            (when (>= *skill-level* +expert+)
              (print-prompt "Would you like to save your Commodore Emeritus Citation? ")
@@ -4222,135 +4017,141 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
              (when (get-y-or-n-p)
                (plaque))))
        ;; Only grant long life if alive (original didn't!)
-       (print-message (format nil "~%LIVE LONG AND PROSPER.~%")))
+       (print-message *message-window* (format nil "~%LIVE LONG AND PROSPER.~%")))
      (score)
      (return-from finish nil))
     ;; FDEPLETE ; time ran out - Federation Resources Depleted
     ((eql finish-reason 'federation-resources-depleted)
-     (print-message (format nil "Your time has run out and the Federation has been~%"))
-     (print-message (format nil "conquered.  Your starship is now Klingon property,~%"))
-     (print-message (format nil "and you are put on trial as a war criminal.  On the~%"))
-     (print-message "basis of your record, you are ")
-     (if (> (* (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 3.0)
+     (print-message *message-window*
+                    (format nil "Your time has run out and the Federation has been~%"))
+     (print-message *message-window*
+                    (format nil "conquered.  Your starship is now Klingon property,~%"))
+     (print-message *message-window*
+                    (format nil "and you are put on trial as a war criminal.  On the~%"))
+     (print-message *message-window* "basis of your record, you are ")
+     (if (> (* (+ *remaining-klingons*
+                  (length *commander-quadrants*) *remaining-super-commanders*) 3.0)
             (+ *initial-klingons* *initial-commanders* *initial-super-commanders*))
          (progn
-           (print-message (format nil "acquitted.~%"))
-           (print-message (format nil "~%LIVE LONG AND PROSPER.~%")))
+           (print-message *message-window* (format nil "acquitted.~%"))
+           (print-message *message-window* (format nil "~%LIVE LONG AND PROSPER.~%")))
          (progn
-           (print-message (format nil "found guilty and~%"))
-           (print-message (format nil "sentenced to death by slow torture.~%"))
+           (print-message *message-window* (format nil "found guilty and~%"))
+           (print-message *message-window* (format nil "sentenced to death by slow torture.~%"))
            (setf *alivep* nil)))
      (score)
      (return-from finish nil))
     ;; FLIFESUP
     ((eql finish-reason 'life-support-consumed)
-     (print-message (format nil "Your life support reserves have run out, and~%"))
-     (print-message (format nil "you die of thirst, starvation, and asphyxiation.~%"))
-     (print-message (format nil "~%Your starship is a derelict in space.~%")))
+     (print-message *message-window* (format nil "Your life support reserves have run out, and~%"))
+     (print-message *message-window* (format nil "you die of thirst, starvation, and asphyxiation.~%"))
+     (print-message *message-window* (format nil "~%Your starship is a derelict in space.~%")))
     ;; FNRG
     ((eql finish-reason 'out-of-energy)
-     (print-message (format nil "Your energy supply is exhausted.~%"))
-     (print-message (format nil "~%Your starship is a derelict in space.~%")))
+     (print-message *message-window* (format nil "Your energy supply is exhausted.~%"))
+     (print-message *message-window* (format nil "~%Your starship is a derelict in space.~%")))
     ;; FBATTLE
     ((eql finish-reason 'destroyed-in-battle)
-     (print-message (format nil "The ~A has been destroyed in battle.~%" (format-ship-name)))
-     (print-message (format nil "~%Dulce et decorum est pro patria mori.~%")))
+     (print-message *message-window* (format nil "The ~A has been destroyed in battle.~%" (format-ship-name)))
+     (print-message *message-window* (format nil "~%Dulce et decorum est pro patria mori.~%")))
     ;; FNEG3
     ((eql finish-reason '3-negative-energy-barrier-crossings)
-     (print-message (format nil "You have made three attempts to cross the negative energy~%"))
-     (print-message (format nil "barrier which surrounds the galaxy.~%"))
-     (print-message (format nil "~%Your navigation is abominable.~%"))
+     (print-message *message-window* (format nil "You have made three attempts to cross the negative energy~%"))
+     (print-message *message-window* (format nil "barrier which surrounds the galaxy.~%"))
+     (print-message *message-window* (format nil "~%Your navigation is abominable.~%"))
      (score))
     ;; FNOVA
     ((eql finish-reason 'ship-destroyed-by-nova)
-     (print-message (format nil "Your starship has been destroyed by a nova.~%"))
-     (print-message (format nil "~%That was a great shot.~%~%")))
+     (print-message *message-window* (format nil "Your starship has been destroyed by a nova.~%"))
+     (print-message *message-window* (format nil "~%That was a great shot.~%~%")))
     ;; FSNOVAED
     ((eql finish-reason 'destroyed-by-supernova)
-     (print-message (format nil "The ~A has been fried by a supernova.~%" (format-ship-name)))
-     (print-message (format nil "~%...Not even cinders remain...~%")))
+     (print-message *message-window* (format nil "The ~A has been fried by a supernova.~%" (format-ship-name)))
+     (print-message *message-window* (format nil "~%...Not even cinders remain...~%")))
     ;; FABANDN
     ((eql finish-reason 'abandon-ship-with-no-starbases)
-     (print-message (format nil "You have been captured by the Klingons. If you still~%"))
-     (print-message (format nil "had a starbase to be returned to, you would have been~%"))
-     (print-message (format nil "repatriated and given another chance. Since you have~%"))
-     (print-message (format nil "no starbases, you will be mercilessly tortured to death.~%")))
+     (print-message *message-window* (format nil "You have been captured by the Klingons. If you still~%"))
+     (print-message *message-window* (format nil "had a starbase to be returned to, you would have been~%"))
+     (print-message *message-window* (format nil "repatriated and given another chance. Since you have~%"))
+     (print-message *message-window* (format nil "no starbases, you will be mercilessly tortured to death.~%")))
     ;; FDILITHIUM
     ;; This is the same finish as the self-destruct command
     ((eql finish-reason 'dilithium-crystals-failed)
-     (print-message (format nil "Your starship is now an expanding cloud of subatomic particles.~%")))
+     (print-message *message-window* (format nil "Your starship is now an expanding cloud of subatomic particles.~%")))
     ;; FMATERIALIZE
     ((eql finish-reason 'failed-to-rematerialize)
-     (print-message (format nil "Starbase was unable to re-materialize your starship.~%"))
-     (print-message (format nil "~%Sic transit gloria mundi~%")))
+     (print-message *message-window* (format nil "Starbase was unable to re-materialize your starship.~%"))
+     (print-message *message-window* (format nil "~%Sic transit gloria mundi~%")))
     ;; FPHASER
     ((eql finish-reason 'phaser-fire-inside-shields)
-     (print-message (format nil "The ~A has been cremated by its own phasers.~%" (format-ship-name))))
+     (print-message *message-window* (format nil "The ~A has been cremated by its own phasers.~%" (format-ship-name))))
     ;; FLOST
     ((eql finish-reason 'transporter-failure)
-     (print-message (format nil "You and your landing party have been~%"))
-     (print-message (format nil "converted to energy, dissipating through space.~%")))
+     (print-message *message-window* (format nil "You and your landing party have been~%"))
+     (print-message *message-window* (format nil "converted to energy, dissipating through space.~%")))
     ;; FMINING
     ((eql finish-reason 'tractor-beam-while-mining)
-     (print-message (format nil "You are left with your landing party on~%"))
-     (print-message (format nil "a wild jungle planet inhabited by primitive cannibals.~%"))
-     (print-message (format nil "They are very fond of \"Captain Kirk\" soup.~%"))
-     (print-message (format nil "~%Without your leadership, the ~A is destroyed.~%" (format-ship-name))))
+     (print-message *message-window* (format nil "You are left with your landing party on~%"))
+     (print-message *message-window* (format nil "a wild jungle planet inhabited by primitive cannibals.~%"))
+     (print-message *message-window* (format nil "They are very fond of \"Captain Kirk\" soup.~%"))
+     (print-message *message-window* (format nil "~%Without your leadership, the ~A is destroyed.~%" (format-ship-name))))
     ;; FDPLANET
     ((eql finish-reason 'planet-destroyed-while-landed)
-     (print-message (format nil "You and your mining party perish.~%"))
-     (print-message (format nil "~%That was a great shot.~%")))
+     (print-message *message-window* (format nil "You and your mining party perish.~%"))
+     (print-message *message-window* (format nil "~%That was a great shot.~%")))
     ;; The Galileo being caught in a supernova is a special case of a mining party being wiped
     ;; out in a nova. Handle them together.
     ;; FSSC, FPNOVA
     ((or (eql finish-reason 'super-nova-destroys-shuttle)
          (eql finish-reason 'nova-destroys-planet-while-landed))
      (when (eql finish-reason 'super-nova-destroys-shuttle)
-       (print-message (format nil "The Galileo is instantly annihilated by the supernova.~%")))
-     (print-message (format nil "You and your mining party are atomized.~%"))
-     (print-message (format nil "~%Mr. Spock takes command of the ~A and~%" (format-ship-name)))
-     (print-message (format nil "joins the Romulans, reigning terror on the Federation.~%")))
+       (print-message *message-window* (format nil "The Galileo is instantly annihilated by the supernova.~%")))
+     (print-message *message-window* (format nil "You and your mining party are atomized.~%"))
+     (print-message *message-window* (format nil "~%Mr. Spock takes command of the ~A and~%" (format-ship-name)))
+     (print-message *message-window* (format nil "joins the Romulans, reigning terror on the Federation.~%")))
     ;; FSTRACTOR
     ((eql finish-reason 'tractor-beam-destroys-shuttle)
-     (print-message (format nil "The shuttle craft Galileo is also caught,~%"))
-     (print-message (format nil "and breaks up under the strain.~%"))
-     (print-message (format nil "Your debris is scattered for millions of miles.~%"))
-     (print-message (format nil "~%Without your leadership, the ~A is destroyed.~%" (format-ship-name))))
+     (print-message *message-window* (format nil "The shuttle craft Galileo is also caught,~%"))
+     (print-message *message-window* (format nil "and breaks up under the strain.~%"))
+     (print-message *message-window* (format nil "Your debris is scattered for millions of miles.~%"))
+     (print-message *message-window* (format nil "~%Without your leadership, the ~A is destroyed.~%" (format-ship-name))))
     ;; FDRAY
     ((eql finish-reason 'death-ray-malfunction)
-     (print-message (format nil "The mutants attack and kill Spock.~%"))
-     (print-message (format nil "Your ship is captured by Klingons, and~%"))
-     (print-message (format nil "your crew is put on display in a Klingon zoo.~%")))
+     (print-message *message-window* (format nil "The mutants attack and kill Spock.~%"))
+     (print-message *message-window* (format nil "Your ship is captured by Klingons, and~%"))
+     (print-message *message-window* (format nil "your crew is put on display in a Klingon zoo.~%")))
     ;; FTRIBBLE
     ((eql finish-reason 'death-ray-creates-tribbles)
-     (print-message (format nil "Tribbles consume all remaining water,~%"))
-     (print-message (format nil "food, and oxygen on your ship.~%"))
-     (print-message (format nil "You die of thirst, starvation, and asphyxiation.~%"))
-     (print-message (format nil "~%Your starship is a derelict in space.~%")))
+     (print-message *message-window* (format nil "Tribbles consume all remaining water,~%"))
+     (print-message *message-window* (format nil "food, and oxygen on your ship.~%"))
+     (print-message *message-window* (format nil "You die of thirst, starvation, and asphyxiation.~%"))
+     (print-message *message-window* (format nil "~%Your starship is a derelict in space.~%")))
     ;; FHOLE
     ((eql finish-reason 'destroyed-by-black-hole)
-     (print-message (format nil "Your ship is drawn to the center of the black hole.~%"))
-     (print-message (format nil "You are crushed into extremely dense matter.~%")))
+     (print-message *message-window* (format nil "Your ship is drawn to the center of the black hole.~%"))
+     (print-message *message-window* (format nil "You are crushed into extremely dense matter.~%")))
     ;; FCREW
     ((eql finish-reason 'all-crew-killed)
-     (print-message (format nil "Your last crew member has died.~%")))
+     (print-message *message-window* (format nil "Your last crew member has died.~%")))
     ;; TODO - implement this
     ;;;; FCLOAK
     ;;((eql finish-reason 'cloaking-while-in-neutral-zone)
     ;; (setf *cloaking-violations* (1+ *cloaking-violations*))
-    ;; (print-message (format nil "You have violated the Treaty of Algeron.~%"))
-    ;; (print-message (format nil "The Romulan Empire can never trust you again.~%")))
+    ;; (print-message *message-window* (format nil "You have violated the Treaty of Algeron.~%"))
+    ;; (print-message *message-window* (format nil "The Romulan Empire can never trust you again.~%")))
     ;; should never reach this, but here we are
     (t
-     (print-message (format nil "Game over, man!~%~%"))))
+     (print-message *message-window* (format nil "Game over, man!~%~%"))))
   (when (and (not (eql finish-reason 'won))
              ;;(not (eql finish-reason 'cloaking-while-in-neutral-zone))
              *cloakedp*)
-    (print-message (format nil "Your ship was cloaked so your subspace radio did not receive anything.~%"))
-    (print-message (format nil "You may have missed some warning messages.~%")))
+    (print-message *message-window* (format nil "Your ship was cloaked so your subspace radio did not receive anything.~%"))
+    (print-message *message-window* (format nil "You may have missed some warning messages.~%")))
   ;; Win or lose, by this point the player did not survive.
   (setf *alivep* nil)
-  ;; Downgrade the ship for score calculation purposes. TODO - this can probably just be based on *alivep*
+  ;; Downgrade the ship for score calculation purposes.
+  ;; TODO - this is a poor hack, should count the number of ships destroyed
+  ;; TODO - this can probably just be based on *alivep*
   (when (string= *ship* +faerie-queene+)
     (setf *ship* +no-ship+))
   (when (string= *ship* +enterprise+)
@@ -4366,20 +4167,20 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
         (if (>= (/ for against)
                 (+ 1.0 (* 0.5 (random 1.0))))
             (progn
-              (print-message (format nil "~%As a result of your actions, a treaty with the Klingon~%"))
-              (print-message (format nil "Empire has been signed. The terms of the treaty are~%"))
+              (print-message *message-window* (format nil "~%As a result of your actions, a treaty with the Klingon~%"))
+              (print-message *message-window* (format nil "Empire has been signed. The terms of the treaty are~%"))
               (if (>= (/ for against)
                       (+ 3.0 (random 1.0)))
                   (progn
-                    (print-message (format nil "favorable to the Federation.~%"))
-                    (print-message (format nil "Congratulations!~%")))
-                  (print-message (format nil "highly unfavorable to the Federation.~%"))))
-            (print-message (format nil "The Federation will be destroyed.~%"))))
+                    (print-message *message-window* (format nil "favorable to the Federation.~%"))
+                    (print-message *message-window* (format nil "Congratulations!~%")))
+                  (print-message *message-window* (format nil "highly unfavorable to the Federation.~%"))))
+            (print-message *message-window* (format nil "The Federation will be destroyed.~%"))))
       (progn
-        (print-message (format nil "Since you took the last Klingon with you, you are a~%"))
-        (print-message (format nil "martyr and a hero. Someday maybe they'll erect a~%"))
-        (print-message (format nil "statue in your memory. Rest in peace, and try not~%"))
-        (print-message (format nil "to think about pigeons.~%"))
+        (print-message *message-window* (format nil "Since you took the last Klingon with you, you are a~%"))
+        (print-message *message-window* (format nil "martyr and a hero. Someday maybe they'll erect a~%"))
+        (print-message *message-window* (format nil "statue in your memory. Rest in peace, and try not~%"))
+        (print-message *message-window* (format nil "to think about pigeons.~%"))
         (setf *game-won-p* t)))
   (score))
 
@@ -4387,17 +4188,21 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
 
   (print-stars)
   (when (string= *ship* +enterprise+)
-    (print-message "***") :print-slowly t) ; Extra stars so the lengths of the output lines are the same
-  (print-message
-   (format nil "********* Entropy of ~A maximized *********~%" (format-ship-name)) :print-slowly t)
+    ;; Extra stars so the lengths of the output lines are the same
+    (print-message *message-window* "***") :print-slowly t)
+  (print-message *message-window*
+   (format nil "********* Entropy of ~A maximized *********~%"
+           (format-ship-name)) :print-slowly t)
   (print-stars)
   (do ((whammo (* 25.0 *ship-energy*))
-       (i 0 (1+ i))) ; TODO - C source starts at 1 and counts up, why?
+       (i 0 (1+ i)))
       ((<= i *enemies-here*))
-    (when (<= (* (aref *klingon-energy* i) (aref *klingon-distance* 1)) whammo)
-      (dead-enemy (aref *klingon-sectors* i)
-                  (coord-ref *quadrant-contents* (aref *klingon-sectors* i))
-                  (aref *klingon-sectors* i))))
+    (when (<= (* (enemy-energy (aref *quadrant-enemies* i))
+                 (enemy-distance(aref *quadrant-enemies* 1)))
+              whammo)
+      (dead-enemy (enemy-sector-coordinates (aref *quadrant-enemies* i))
+                  (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                  (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
   (finish 'dilithium-crystals-failed))
 
 (defun expran (average)
@@ -4411,20 +4216,20 @@ This function name and doc string should be more informative."
 (defun get-random-quadrant () ; C: coord randplace(int size)
   "Get a coordinate structure for a random quadrant."
 
-  (make-coordinate :x (random +galaxy-size+) :y (random +galaxy-size+)))
+  (make-quadrant-coordinate :x (random +galaxy-size+) :y (random +galaxy-size+)))
 
 (defun get-random-sector () ; C: coord randplace(int size)
   "Get a coordinate structure for a random sector."
 
-  (make-coordinate :x (random +quadrant-size+) :y (random +quadrant-size+)))
+  (make-sector-coordinate :x (random +quadrant-size+) :y (random +quadrant-size+)))
 
 (defun drop-entity-in-sector (entity) ; coord dropin(feature iquad)
   "Drop a game entity in a random sector in the current quadrant. Return the sector coordinates
 of the entity."
 
   (do ((c (get-random-sector) (get-random-sector)))
-      ((string= (coord-ref *quadrant-contents* c) +empty-sector+)
-       (setf (coord-ref *quadrant-contents* c) entity)
+      ((string= (coord-ref *quadrant* c) +empty-sector+)
+       (setf (coord-ref *quadrant* c) entity)
        (return-from drop-entity-in-sector c))))
 
 (defun drop-klingon-in-sector () ; coord newkling(int i)
@@ -4489,8 +4294,8 @@ Return the sector coordinates, distance from the ship, and Tholian power."
   (do ((sector-ok-p nil)
        x y c)
       (sector-ok-p
-       (setf (aref *quadrant-contents* x y) +tholian+)
-       (setf c (make-coordinate :x x :y y))
+       (setf (aref *quadrant* x y) +tholian+)
+       (setf c (make-sector-coordinate :x x :y y))
        (return-from drop-tholian-in-sector
          (values c
                  (distance *ship-sector* c)
@@ -4502,7 +4307,7 @@ Return the sector coordinates, distance from the ship, and Tholian power."
     (if (> (random 1.0) 0.5)
         (setf y (- +quadrant-size+ 1))
         (setf y 0))
-    (if (string= (aref *quadrant-contents* x y) +empty-sector+)
+    (if (string= (aref *quadrant* x y) +empty-sector+)
         (setf sector-ok-p t)
         (setf sector-ok-p nil))))
 
@@ -4518,33 +4323,22 @@ Return the sector coordinates, distance from the ship, and Tholian power."
       (do ((j 0 (1+ j))
            temp)
           ((< j *enemies-here*))
-        (when (> (aref *klingon-distance* j) (aref *klingon-distance* (1+ j)))
+        (when (> (enemy-distance (aref *quadrant-enemies* j))
+                 (enemy-distance (aref *quadrant-enemies* (1+ j))))
           (setf exchanged t)
-          (setf temp (aref *klingon-distance* j))
-          (setf (aref *klingon-distance* j) (aref *klingon-distance* (1+ j)))
-          (setf (aref *klingon-distance* (1+ j)) temp)
-          (setf temp (aref *klingon-average-distance* j))
-          (setf (aref *klingon-average-distance* j) (aref *klingon-average-distance* (1+ j)))
-          (setf (aref *klingon-average-distance* (1+ j)) temp)
-          (setf temp (aref *klingon-sectors* j))
-          (setf (aref *klingon-sectors* j) (aref *klingon-sectors* (1+ j)))
-          (setf (aref *klingon-sectors* (1+ j)) temp)
-          (setf temp (aref *klingon-energy* j))
-          (setf (aref *klingon-energy* j) (aref *klingon-energy* (1+ j)))
-          (setf (aref *klingon-energy* (1+ j)) temp))))))
+          (setf temp (aref *quadrant-enemies* j))
+          (setf (aref *quadrant-enemies* j) (aref *quadrant-enemies* (1+ j)))
+          (setf (aref *quadrant-enemies* (1+ j)) temp))))))
 
 (defun new-quadrant (&key (show-thing t))
   "Set up a new quadrant when it is entered or re-entered. The thing should only be shown when the
 player has reached a base by abandoning ship or using the SOS command."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   (setf *just-in-p* t)
-  (setf *klingons-here* 0) ; TODO - a convenience variable to avoid referencing the galaxy array, keep it?
+  (setf *klingons-here* 0)
   (setf *commanders-here* 0)
   (setf *super-commanders-here* 0)
-  (setf *romulans-here* 0) ; TODO - a convenience variable to avoid referencing the galaxy array, keep it?
+  (setf *romulans-here* 0)
   (setf *romulan-neutral-zone-p* nil)
   (setf *cloaking-violation-reported-p* nil)
   (setf *enemies-here* 0)
@@ -4570,7 +4364,7 @@ player has reached a base by abandoning ship or using the SOS command."
         ((>= i +quadrant-size+))
       (do ((j 0 (1+ j)))
           ((>= j +quadrant-size+))
-        (setf (aref *quadrant-contents* i j) +empty-sector+)))
+        (setf (aref *quadrant* i j) +empty-sector+)))
 
     (setf *klingons-here*
           (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)))
@@ -4579,7 +4373,7 @@ player has reached a base by abandoning ship or using the SOS command."
     (setf *enemies-here* (+ *klingons-here* *romulans-here*))
 
     ;; Position starship. Do this first, all sectors are still empty.
-    (setf (coord-ref *quadrant-contents* *ship-sector*) *ship*)
+    (setf (coord-ref *quadrant* *ship-sector*) *ship*)
 
     (when (or (> (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
               (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0))
@@ -4589,51 +4383,51 @@ player has reached a base by abandoning ship or using the SOS command."
         (when (and *super-commander-quadrant*
                    (coord-equal *ship-quadrant* *super-commander-quadrant*))
           (multiple-value-bind (coordinates distance power) (drop-super-commander-in-sector)
-            (setf (aref *klingon-sectors* next-index) coordinates)
-            (setf (aref *klingon-distance* next-index) distance)
-            (setf (aref *klingon-average-distance* next-index) distance)
-            (setf (aref *klingon-energy* next-index) power)
-            (setf *super-commanders-here* (1+ *super-commanders-here*))
-            (setf remaining-klingons (1- remaining-klingons))
-            (setf next-index (1+ next-index))))
+            (setf (aref *quadrant-enemies* next-index) (make-enemy :energy power
+                                                                   :distance distance
+                                                                   :average-distance distance
+                                                                   :sector-coordinates coordinates)))
+          (incf next-index 1)
+          (incf *super-commanders-here* 1)
+          (decf remaining-klingons 1))
         ;; Put a Commander in the quadrant if there is one.
         (dolist (cq *commander-quadrants*)
           (when (coord-equal *ship-quadrant* cq)
-            (setf *commanders-here* (1+ *commanders-here*))
             (multiple-value-bind (coordinates distance power) (drop-commander-in-sector)
-              (setf (aref *klingon-sectors* next-index) coordinates)
-              (setf (aref *klingon-distance* next-index) distance)
-              (setf (aref *klingon-average-distance* next-index) distance)
-              (setf (aref *klingon-energy* next-index) power)
-              (setf remaining-klingons (1- remaining-klingons))
-              (setf next-index (1+ next-index)))))
+              (setf (aref *quadrant-enemies* next-index) (make-enemy :energy power
+                                                                     :distance distance
+                                                                     :average-distance distance
+                                                                     :sector-coordinates coordinates)))
+            (incf next-index 1)
+            (incf *commanders-here* 1)
+            (decf remaining-klingons 1)))
         ;; Position ordinary Klingons
         (do ((i 1 (1+ i)))
             ((> i remaining-klingons))
           (multiple-value-bind (coordinates distance power) (drop-klingon-in-sector)
-            (setf (aref *klingon-sectors* next-index) coordinates)
-            (setf (aref *klingon-distance* next-index) distance)
-            (setf (aref *klingon-average-distance* next-index) distance)
-            (setf (aref *klingon-energy* next-index) power)
-            (setf next-index (1+ next-index))))
+            (setf (aref *quadrant-enemies* next-index) (make-enemy :energy power
+                                                                   :distance distance
+                                                                   :average-distance distance
+                                                                   :sector-coordinates coordinates)))
+          (incf next-index 1))
         ;; Put in Romulans if needed
         (do ((r 1 (1+ r))) ; This is a count
             ((> r (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*))))
           (multiple-value-bind (coordinates distance power) (drop-romulan-in-sector)
-            (setf (aref *klingon-sectors* next-index) coordinates)
-            (setf (aref *klingon-distance* next-index) distance)
-            (setf (aref *klingon-average-distance* next-index) distance)
-            (setf (aref *klingon-energy* next-index) power)
-            (setf next-index (1+ next-index))))))
+            (setf (aref *quadrant-enemies* next-index) (make-enemy :energy power
+                                                                   :distance distance
+                                                                   :average-distance distance
+                                                                   :sector-coordinates coordinates)))
+          (incf next-index 1))))
 
     ;; If quadrant needs a starbase then put it in.
     (when (> (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 0)
       (setf *base-sector* (drop-entity-in-sector +starbase+)))
 
     ;; If quadrant needs a planet then put it in
-    (when (assoc *ship-quadrant* *planet-information* :test #'coord-equal) ; non-nil when planet exists
+    (when (assoc *ship-quadrant* *planets* :test #'coord-equal) ; non-nil when planet exists
       (setf *planet-coord* *ship-quadrant*)
-      (let ((p (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+      (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
         (if (planet-inhabitedp p)
             (setf *current-planet* (drop-entity-in-sector +world+))
             (setf *current-planet* (drop-entity-in-sector +planet+)))))
@@ -4646,31 +4440,31 @@ player has reached a base by abandoning ship or using the SOS command."
         ((> i (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
       (drop-entity-in-sector +star+))
 
-    ;; Check for Romulan Neutral Zone: Romulans present and no Klingons.
-    ;; TODO - does it make sense to have RNZ when a base is present?
+    ;; Check for Romulan Neutral Zone: Romulans present, no Klingons, and no starbases.
     (when (and (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0)
-               (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0))
+               (= (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
+               (= (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 0))
       (setf *romulan-neutral-zone-p* t)
-      (when (not (damagedp +subspace-radio+))
-        (print-message (format nil "~%LT. Uhura- \"Captain, an urgent message.~%"))
-        (print-message (format nil "  I'll put it on audio.\"  CLICK~%"))
-        (print-message (format nil "~%INTRUDER! YOU HAVE VIOLATED THE ROMULAN NEUTRAL ZONE.~%"))
-        (print-message (format nil "LEAVE AT ONCE, OR YOU WILL BE DESTROYED!~%"))))
+      (when (subspace-radio-available-p)
+        (print-message *message-window* (format nil "~%LT. Uhura- \"Captain, an urgent message.~%"))
+        (print-message *message-window* (format nil "  I'll put it on audio.\"  CLICK~%"))
+        (print-message *message-window* (format nil "~%INTRUDER! YOU HAVE VIOLATED THE ROMULAN NEUTRAL ZONE.~%"))
+        (print-message *message-window* (format nil "LEAVE AT ONCE, OR YOU WILL BE DESTROYED!~%"))))
 
     ;; Put in THING if needed
     (when (and show-thing
                (coord-equal *thing-location* *ship-quadrant*))
       (setf *thing-location* (get-random-quadrant))
-      (1+ *enemies-here*)
       (setf *things-here* 1)
       (multiple-value-bind (coordinates distance power) (drop-space-thing-in-sector)
-        (setf (aref *klingon-sectors* *enemies-here*) coordinates)
-        (setf (aref *klingon-distance* *enemies-here*) distance)
-        (setf (aref *klingon-average-distance* *enemies-here*) distance)
-        (setf (aref *klingon-energy* *enemies-here*) power))
+        (setf (aref *quadrant-enemies* *enemies-here*) (make-enemy :energy power
+                                                                   :distance distance
+                                                                   :average-distance distance
+                                                                   :sector-coordinates coordinates))
+        (incf *enemies-here* 1)) ; TODO - should be next-index, not *enemies-here*
       (unless (damagedp +short-range-sensors+)
-        (print-message (format nil "Mr. Spock- \"Captain, this is most unusual.~%"))
-        (print-message (format nil "    Please examine your short-range scan.\"~%"))))
+        (print-message *message-window* (format nil "Mr. Spock- \"Captain, this is most unusual.~%"))
+        (print-message *message-window* (format nil "    Please examine your short-range scan.\"~%"))))
 
     ;; Decide if quadrant needs a Tholian
     (when (or (and (< *skill-level* +good+)
@@ -4680,26 +4474,25 @@ player has reached a base by abandoning ship or using the SOS command."
               (and (> *skill-level* +good+)
                    (<= (random 1.0) 0.08)))
       (setf *tholians-here* 1)
-      (1+ *enemies-here*)
       (multiple-value-bind (coordinates distance power) (drop-tholian-in-sector)
         (setf *tholian-sector* coordinates)
-        ;; TODO - this is suspicious: the Tholian, if present, must always be the last item in the array.
-        ;; Is that relationship maintained, for example when klingons are destroyed?
-        (setf (aref *klingon-sectors* *enemies-here*) coordinates)
-        (setf (aref *klingon-distance* *enemies-here*) distance)
-        (setf (aref *klingon-average-distance* *enemies-here*) distance)
-        (setf (aref *klingon-energy* *enemies-here*) power))
+        ;; If present, the Tholian is always the last item in the array of enemies.
+        ;; TODO - don't use a special case ("last item in the array") to identify the Tholian
+        (setf (aref *quadrant-enemies* *enemies-here*) (make-enemy :energy power
+                                                                   :distance distance
+                                                                   :average-distance distance
+                                                                   :sector-coordinates coordinates)) ; TODO - should be next-index, not *enemies-here*
+        (incf *enemies-here* 1))
       ;; Reserve unoccupied corners
-      (when (string= (aref *quadrant-contents* 0 0) +empty-sector+)
-        (setf (aref *quadrant-contents* 0 0) +reserved+))
-      (when (string= (aref *quadrant-contents* 0 (- +quadrant-size+ 1)) +empty-sector+)
-        (setf (aref *quadrant-contents* 0 (- +quadrant-size+ 1)) +reserved+))
-      (when (string= (aref *quadrant-contents* (- +quadrant-size+ 1) 0) +empty-sector+)
-        (setf (aref *quadrant-contents* (- +quadrant-size+ 1) 0) +reserved+))
-      (when (string= (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)
-        (setf (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)))
+      (when (string= (aref *quadrant* 0 0) +empty-sector+)
+        (setf (aref *quadrant* 0 0) +reserved+))
+      (when (string= (aref *quadrant* 0 (- +quadrant-size+ 1)) +empty-sector+)
+        (setf (aref *quadrant* 0 (- +quadrant-size+ 1)) +reserved+))
+      (when (string= (aref *quadrant* (- +quadrant-size+ 1) 0) +empty-sector+)
+        (setf (aref *quadrant* (- +quadrant-size+ 1) 0) +reserved+))
+      (when (string= (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)
+        (setf (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)))
 
-    ;; TODO - does this need to be done in new-quadrant?
     (sort-klingons)
 
     ;; Put in a few black holes
@@ -4710,14 +4503,14 @@ player has reached a base by abandoning ship or using the SOS command."
 
     ;; Take out X's in corners if Tholian present
     (when (> *tholians-here* 0)
-      (when (string= (aref *quadrant-contents* 0 0) +reserved+)
-        (setf (aref *quadrant-contents* 0 0) +empty-sector+))
-      (when (string= (aref *quadrant-contents* 0 (- +quadrant-size+ 1)) +reserved+)
-        (setf (aref *quadrant-contents* 0 (- +quadrant-size+ 1)) +empty-sector+))
-      (when (string= (aref *quadrant-contents* (- +quadrant-size+ 1) 0) +reserved+)
-        (setf (aref *quadrant-contents* (- +quadrant-size+ 1) 0) +empty-sector+))
-      (when (string= (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)
-        (setf (aref *quadrant-contents* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))))
+      (when (string= (aref *quadrant* 0 0) +reserved+)
+        (setf (aref *quadrant* 0 0) +empty-sector+))
+      (when (string= (aref *quadrant* 0 (- +quadrant-size+ 1)) +reserved+)
+        (setf (aref *quadrant* 0 (- +quadrant-size+ 1)) +empty-sector+))
+      (when (string= (aref *quadrant* (- +quadrant-size+ 1) 0) +reserved+)
+        (setf (aref *quadrant* (- +quadrant-size+ 1) 0) +empty-sector+))
+      (when (string= (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)
+        (setf (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))))
 
 (defun abandon-ship () ; C: abandon(void)
   "The ship is abandoned. If your current ship is the Faire Queene, or if your shuttle craft is
@@ -4732,96 +4525,95 @@ If there are no starbases left, you are captured by the Klingons, who torture yo
 However, if there is at least one starbase, you are returned to the Federation in a prisoner of war
 exchange. Of course, this can't happen unless you have taken some prisoners."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   (if *dockedp*
       (when (string/= *ship* +enterprise+)
-        (print-message (format nil "You cannot abandon Ye Faerie Queene.~%"))
+        (print-message *message-window* (format nil "You cannot abandon Ye Faerie Queene.~%"))
         (return-from abandon-ship nil))
       ;; Must take shuttle craft to exit
       (cond
         ((string= *ship* +faerie-queene+) ; C: game.damage[DSHUTTL]==-1
-         (print-message (format nil "Ye Faerie Queene has no shuttle craft.~%"))
+         (print-message *message-window* (format nil "Ye Faerie Queene has no shuttle craft.~%"))
          (return-from abandon-ship nil))
 
         ((< (aref *device-damage* +shuttle+) 0)
-         (print-message (format nil "Shuttle craft now serving Big Macs.~%"))
+         (print-message *message-window* (format nil "Shuttle craft now serving Big Macs.~%"))
          (return-from abandon-ship nil))
 
         ((> (aref *device-damage* +shuttle+) 0)
-         (print-message (format nil "Shuttle craft damaged.~%"))
+         (print-message *message-window* (format nil "Shuttle craft damaged.~%"))
          (return-from abandon-ship nil))
 
         (*landedp*
-         (print-message (format nil "You must be aboard the ship.~%"))
+         (print-message *message-window* (format nil "You must be aboard the ship.~%"))
          (return-from abandon-ship nil))
 
         ((not (eql *shuttle-craft-location* 'on-ship))
-         (print-message (format nil "Shuttle craft not currently available.~%"))
-         (return-from abandon-ship nil))
+         (print-message *message-window* (format nil "Shuttle craft not currently available.~%"))
+         (return-from abandon-ship nil))))
 
-        (t
-         ;; Print abandon ship messages
-         (print-message (format nil "~%***ABANDON SHIP!  ABANDON SHIP!~%") :print-slowly t)
-         (print-message (format nil "~%***ALL HANDS ABANDON SHIP!~%") :print-slowly t)
-         (skip-line 2)
-         ;; TODO - this isn't consistent with the "Entire crew.." message below
-         (print-message (format nil "Captain and crew escape in shuttle craft.~%"))
-         (when (= (length *base-quadrants*) 0)
-           ;; Oops! no place to go...
-           (finish 'abandon-ship-with-no-starbases)
-           (return-from abandon-ship nil))
-         ;; Dispose of crew.
-         ;; Before the introduction of inhabited planets the message was
-         ;; "Remainder of ship's complement beam down"
-         ;; "to nearest habitable planet."
-         (let ((p (first (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))) ; non-nil if planet exists
-           (if (and p
-                    (not (damagedp +transporter+)))
-               (print-message (format nil "Remainder of ship's complement beam down to ~A.~%"
-                                      (planet-name p)))
-               (progn
-                 (print-message (format nil "Entire crew of ~A left to die in outer space.~%" *crew*))
-                 (incf *casualties* *crew*)
-                 (incf *abandoned-crew* *crew*))))
-         ;; If at least one base left, give 'em the Faerie Queene
-         (setf *dilithium-crystals-on-board-p* nil) ; crystals are lost
-         (setf *probes-available* 0) ; No probes
-         (print-message (format nil "~%You are captured by Klingons and released to~%"))
-         (print-message (format nil "the Federation in a prisoner-of-war exchange.~%"))
-         ;; Set up quadrant and position FQ adjacent to base
-         ;; Select a random base to be the new start
-         (let ((nth-base (truncate (* (length *base-quadrants*) (random 1.0)))))
-           (when (not (coord-equal *ship-quadrant* (nth nth-base *base-quadrants*)))
-             (setf *ship-quadrant* (nth nth-base *base-quadrants*))
-             (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
-             (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
-             (new-quadrant)))
-         ;; position next to base by trial and error
-         (setf (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+)
-         (do ((positionedp nil))
-             (positionedp)
-           (do ((count 0 (1+ count)))
-               ((or (>= count 100) ; previously +quadrant-size+, don't give up so easily
-                    positionedp))
-             (setf (coordinate-x *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-x *base-sector*))))
-             (setf (coordinate-y *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-y *base-sector*))))
-             (when (and (valid-sector-p (coordinate-x *ship-sector*) (coordinate-y *ship-sector*))
-                        (string= (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+))
-               (setf positionedp t))) ; found a spot
-           (unless positionedp
-             (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
-             (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
-             (new-quadrant))))))
+  ;; Print abandon ship messages
+  (print-message *message-window* (format nil "~%***ABANDON SHIP!  ABANDON SHIP!~%") :print-slowly t)
+  (print-message *message-window* (format nil "~%***ALL HANDS ABANDON SHIP!~%~%~%") :print-slowly t)
+  ;; TODO - this isn't consistent with the "Entire crew.." message below
+  (print-message *message-window* (format nil "Captain and crew escape in shuttle craft.~%"))
+  (when (= (length *base-quadrants*) 0)
+    ;; Oops! no place to go...
+    (finish 'abandon-ship-with-no-starbases)
+    (return-from abandon-ship nil))
+  ;; Dispose of crew.
+  ;; Before the introduction of inhabited planets the message was
+  ;; "Remainder of ship's complement beam down"
+  ;; "to nearest habitable planet."
+  (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))) ; non-nil if planet exists
+    (if (and p
+             (not (damagedp +transporter+)))
+        (print-message *message-window* (format nil "Remainder of ship's complement beam down to ~A.~%"
+                               (planet-name p)))
+        (progn
+          (print-message *message-window* (format nil "Entire crew of ~A left to die in outer space.~%" *crew*))
+          (incf *casualties* *crew*)
+          (incf *abandoned-crew* *crew*))))
+  ;; If at least one base left, give 'em the Faerie Queene
+  (setf *dilithium-crystals-on-board-p* nil) ; crystals are lost
+  (setf *probes-available* 0) ; No probes
+  (print-message *message-window* (format nil "~%You are captured by Klingons and released to~%"))
+  (print-message *message-window* (format nil "the Federation in a prisoner-of-war exchange.~%"))
+  ;; Set up quadrant and position FQ adjacent to base
+  ;; Select a random base to be the new start
+  (let ((nth-base (truncate (* (length *base-quadrants*) (random 1.0)))))
+    (unless (coord-equal *ship-quadrant* (nth nth-base *base-quadrants*))
+      (setf *ship-quadrant* (nth nth-base *base-quadrants*))
+      (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
+      (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
+      (new-quadrant)))
+  ;; position next to base by trial and error
+  ;; TODO - in theory this could fail if there is no empty sector next to the base, or if the RNG
+  ;;        doesn't find an empty sector. Instead, select a random empty sector (not "randomly
+  ;;        select a sector and check if it's empty"), and run new-quadrant again if none exists
+  (setf (coord-ref *quadrant* *ship-sector*) +empty-sector+)
+  (do ((positionedp nil))
+      (positionedp)
+    (do ((count 0 (1+ count)))
+        ((or (>= count 100) ; previously +quadrant-size+, don't give up so easily
+             positionedp))
+      (setf (coordinate-x *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-x *base-sector*))))
+      (setf (coordinate-y *ship-sector*) (truncate (+ (* 3.0 (random 1.0)) -1 (coordinate-y *base-sector*))))
+      (when (and (valid-p *ship-sector*)
+                 (string= (coord-ref *quadrant* *ship-sector*) +empty-sector+))
+        (setf positionedp t))) ; found a spot
+    (unless positionedp
+      (setf (coordinate-x *ship-sector*) (/ +quadrant-size+ 2))
+      (setf (coordinate-y *ship-sector*) (/ +quadrant-size+ 2))
+      (new-quadrant)))
   ;; Get new commission
-  (setf (coord-ref *quadrant-contents* *ship-sector*) +faerie-queene+)
+  (setf *ship* +faerie-queene+)
+  (setf (coord-ref *quadrant* *ship-sector*) *ship*)
   (setf *crew* +full-crew+)
-  (print-message (format nil "Starfleet puts you in command of another ship,~%"))
-  (print-message (format nil "the Faerie Queene, which is antiquated but,~%"))
-  (print-message (format nil "still useable.~%"))
+  (print-message *message-window* (format nil "Starfleet puts you in command of another ship,~%"))
+  (print-message *message-window* (format nil "the Faerie Queene, which is antiquated but,~%"))
+  (print-message *message-window* (format nil "still useable.~%"))
   (when *dilithium-crystals-on-board-p*
-    (print-message (format nil "The dilithium crystals have been moved.~%")))
+    (print-message *message-window* (format nil "The dilithium crystals have been moved.~%")))
   (setf *miningp* nil)
   (setf *shuttle-craft-location* 'off-ship) ; Galileo disappears
   (setf *shuttle-craft-quadrant* nil) ; FQ has no shuttle, therefore no location
@@ -4846,31 +4638,32 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (setf *shields-are-up-p* nil)
   (setf *warp-factor* 5.0))
 
+;; There is no undock operation, other than moving the ship. This is by intent, for gameplay balance.
+;; Since docking costs no time, a player could undock, fire weapons, and then dock again to resupply
+;; and repair in relative safety. Requiring movement to undock gives enemies a chance to attack.
 (defun dock () ; C: dock(bool verbose)
   "Dock the ship at a starbase."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (cond
     (*dockedp*
-     (print-message (format nil "Already docked.~%")))
+
+     (print-message *message-window* (format nil "Already docked.~%")))
 
     (*in-orbit-p*
-     (print-message (format nil "You must first leave standard orbit.~%")))
+     (print-message *message-window* (format nil "You must first leave standard orbit.~%")))
 
     ((or (not *base-sector*)
          (> (abs (- (coordinate-x *ship-sector*) (coordinate-x *base-sector*))) 1)
-         (> (abs (- (coordinate-y *ship-sector*) (coordinate-y *ship-sector*))) 1))
-     (print-message (format nil "~A not adjacent to base.~%" (format-ship-name))))
+         (> (abs (- (coordinate-y *ship-sector*) (coordinate-y *base-sector*))) 1))
+     (print-message *message-window* (format nil "~A not adjacent to base.~%" (format-ship-name))))
 
     (*cloakedp*
-     (print-message (format nil "You cannot dock while cloaked.~%")))
+     (print-message *message-window* (format nil "You cannot dock while cloaked.~%")))
 
     (t
      (setf *dockedp* t)
-     (print-message (format nil "Docked.~%"))
+     (print-message *message-window* (format nil "Docked.~%"))
      (setf *action-taken-p* t)
      (when (< *ship-energy* *initial-energy*) ; Keep energy overload from dilithium crystals
        (setf *ship-energy* *initial-energy*))
@@ -4879,7 +4672,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
      (setf *life-support-reserves* *initial-life-support-reserves*)
      (setf *crew* +full-crew+)
      (when (> (- *brig-capacity* *brig-free*) 0)
-       (print-message (format nil "~D captured Klingons transferred to base.~%"
+       (print-message *message-window* (format nil "~D captured Klingons transferred to base.~%"
                               (- *brig-capacity* *brig-free*)))
        (incf *captured-klingons* (- *brig-capacity* *brig-free*))
        (setf *brig-free* *brig-capacity*))
@@ -4887,50 +4680,23 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
      ;;        report the event when the radio is functioning or after it has been repaired.
      (when (and (or (eql *super-commander-attacking-base* 'attacking)
                     (eql *super-commander-attacking-base* 'destroying)
-                    (is-scheduled-p +commander-destroys-base+))
+                    (is-scheduled-p 'commander-destroys-base))
                 (not *base-attack-report-seen-p*))
        ;; Get attack report from base
-       (print-message (format nil "~%Lt. Uhura- \"Captain, an important message from the starbase:\"~%"))
+       (print-message *message-window*
+                      (format nil "~%Lt. Uhura- \"Captain, an important message from the starbase:\"~%"))
        (attack-report)
        (setf *base-attack-report-seen-p* t)))))
-
-(defun put-short-range-scan-symbol (symbol-coord symbol) ; C: void put_srscan_sym(coord w, char sym)
-  "In curses mode, place the symbol at symbol-coord in the short range scan."
-
-  ;; TODO - write this
-  (setf symbol-coord symbol-coord)
-  (setf symbol symbol)
-  (print-message (format nil "Debug: displaying a short range scan symbol~%"))
-  )
-
-(defun sound (frequency) ; C: not user-defined...
-  "Play a sound on the PC speaker at the specified frequency."
-
-  ;; TODO - implement this, probably by calling some OS routine or external library
-  (setf frequency frequency)
-  )
-
-(defun warble () ; C: void warble(void)
-  "Sound and visual effects for teleportation"
-
-  ;; TODO - this function is a placeholder, implement it in a portable way
-)
-
-(defun boom (c) ; C: void boom(coord w)
-  "enemy fall down, go boom - display a boom effect and make a boom noise"
-
-  ;; TODO - write this
-  (setf c c))
 
 (defun time-warp () ; C: timwrp(), /* let's do the time warp again */
   "Travel forward or backward in time."
 
-  (print-message (format nil "~%***TIME WARP ENTERED.~%"))
+  (print-message *message-window* (format nil "~%***TIME WARP ENTERED.~%"))
   (if (and *snapshot-taken-p*
            (< (random 1.0) 0.5))
       (progn
         ;; Go back in time
-        (print-message (format nil "You are traveling backwards in time ~A stardates.~%"
+        (print-message *message-window* (format nil "You are traveling backwards in time ~A stardates.~%"
                                (truncate (- *stardate* (snapshot-stardate *snapshot*)))))
         ;; Note the current shuttle location, compare it with the previous historical location, and
         ;; remove or add the shuttle as needed
@@ -4940,16 +4706,16 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
           (setf *snapshot-taken-p* nil)
           ;; Reschedule events to occur relative to the new current stardate
           (when (> (length *commander-quadrants*) 0)
-            (schedule-event +tractor-beam+ (expran (/ *initial-time* (length *commander-quadrants*))))
-            (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*))))
-          (schedule-event +supernova+ (expran (* 0.5 *initial-time*)))
+            (schedule-event 'tractor-beam (expran (/ *initial-time* (length *commander-quadrants*))))
+            (schedule-event 'commander-attacks-base (expran (* 0.3 *initial-time*))))
+          (schedule-event 'supernova (expran (* 0.5 *initial-time*)))
           ;; Next snapshot will be sooner
-          (schedule-event +snapshot-for-time-warp+ (expran (* 0.25 *remaining-time*)))
+          (schedule-event 'snapshot-for-time-warp (expran (* 0.25 *remaining-time*)))
           (when (> *remaining-super-commanders* 0)
-            (schedule-event +move-super-commander+ 0.2777))
+            (schedule-event 'move-super-commander 0.2777))
           (setf *super-commander-attacking-base* 'not-attacking)
-          (unschedule +commander-destroys-base+)
-          (unschedule +super-commander-destroys-base+)
+          (unschedule-event 'commander-destroys-base)
+          (unschedule-event 'super-commander-destroys-base)
           (setf *base-under-attack-quadrant* nil)
           (cond
             ;; Make sure Galileo is consistent -- Snapshot may have been taken when on planet,
@@ -4958,25 +4724,26 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
                   *shuttle-craft-quadrant*                 ; in the indicated quadrant,
                   (eql shuttle-craft-location 'on-ship)    ; and before the time warp
                   (string= *ship* +enterprise+))           ; was on the Enterprise
-             (print-message (format nil "Checkov-  \"Security reports the Galileo has disappeared, Sir!~%")))
+             (print-message *message-window* (format nil "Checkov-  \"Security reports the Galileo has disappeared, Sir!~%")))
             ;; Likewise, if in the original time the Galileo was abandoned but was on ship in the
             ;; earlier time line, it would have vanished -- let's restore it.
             ((and (not (eql shuttle-craft-location 'on-ship))
                   (eql *shuttle-craft-location* 'on-ship))
              (if (string= *ship* +enterprise+) ; Can't restore to the FQ
-                 (print-message (format nil "Checkov-  \"Security reports the Galileo has reappeared in the dock!\"~%"))
+                 (print-message *message-window* (format nil "Checkov-  \"Security reports the Galileo has reappeared in the dock!\"~%"))
                  (progn
                    (setf *shuttle-craft-location* 'off-ship)
                    (setf *shuttle-craft-quadrant* nil))))))
           ;; There used to be code to do the actual reconstruction here,
           ;; but the starchart is now part of the snapshotted galaxy state.
-          (print-message (format nil "Spock has reconstructed a correct star chart from memory~%")))
+          (print-message *message-window* (format nil "Spock has reconstructed a correct star chart from memory~%")))
       (progn
         ;; Go forward in time
         (setf *time-taken-by-current-operation* (* -0.5 *initial-time* (log (random 1.0))))
-        (print-message (format nil "You are traveling forward in time ~A stardates.~%" *time-taken-by-current-operation*))
+        (print-message *message-window* (format nil "You are traveling forward in time ~A stardates.~%" *time-taken-by-current-operation*))
         ;; Cheat to make sure no tractor beams occur during time warp
-        (postpone-event +tractor-beam+ *time-taken-by-current-operation*)
+        (postpone-event 'tractor-beam *time-taken-by-current-operation*)
+        ;; TODO - why only the subspace radio?
         (incf (aref *device-damage* +subspace-radio+) *time-taken-by-current-operation*)))
   (new-quadrant)
   (process-events)) ; Stas Sergeev added this -- do pending events
@@ -5018,9 +4785,9 @@ object then it waits, in case the player helpfully removes the blocking object."
          (setf *tholians-here* 0)
          (return-from move-tholian nil)))
       ;; Do nothing if we are blocked
-      (when (or (string= (aref *quadrant-contents* new-x new-y) +empty-sector+)
-                (string= (aref *quadrant-contents* new-x new-y) +tholian-web+))
-        (setf (aref *quadrant-contents* new-x new-y) +tholian-web+)
+      (when (or (string= (aref *quadrant* new-x new-y) +empty-sector+)
+                (string= (aref *quadrant* new-x new-y) +tholian-web+))
+        (setf (aref *quadrant* new-x new-y) +tholian-web+)
         (cond
           ;; Move in x axis
           ((/= (coordinate-x *tholian-sector*) new-x)
@@ -5028,21 +4795,21 @@ object then it waits, in case the player helpfully removes the blocking object."
                            (- new-x (coordinate-x *tholian-sector*)))))
                ((= (coordinate-x *tholian-sector*) new-x))
              (setf (coordinate-x *tholian-sector*) incr-x)
-             (when (string= (coord-ref *quadrant-contents* *tholian-sector*) +empty-sector+)
-               (setf (coord-ref *quadrant-contents* *tholian-sector*) +tholian-web+))))
+             (when (string= (coord-ref *quadrant* *tholian-sector*) +empty-sector+)
+               (setf (coord-ref *quadrant* *tholian-sector*) +tholian-web+))))
           ;; Move in y axis
           ((/= (coordinate-y *tholian-sector*) new-y)
            (do ((incr-y (/ (abs (- new-y (coordinate-y *tholian-sector*)))
                           (- new-y (coordinate-y *tholian-sector*)))))
                ((= (coordinate-y *tholian-sector*) new-y))
              (setf (coordinate-y *tholian-sector*) incr-y)
-             (when (string= (coord-ref *quadrant-contents* *tholian-sector*) +empty-sector+)
-               (setf (coord-ref *quadrant-contents* *tholian-sector*) +tholian-web+)))))
-        (setf (coord-ref *quadrant-contents* *tholian-sector*) +tholian+)
-        ;; TODO - This looks suspicious - why must the Tholian be the last item in the array? The technique for
-        ;; deleting an enemy from an array is often to move the last one in the array to the position of the
-        ;; deleted enemy. Is that done with *klingon-sectors*?
-        (setf (aref *klingon-sectors* *enemies-here*) *tholian-sector*)
+             (when (string= (coord-ref *quadrant* *tholian-sector*) +empty-sector+)
+               (setf (coord-ref *quadrant* *tholian-sector*) +tholian-web+)))))
+        (setf (coord-ref *quadrant* *tholian-sector*) +tholian+)
+        ;; TODO - This is fragile because the Tholian must be the last item in the array.
+        ;;        Sometimes an enemy is deleted from an array by moving the last one in the
+        ;;        array to the position of the deleted enemy. See other TODOs to find these.
+        (setf (enemy-sector-coordinates (aref *quadrant-enemies* *enemies-here*)) *tholian-sector*)
         ;; Check to see if all holes plugged
         (do ((i 1 (1+ i))
              (all-holes-plugged-p t))
@@ -5050,28 +4817,28 @@ object then it waits, in case the player helpfully removes the blocking object."
                  (not all-holes-plugged-p))
              (when all-holes-plugged-p
                ;; All plugged up -- Tholian splits
-               (setf (coord-ref *quadrant-contents* *tholian-sector*) +tholian-web+)
+               (setf (coord-ref *quadrant* *tholian-sector*) +tholian-web+)
                (drop-entity-in-sector +black-hole+)
-               (print-message (format nil "***Tholian at ~A completes web.~%" (format-sector-coordinates *tholian-sector*)))
+               (print-message *message-window* (format nil "***Tholian at ~A completes web.~%" (format-sector-coordinates *tholian-sector*)))
                (setf *tholians-here* 0)
                (setf *enemies-here* (1- *enemies-here*))))
-          (when (and (string/= (aref *quadrant-contents* 1 i) +tholian-web+)
-                     (string/= (aref *quadrant-contents* 1 i) +tholian+))
+          (when (and (string/= (aref *quadrant* 1 i) +tholian-web+)
+                     (string/= (aref *quadrant* 1 i) +tholian+))
             (setf all-holes-plugged-p nil))
-          (when (and (string/= (aref *quadrant-contents* +quadrant-size+ i) +tholian-web+)
-                     (string/= (aref *quadrant-contents* +quadrant-size+ i) +tholian+))
+          (when (and (string/= (aref *quadrant* +quadrant-size+ i) +tholian-web+)
+                     (string/= (aref *quadrant* +quadrant-size+ i) +tholian+))
             (setf all-holes-plugged-p nil))
-          (when (and (string/= (aref *quadrant-contents* i 1) +tholian-web+)
-                     (string/= (aref *quadrant-contents* i 1) +tholian+))
+          (when (and (string/= (aref *quadrant* i 1) +tholian-web+)
+                     (string/= (aref *quadrant* i 1) +tholian+))
             (setf all-holes-plugged-p nil))
-          (when (and (string/= (aref *quadrant-contents* i +quadrant-size+ ) +tholian-web+)
-                     (string/= (aref *quadrant-contents* i +quadrant-size+) +tholian+))
+          (when (and (string/= (aref *quadrant* i +quadrant-size+ ) +tholian-web+)
+                     (string/= (aref *quadrant* i +quadrant-size+) +tholian+))
             (setf all-holes-plugged-p nil)))))))
 
 (defun try-exit (look enemy-letter enemy-index running-away-p) ; C: bool tryexit(coord look, int ienm, int loccom, bool irun)
   "A Klingon attempts to leave the current quadrant. Return true if successful."
 
-  (let ((destination-quadrant (make-coordinate))) ; C: iq
+  (let ((destination-quadrant (make-quadrant-coordinate))) ; C: iq
     (setf (coordinate-x destination-quadrant) (+ (coordinate-x *ship-quadrant*)
                                                  (/ (+ (coordinate-x look) (1- +quadrant-size+))
                                                     (1- +quadrant-size+))))
@@ -5079,8 +4846,7 @@ object then it waits, in case the player helpfully removes the blocking object."
                                                  (/ (+ (coordinate-y look) (1- +quadrant-size+))
                                                     (1- +quadrant-size+))))
     ;; Check for reasons why no can do
-    (when (or (not (valid-quadrant-p (coordinate-x destination-quadrant) ; negative energy barrier
-                                     (coordinate-y destination-quadrant)))
+    (when (or (not (valid-p destination-quadrant))  ; negative energy barrier
               (quadrant-supernovap (coord-ref *galaxy* destination-quadrant)) ; supernova
               (> (quadrant-klingons (coord-ref *galaxy* destination-quadrant)) ; no space for more klingons
                  +max-klingons-per-quadrant+)
@@ -5097,7 +4863,7 @@ object then it waits, in case the player helpfully removes the blocking object."
         (when (coord-equal *base-under-attack-quadrant* *ship-quadrant*)
           (return-from try-exit nil)))
       ;; Don't leave if over 1000 units of energy
-      (when (> (aref *klingon-energy* enemy-index) 1000.0)
+      (when (> (enemy-energy (aref *quadrant-enemies* enemy-index)) 1000.0)
         (return-from try-exit nil)))
 
     ;; Print escape message and move out of quadrant
@@ -5105,37 +4871,40 @@ object then it waits, in case the player helpfully removes the blocking object."
     (when (or (not (damagedp +short-range-sensors+))
               (not (damagedp +long-range-sensors+))
               *dockedp*)
-      (print-message (format nil "***~A at ~A escapes to ~A (and regains strength).~%"
+      (print-message *message-window* (format nil "***~A at ~A escapes to ~A (and regains strength).~%"
                              (letter-to-name enemy-letter)
-                             (format-sector-coordinates (aref *klingon-sectors* enemy-index))
+                             (format-sector-coordinates
+                              (enemy-sector-coordinates (aref *quadrant-enemies* enemy-index)))
                              (format-quadrant-coordinates destination-quadrant))))
     ;; Handle local matters related to escape
-    (setf (coord-ref *quadrant-contents* (aref *klingon-sectors* enemy-index)) +empty-sector+)
-    (setf (aref *klingon-sectors* enemy-index) (aref *klingon-sectors* (1- *enemies-here*)))
-    (setf (aref *klingon-distance* enemy-index) (aref *klingon-distance* (1- *enemies-here*)))
-    (setf (aref *klingon-average-distance* enemy-index) (aref *klingon-average-distance* (1- *enemies-here*)))
-    (setf (aref *klingon-energy* enemy-index) (aref *klingon-energy* (1- *enemies-here*)))
-    (setf *klingons-here* (1- *klingons-here*))
-    (setf *enemies-here* (1- *enemies-here*))
+    (setf (coord-ref *quadrant*
+                     (enemy-sector-coordinates (aref *quadrant-enemies* enemy-index)))
+          +empty-sector+)
+    ;; TODO - this takes the last enemy in the array and puts it in the index position of the
+    ;;        escaping enemy, in effect removing the escaping enemy. However, if the last enemy
+    ;;        is a Tholian then the special location of the Tholian (last element in the array)
+    ;;        is not preserved. Fix this by shifting all elements, or finding a better way to
+    ;;        handle the Tholian.
+    (setf (aref *quadrant-enemies* enemy-index) (aref *quadrant-enemies* (1- *enemies-here*)))
+    (decf *klingons-here* 1)
+    (decf *enemies-here* 1)
     (update-condition)
     ;; Handle global matters related to escape
-    (setf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))
-          (1- (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))))
-    (setf (quadrant-klingons (coord-ref *galaxy* destination-quadrant))
-          (1+ (quadrant-klingons (coord-ref *galaxy* destination-quadrant))))
+    (decf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 1)
+    (incf (quadrant-klingons (coord-ref *galaxy* destination-quadrant)) 1)
     (if (string= enemy-letter +super-commander+)
         (progn
           (setf *super-commanders-here* 0)
           (setf *super-commander-attack-enterprise-p* nil)
           (setf *attempted-escape-from-super-commander-p* nil)
           (setf *super-commander-attacking-base* 'not-attacking)
-          (schedule-event +move-super-commander+ 0.2777)
-          (unschedule +super-commander-destroys-base+)
+          (schedule-event 'move-super-commander 0.2777)
+          (unschedule-event 'super-commander-destroys-base)
           (setf *super-commander-quadrant* destination-quadrant))
         (progn
           (setf *commander-quadrants* (remove *ship-quadrant* *commander-quadrants* :test #'coord-equal))
           (setf *commander-quadrants* (nconc *commander-quadrants* destination-quadrant))
-          (setf *commanders-here* (1- *commanders-here*)))))
+          (decf *commanders-here* 1))))
   (return-from try-exit t))
 
 (defun move-one-enemy (enemy-sector enemy-index enemy-letter) ; C: void movebaddy(coord com, int loccom, feature ienm)
@@ -5179,15 +4948,15 @@ retreat, especially at high skill levels.
 
 5.  Motion is limited to skill level, except for SC hi-tailing it out."
 
-  (let (enemy-distance ; C: dist1
+  (let (enemy-dist ; C: dist1
         (run-away nil) ; C: irun
         (motion 0) ; C: motion
         next-sector) ; C: next
-    (setf enemy-distance (aref *klingon-distance* enemy-index))
+    (setf enemy-dist (enemy-distance (aref *quadrant-enemies* enemy-index)))
     (let (forces) ; C: forces
       ;; If SC, check with spy to see if should hi-tail it
       (if (and (string= enemy-letter +super-commander+)
-               (or (<= (aref *klingon-energy* enemy-index) 500.0)
+               (or (<= (enemy-energy (aref *quadrant-enemies* enemy-index)) 500.0)
                    (and *dockedp*
                         (not (damagedp +photon-torpedoes+)))))
           (progn
@@ -5204,7 +4973,7 @@ retreat, especially at high skill levels.
                                                          (* *romulans-here* 1.5))
                                                       2.0)))
                   (setf enemy-multiplier (+ *commanders-here* *super-commanders-here*)))
-              (setf forces (+ (aref *klingon-energy* enemy-index)
+              (setf forces (+ (enemy-energy (aref *quadrant-enemies* enemy-index))
                               (* *enemies-here* 100.0)
                               (* (1- enemy-multiplier) 400))))
             (unless *shields-are-up-p*
@@ -5225,7 +4994,7 @@ retreat, especially at high skill levels.
                 (setf motion (- (/ (+ forces (* 200.0 (random 1.0))) 150.0) 5.0))
                 (progn
                   (when (> forces 1000.0) ; Very strong -- move in for kill
-                    (setf motion (+ (* (- 1.0 (expt (random 1.0) 2)) enemy-distance) 1.0)))
+                    (setf motion (+ (* (- 1.0 (expt (random 1.0) 2)) enemy-dist) 1.0)))
                   (when *dockedp* ; Protected by base -- back off!
                     (decf motion (* *skill-level* (- 2.0 (expt (random 1.0) 2)))))))
             ;; Don't move if no motion
@@ -5242,7 +5011,7 @@ retreat, especially at high skill levels.
           delta-x ; C: mx
           delta-y) ; C: my
       (setf number-of-steps (if (< motion 0) (- motion) motion))
-      (setf maximum-distance (truncate (+ enemy-distance 0.5)))
+      (setf maximum-distance (truncate (+ enemy-dist 0.5)))
       (when (and (> motion 0)
                  (> number-of-steps maximum-distance))
         (setf number-of-steps maximum-distance)) ; don't overshoot
@@ -5264,7 +5033,7 @@ retreat, especially at high skill levels.
       (setf next-sector enemy-sector)
       ;; Main move loop
       (do ((loop-counter 0 (1+ loop-counter)) ; C: ll
-           (look (make-coordinate)); C: look
+           (look (make-sector-coordinate)); C: look
            crawl-x crawl-y ; C: krawlx, krawly
            success ; C: success
            (end-move-loop-p nil))
@@ -5306,9 +5075,9 @@ retreat, especially at high skill levels.
                    (setf (coordinate-y look) (+ (coordinate-y next-sector) crawl-y))
                    (setf crawl-y (- crawl-y)))))
 
-            ((string/= (coord-ref *quadrant-contents* look) +empty-sector+)
+            ((string/= (coord-ref *quadrant* look) +empty-sector+)
              ;; See if we should ram ship
-             (when (and (string= (coord-ref *quadrant-contents* look) *ship*)
+             (when (and (string= (coord-ref *quadrant* look) *ship*)
                         (or (string= enemy-letter +commander+)
                             (string= enemy-letter +super-commander+)))
                (ram :rammed-by-p t :enemy enemy-letter :enemy-coordinates enemy-sector)
@@ -5333,55 +5102,58 @@ retreat, especially at high skill levels.
             (setf next-sector look)
             (setf end-move-loop-p t)))) ; Done early
     ;; Put commander in place within same quadrant
-    (setf (coord-ref *quadrant-contents* enemy-sector) +empty-sector+)
-    (setf (coord-ref *quadrant-contents* next-sector) enemy-letter)
+    (setf (coord-ref *quadrant* enemy-sector) +empty-sector+)
+    (setf (coord-ref *quadrant* next-sector) enemy-letter)
     (unless (coord-equal next-sector enemy-sector)
       ;; It moved
-      (setf (aref *klingon-sectors* enemy-index) next-sector)
-      (setf (aref *klingon-distance* enemy-index) (distance *ship-sector* next-sector))
-      (setf (aref *klingon-average-distance* enemy-index) (distance *ship-sector* next-sector))
+      (setf (enemy-sector-coordinates (aref *quadrant-enemies* enemy-index)) next-sector)
+      (setf (enemy-distance (aref *quadrant-enemies* enemy-index))
+            (distance *ship-sector* next-sector))
+      (setf (enemy-average-distance (aref *quadrant-enemies* enemy-index))
+            (distance *ship-sector* next-sector))
       (when (or (not (damagedp +short-range-sensors+))
                 *dockedp*)
-        (print-message (format nil "***~A from ~A ~A to ~A~%"
+        (print-message *message-window* (format nil "***~A from ~A ~A to ~A~%"
                                (letter-to-name enemy-letter)
                                (format-sector-coordinates enemy-sector)
-                               (if (< (aref *klingon-distance* enemy-index) enemy-distance) "advances" "retreats")
+                               (if (< (enemy-distance (aref *quadrant-enemies* enemy-index))
+                                      enemy-dist)
+                                   "advances"
+                                   "retreats")
                                (format-sector-coordinates next-sector)))))))
 
 (defun move-enemies () ; C: void moveklings(void)
   "Klingon and Romulan tactical movement, that is, movement within the current quadrant."
 
-  ;; TODO - could/should these (when) expressions be replaced with a macro?
   ;; Figure out which Klingon is the commander (or Supercommander) and do the move
-  ;; TODO - this loop assumes only one commander per quadrant, is that always true?
   (when (> *commanders-here* 0)
     (do ((i 0 (1+ i))
          enemy-sector)
         ((or (>= i *enemies-here*)
-             (string= (coord-ref *quadrant-contents* enemy-sector) +commander+))
-         (when (string= (coord-ref *quadrant-contents* enemy-sector) +commander+)
+             (string= (coord-ref *quadrant* enemy-sector) +commander+))
+         (when (string= (coord-ref *quadrant* enemy-sector) +commander+)
            (move-one-enemy enemy-sector i +commander+)))
-      (setf enemy-sector (aref *klingon-sectors* i))))
+      (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
   (when (> *super-commanders-here* 0)
     (do ((i 0 (1+ i))
          enemy-sector)
         ((or (>= i *enemies-here*)
-             (string= (coord-ref *quadrant-contents* enemy-sector) +super-commander+))
-         (when (string= (coord-ref *quadrant-contents* enemy-sector) +super-commander+)
+             (string= (coord-ref *quadrant* enemy-sector) +super-commander+))
+         (when (string= (coord-ref *quadrant* enemy-sector) +super-commander+)
            (move-one-enemy enemy-sector i +super-commander+)))
-      (setf enemy-sector (aref *klingon-sectors* i))))
+      (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
   ;; If skill level is high, move other Klingons and Romulans too!
   ;; Move these last so they can base their actions on what the commander(s) do.
   (when (>= *skill-level* +expert+)
     (do ((i 0 (1+ i))
          enemy-sector)
         ((or (>= i *enemies-here*)
-             (or (string= (coord-ref *quadrant-contents* enemy-sector) +klingon+)
-                   (string= (coord-ref *quadrant-contents* enemy-sector) +romulan+)))
-         (when (or (string= (coord-ref *quadrant-contents* enemy-sector) +klingon+)
-                   (string= (coord-ref *quadrant-contents* enemy-sector) +romulan+))
-           (move-one-enemy enemy-sector i (coord-ref *quadrant-contents* enemy-sector))))
-      (setf enemy-sector (aref *klingon-sectors* i))))
+             (or (string= (coord-ref *quadrant* enemy-sector) +klingon+)
+                   (string= (coord-ref *quadrant* enemy-sector) +romulan+)))
+         (when (or (string= (coord-ref *quadrant* enemy-sector) +klingon+)
+                   (string= (coord-ref *quadrant* enemy-sector) +romulan+))
+           (move-one-enemy enemy-sector i (coord-ref *quadrant* enemy-sector))))
+      (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
   (sort-klingons))
 
 (defun attack-player (&key (torpedoes-ok-p nil)) ; C: attack(bool torps_ok)
@@ -5415,7 +5187,7 @@ the player completes their turn."
                       (and (= *enemies-here* 1)
                            (>= *things-here* 1)
                            (not *thing-is-angry-p*)))
-            (skip-line)
+            (skip-line *message-window*)
             (do ((n 0 (1+ n))
                  (weapon 'torpedo) ; C: usephasers
                  (torpedo-probability (random 1.0)) ; C: r
@@ -5434,38 +5206,41 @@ the player completes their turn."
                  (when (<= *ship-energy* 0)
                    (finish 'destroyed-in-battle) ; Returning home upon your shield, not with it...
                    (return-from attack-player nil))
-                 (when (not attack-attempted-p)
-                   (print-message (format nil "***Enemies decide against attacking your ship.~%")))
+                 (unless attack-attempted-p
+                   ;; TODO - don't print this if the only enemy in the quadrant is a Tholian, or
+                   ;;        if there is a space thing that is not angry
+                   (print-message *message-window* (format nil "***Enemies decide against attacking your ship.~%")))
                  (when attack-attempted-p
                    (if damage-taken-p
                        ;; Print message if starship suffered hit(s)
                        (progn
-                         (print-message (format nil "~%Energy left ~D    shields "
+                         (print-message *message-window* (format nil "~%Energy left ~D    shields "
                                                 (truncate *ship-energy*)))
                          (cond
                            (*shields-are-up-p*
-                            (print-message "up "))
+                            (print-message *message-window* "up "))
                            ((not (damagedp +shields+))
-                            (print-message "down "))
+                            (print-message *message-window* "down "))
                            (t
-                            (print-message "damaged, "))))
+                            (print-message *message-window* "damaged, "))))
                        ;; Shields fully protect ship
-                       (print-message "Enemy attack reduces shield strength to "))
-                   (print-message (format nil "~D%,   torpedoes left ~D~%"
-                                      (* 100.0 (/ *shield-energy* *initial-shield-energy*))
-                                      *torpedoes*))
+                       (print-message *message-window* "Enemy attack reduces shield strength to "))
+                   (print-message *message-window* (format nil "~D%,   torpedoes left ~D~%"
+                                          (truncate (* 100 (/ *shield-energy*
+                                                              *initial-shield-energy*)))
+                                          *torpedoes*))
                    ;; Check if anyone was hurt
                    (when (or (>= hit-max 200)
                              (>= hit-total 500))
                      (let ((casualties (truncate(* hit-total (random 1.0) 0.015)))) ; C: icas
                        (when (>= casualties 2)
-                         (print-message (format nil "~%Mc Coy-  \"Sickbay to bridge.  We suffered ~D casualties~%" casualties))
-                         (print-message (format nil "   in that last attack.\"~%"))
+                         (print-message *message-window* (format nil "~%Mc Coy-  \"Sickbay to bridge.  We suffered ~D casualties~%" casualties))
+                         (print-message *message-window* (format nil "   in that last attack.\"~%"))
                          (incf *casualties* casualties)
                          (decf *crew* casualties))))))
-              (setf enemy-sector (aref *klingon-sectors* n))
-              (setf enemy (coord-ref *quadrant-contents* enemy-sector))
-              (unless (or (< (aref *klingon-energy* n) 0) ; too weak to attack -- TODO should be <= ?
+              (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* n)))
+              (setf enemy (coord-ref *quadrant* enemy-sector))
+              (unless (or (<= (enemy-energy (aref *quadrant-enemies* n)) 0) ; too weak to attack
                           (string= enemy +tholian+)
                           (and (string= enemy +thing+)
                                (not *thing-is-angry-p*)))
@@ -5473,7 +5248,7 @@ the player completes their turn."
                 ;; Increase chance of photon torpedos if docked or enemy energy low
                 (when *dockedp*
                   (setf torpedo-probability (* torpedo-probability 0.25)))
-                (when (< (aref *klingon-energy* n) 500)
+                (when (< (enemy-energy (aref *quadrant-enemies* n)) 500)
                   (setf torpedo-probability (* torpedo-probability 0.25)))
                 ;; Different enemies have different probabilities of throwing a torp
                 (when (or (not torpedoes-ok-p)
@@ -5492,23 +5267,28 @@ the player completes their turn."
                     (progn  ; Enemy uses phasers
                       (unless *dockedp* ; Don't waste the effort!
                         (setf attack-attempted-p t)
-                        (setf hit (* (aref *klingon-energy* n) (expt dust-factor (aref *klingon-average-distance* n))))
-                        (setf (aref *klingon-energy* n) (* (aref *klingon-energy* n) 0.75))))
+                        (setf hit (* (enemy-energy (aref *quadrant-enemies* n))
+                                     (expt dust-factor
+                                           (enemy-average-distance (aref *quadrant-enemies* n)))))
+                        (setf (enemy-energy (aref *quadrant-enemies* n))
+                              (* (enemy-energy (aref *quadrant-enemies* n)) 0.75))))
                     (progn ; Enemy uses photon torpedo
                       (setf attack-attempted-p t)
                       (setf course (* 1.90985 (atan (- (coordinate-y *ship-sector*) (coordinate-y enemy-sector))
                                                     (- (coordinate-x enemy-sector) (coordinate-x *ship-sector*)))))
-                      (print-message "***TORPEDO INCOMING")
+                      (print-message *message-window* "***TORPEDO INCOMING")
                       (unless (damagedp +short-range-sensors+)
                         (if (<= *skill-level* +fair+)
-                            (print-message (format nil " From ~A at ~A  ~%"
+                            (print-message *message-window* (format nil " From ~A at ~A  ~%"
                                                    (letter-to-name enemy)
                                                    (format-sector-coordinates enemy-sector)))
-                            (print-message (format nil " From ~A at ~A  ~%"
+                            (print-message *message-window* (format nil " From ~A at ~A  ~%"
                                                    (letter-to-name enemy)
                                                    (format-coordinates enemy-sector)))))
                       (setf random-variation (- (* (+ (random 1.0) (random 1.0)) 0.5) 0.5))
-                      (incf random-variation (* 0.002 (aref *klingon-energy* n) random-variation))
+                      (incf random-variation (* 0.002
+                                                (enemy-energy (aref *quadrant-enemies* n))
+                                                random-variation))
                       (setf hit (move-torpedo-within-quadrant course random-variation enemy-sector 1 1))
                       (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
                         (finish 'won)) ; Klingons did themselves in!
@@ -5545,42 +5325,47 @@ the player completes their turn."
                   ;; Hit from this opponent got through shields, so take damage
                   (when (> hit 0)
                     (setf damage-taken-p t)
-                    (print-message (format nil "~D unit hit" (truncate hit)))
+                    (print-message *message-window* (format nil "~D unit hit" (truncate hit)))
                     (when (or (and (damagedp +short-range-sensors+)
                                    (eql weapon 'phasers))
                               (<= *skill-level* +fair+))
-                      (print-message (format nil " on the ~A" (format-ship-name))))
+                      (print-message *message-window* (format nil " on the ~A" (format-ship-name))))
                     (when (and (not (damagedp +short-range-sensors+))
                                (eql weapon 'phasers))
                       (if (<= *skill-level* +fair+)
-                          (print-message (format nil " from ~A at ~A" (letter-to-name enemy)
+                          (print-message *message-window*
+                                         (format nil " from ~A at ~A~%" (letter-to-name enemy)
                                                  (format-sector-coordinates enemy-sector)))
-                          (print-message (format nil " from ~A at ~A~%" (letter-to-name enemy)
+                          (print-message *message-window*
+                                         (format nil " from ~A at ~A~%" (letter-to-name enemy)
                                                  (format-coordinates enemy-sector)))))
                     ;; Decide if hit is critical
                     (when (> hit hit-max)
                       (setf hit-max hit))
                     (incf hit-total hit)
                     (apply-critical-hit hit)
-                    (decf *ship-energy* hit)))))
-            ;; After attack, reset average distance to enemies
+                    (decf *ship-energy* hit))))
+            ;; Reset distances to the ship. Enemy attacks could have moved either the player or
+            ;; an enemy, for example if a star nova'd by an enemy buffets another enemy.
             (do ((n 0 (1+ n)))
-                ((>= n *enemies-here*))
-              (setf (aref *klingon-average-distance* n) (aref *klingon-distance* n)))
-            (sort-klingons))))))
+                ((>= n *enemies-here*)
+                 (sort-klingons))
+              (setf (enemy-distance (aref *quadrant-enemies* n))
+                    (distance (enemy-sector-coordinates (aref *quadrant-enemies* n)) *ship-sector*))
+              (setf (enemy-average-distance (aref *quadrant-enemies* n))
+                    (distance (enemy-sector-coordinates (aref *quadrant-enemies* n)) *ship-sector*)))))))))
 
 ;; TODO - Error: the ship doesn't always leave the quadrant, and no E appears in the short range scan
 ;; seems to occur when moving at warp 10 over a distance of 3 or so quadrants. The error was seen when
 ;; testing the time-warp code, by moving a few quadrants at warp 10.
+;; TODO - when using curses, show the ship moving within the the current quadrant and withing the
+;;        destination quadrant, and on the star chart when moving "over" quadrants.
 (defun move-ship-within-quadrant (&key course distance (nova-push-p nil)) ; C: imove(bool novapush)
   "In-sector movement actions for warp and impulse drives. Supernova and tractor beam events
 can occur."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   (when *in-orbit-p*
-    (print-message (format nil "Helmsman Sulu- \"Leaving standard orbit.\"~%"))
+    (print-message *message-window* (format nil "Helmsman Sulu- \"Leaving standard orbit.\"~%"))
     (setf *in-orbit-p* nil))
 
   (setf *dockedp* nil)
@@ -5588,25 +5373,25 @@ can occur."
   ;; TODO - n probably isn't needed: stop movement when full movement distance has been covered
   (let ((tractor-beam-scheduled-p nil)
         angle delta-x delta-y bigger
-        n
-        (s-coord (make-coordinate :x 0 :y 0))) ; C: w
+        number-of-moves
+        (s-coord (make-sector-coordinate :x 0 :y 0))) ; C: w
 
     (when (and *cloakedp*
-               (is-scheduled-p +tractor-beam+)
-               (>= (+ *stardate* *time-taken-by-current-operation*) (scheduled-for +tractor-beam+)))
+               (is-scheduled-p 'tractor-beam)
+               (>= (+ *stardate* *time-taken-by-current-operation*) (scheduled-for 'tractor-beam)))
       ;; We can't be tractor beamed if cloaked, so move the event into the future
-      (schedule-event +tractor-beam+ (+ *time-taken-by-current-operation*
+      (schedule-event 'tractor-beam (+ *time-taken-by-current-operation*
                                         (expran (* 1.5 (/ *initial-stardate* (length *commander-quadrants*)))))))
 
     ;; If tractor beam is to occur, don't move full distance
-    (when (and (is-scheduled-p +tractor-beam+)
-               (>= (+ *stardate* *time-taken-by-current-operation*) (scheduled-for +tractor-beam+)))
+    (when (and (is-scheduled-p 'tractor-beam)
+               (>= (+ *stardate* *time-taken-by-current-operation*) (scheduled-for 'tractor-beam)))
       (setf tractor-beam-scheduled-p t)
       (setf *condition* +red-status+)
-      (setf distance (+ (/ (* distance (- (scheduled-for +tractor-beam+) *stardate*))
+      (setf distance (+ (/ (* distance (- (scheduled-for 'tractor-beam) *stardate*))
                            *time-taken-by-current-operation*)
                         0.1))
-      (setf *time-taken-by-current-operation* (+ (- (scheduled-for +tractor-beam+) *stardate*) (expt 1 -5))))
+      (setf *time-taken-by-current-operation* (+ (- (scheduled-for 'tractor-beam) *stardate*) (expt 1 -5))))
 
     ;; 30 degrees is 0.5235988 radians, 1/12 of a circle
     ;; Convert the clock direction to radians.
@@ -5621,40 +5406,40 @@ can occur."
         (setf bigger (abs delta-y)))
     (setf delta-x (/ delta-x bigger))
     (setf delta-y (/ delta-y bigger))
-    (setf n (truncate (+ (* 10.0 distance bigger) 0.5))) ; Simulate C assignment to int
+    (setf number-of-moves (truncate (+ (* 10.0 distance bigger) 0.5))) ; Simulate C assignment to int
     ;; Move within the quadrant
-    (setf (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+)
+    (setf (coord-ref *quadrant* *ship-sector*) +empty-sector+)
     (do ((m 0 (1+ m))
          (movement-stopped-p nil)
          (prev-x (coordinate-x *ship-sector*))
          (prev-y (coordinate-y *ship-sector*)))
         ((or movement-stopped-p
-             (>= m n)))
+             (>= m number-of-moves)))
       (setf prev-x (+ prev-x delta-x))
       (setf prev-y (+ prev-y delta-y))
       (setf (coordinate-x s-coord) (round prev-x))
       (setf (coordinate-y s-coord) (round prev-y))
       ;; Leaving the quadrant (and this function)
-      (when (not (valid-sector-p (coordinate-x s-coord) (coordinate-y s-coord)))
+      (unless (valid-p s-coord)
         ;; Allow a final enemy attack unless being pushed by a nova.
+        ;; Stas Sergeev added the condition that attacks only happen
+        ;; if Klingons are present and your skill is good.
         (when (and (not nova-push-p)
-                   (/= *enemies-here* 0)
+                   (not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*)))
+                   (> *enemies-here* 0)
+                   (> *klingons-here* 0) ; Romulans don't get another attack
+                   (> *skill-level* +good+)
                    (not *cloakedp*))
-          (update-condition)
-          ;; *enemies-here* is a count, start at zero to use as an array reference
-          (do ((m 0 (1+ m))) ; TODO - can compute average distance be a function? Needs a sector coord input
-              ((>= m *enemies-here*))
-            (setf (aref *klingon-average-distance* m) (/ (+ (distance s-coord (aref *klingon-sectors* m))
-                                                            (aref *klingon-distance* m))
-                                                         2.0)))
-          ;; Stas Sergeev added the condition that attacks only happen
-          ;; if Klingons are present and your skill is good.
-          (when (and (> *skill-level* +good+)
-                     (> *klingons-here* 0) ; Romulans don't get another attack
-                     (not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))))
-            (attack-player))
-          (when *all-done-p*
-            (return-from move-ship-within-quadrant t)))
+            ;; The ship has moved during this turn so update average distance before attacking
+            (do ((m 0 (1+ m)))
+                ((>= m *enemies-here*))
+              (setf (enemy-average-distance (aref *quadrant-enemies* m))
+                    (/ (+ (distance s-coord (enemy-sector-coordinates (aref *quadrant-enemies* m)))
+                          (enemy-distance (aref *quadrant-enemies* m)))
+                       2.0)))
+            (attack-player)
+            (when *all-done-p*
+              (return-from move-ship-within-quadrant t)))
         ;; Compute final position -- new quadrant and sector
         (setf prev-x (+ (* +quadrant-size+ (coordinate-x *ship-quadrant*)) (coordinate-x *ship-sector*)))
         (setf prev-y (+ (* +quadrant-size+ (coordinate-y *ship-quadrant*)) (coordinate-y *ship-sector*)))
@@ -5666,15 +5451,15 @@ can occur."
              (coordinate-adjusted-p t))
             ((not coordinate-adjusted-p)
              (when energy-barrier-crossed-p
-               (1+ *energy-barrier-crossings*)
+               (incf *energy-barrier-crossings* 1)
                (when (>= *energy-barrier-crossings* 3) ; Three strikes -- you're out!
                  (finish '3-negative-energy-barrier-crossings)
                  (return-from move-ship-within-quadrant t))
-               (print-message
+               (print-message *message-window*
                 (format nil "~%YOU HAVE ATTEMPTED TO CROSS THE NEGATIVE ENERGY BARRIER~%"))
-               (print-message
+               (print-message *message-window*
                 (format nil "AT THE EDGE OF THE GALAXY.  THE THIRD TIME YOU TRY THIS,~%"))
-               (print-message (format nil "YOU WILL BE DESTROYED.~%"))))
+               (print-message *message-window* (format nil "YOU WILL BE DESTROYED.~%"))))
           (setf coordinate-adjusted-p nil)
           (when (< (coordinate-x s-coord) 0)
             (setf (coordinate-x s-coord) (1+ (- (coordinate-x s-coord))))
@@ -5691,37 +5476,37 @@ can occur."
           (when coordinate-adjusted-p
             (setf energy-barrier-crossed-p t)))
         ;; Compute final position in new quadrant
-        (when (not tractor-beam-scheduled-p) ; Tractor beam will change the quadrant
+        (unless tractor-beam-scheduled-p ; Tractor beam will change the quadrant
           (setf (coordinate-x *ship-quadrant*)
                 (truncate (1- (/ (+ (coordinate-x s-coord) +quadrant-size+) +quadrant-size+))))
           (setf (coordinate-y *ship-quadrant*)
                 (truncate (1- (/ (+ (coordinate-y s-coord) +quadrant-size+) +quadrant-size+))))
           (setf (coordinate-x *ship-sector*) (- (coordinate-x s-coord) (* +quadrant-size+ (coordinate-x *ship-quadrant*))))
           (setf (coordinate-y *ship-sector*) (- (coordinate-y s-coord) (* +quadrant-size+ (coordinate-y *ship-quadrant*))))
-          (print-message
+          (print-message *message-window*
            (format nil "~%Entering ~A.~%" (format-quadrant-coordinates *ship-quadrant*)))
           (new-quadrant :show-thing nil)
           (when (> *skill-level* +novice+)
             (attack-player)))
         (return-from move-ship-within-quadrant t))
       ;; Object encountered in flight path
-      (when (string/= (coord-ref *quadrant-contents* s-coord) +empty-sector+)
+      (when (string/= (coord-ref *quadrant* s-coord) +empty-sector+)
         (setf distance (/ (distance *ship-sector* s-coord) (* +quadrant-size+ 1.0)))
         (cond
-          ((or (string= (coord-ref *quadrant-contents* s-coord) +tholian+) ; Ram a Tholian
-               ;; Ram enemy ship
-               (string= (coord-ref *quadrant-contents* s-coord) +klingon+)
-               (string= (coord-ref *quadrant-contents* s-coord) +commander+)
-               (string= (coord-ref *quadrant-contents* s-coord) +super-commander+)
-               (string= (coord-ref *quadrant-contents* s-coord) +romulan+)
-               (string= (coord-ref *quadrant-contents* s-coord) +thing+))
+          ;; Ram enemy ship
+          ((or (string= (coord-ref *quadrant* s-coord) +tholian+) ; Ram a Tholian
+               (string= (coord-ref *quadrant* s-coord) +klingon+)
+               (string= (coord-ref *quadrant* s-coord) +commander+)
+               (string= (coord-ref *quadrant* s-coord) +super-commander+)
+               (string= (coord-ref *quadrant* s-coord) +romulan+)
+               (string= (coord-ref *quadrant* s-coord) +thing+))
            (setf (coordinate-x *ship-sector*) (coordinate-x s-coord))
            (setf (coordinate-y *ship-sector*) (coordinate-y s-coord))
-           (ram :rammed-by-p nil :enemy (coord-ref *quadrant-contents* s-coord)
+           (ram :rammed-by-p nil :enemy (coord-ref *quadrant* s-coord)
                 :enemy-coordinates *ship-sector*))
-          ((string= (coord-ref *quadrant-contents* s-coord) +black-hole+)
-           (print-message (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
-           (print-message (format nil "~%*** ~A pulled into black hole at ~A~%"
+          ((string= (coord-ref *quadrant* s-coord) +black-hole+)
+           (print-message *message-window* (format nil "~%***RED ALERT!  RED ALERT!~%") :print-slowly t)
+           (print-message *message-window* (format nil "~%*** ~A pulled into black hole at ~A~%"
                                   (format-ship-name) (format-sector-coordinates s-coord)))
            ;; Getting pulled into a black hole was certain death in Almy's original.
            ;; Stas Sergeev added a possibility that you'll get timewarped instead.
@@ -5736,16 +5521,16 @@ can occur."
                     (finish 'destroyed-by-black-hole))
                 (return-from move-ship-within-quadrant t))
              (when (> (aref *device-damage* index) 0) ; TODO - define a "count damaged devices" function?
-               (1+ damaged-devices))))
+               (incf damaged-devices 1))))
           ;; Something else
           (t
            (let ((stop-energy (/ (* 50.0 distance) *time-taken-by-current-operation*)))
-             (if (string= (coord-ref *quadrant-contents* s-coord) +tholian-web+)
-                 (print-message (format nil "~%~A encounters Tholian web at ~A;~%"
+             (if (string= (coord-ref *quadrant* s-coord) +tholian-web+)
+                 (print-message *message-window* (format nil "~%~A encounters Tholian web at ~A;~%"
                                         (format-ship-name) (format-sector-coordinates s-coord)))
-                 (print-message (format nil "~%~A blocked by object at ~A;~%"
+                 (print-message *message-window* (format nil "~%~A blocked by object at ~A;~%"
                                         (format-ship-name) (format-sector-coordinates s-coord))))
-             (print-message (format nil "Emergency stop required ~,2F units of energy.~%" stop-energy))
+             (print-message *message-window* (format nil "Emergency stop required ~,2F units of energy.~%" stop-energy))
              (setf (coordinate-x s-coord) (truncate (- prev-x delta-x))) ; simulate C float to int assignment
              (setf (coordinate-y s-coord) (truncate (- prev-y delta-y)))
              (decf *ship-energy* stop-energy)
@@ -5756,24 +5541,23 @@ can occur."
     (setf (coordinate-x *ship-sector*) (coordinate-x s-coord))
     (setf (coordinate-y *ship-sector*) (coordinate-y s-coord))
     ;; Movement completed and no quadrant change -- compute new average enemy distances
-    (setf (coord-ref *quadrant-contents* *ship-sector*) *ship*)
+    (setf (coord-ref *quadrant* *ship-sector*) *ship*)
     (when (> *enemies-here* 0)
       (do ((m 0 (1+ m))
            (final-distance 0))
           ((>= m *enemies-here*))
-        (setf final-distance (distance *ship-sector* (aref *klingon-sectors* m)))
-        (setf (aref *klingon-average-distance* m) (/ (+ final-distance (aref *klingon-distance* m)) 2.0))
-        (setf (aref *klingon-distance* m) final-distance))
+        (setf final-distance (distance *ship-sector*
+                                       (enemy-sector-coordinates (aref *quadrant-enemies* m))))
+        (setf (enemy-average-distance (aref *quadrant-enemies* m))
+              (/ (+ final-distance (enemy-distance (aref *quadrant-enemies* m))) 2.0))
+        (setf (enemy-distance (aref *quadrant-enemies* m)) final-distance))
       (sort-klingons)
-      (when (not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*)))
-        (attack-player))
-      (do ((m 0 (1+ m)))
-          ((>= m *enemies-here*))
-        (setf (aref *klingon-average-distance* m) (aref *klingon-distance* m))))
+      (unless (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
+        (attack-player)))
     (update-condition)
-    (draw-windows)))
+    (update-windows)))
 
-(defun get-probe-course-and-distance () ; C: oid getcd(bool isprobe, int akey), for the probe
+(defun get-probe-course-and-distance () ; C: void getcd(bool isprobe, int akey), for the probe
   "Get course direction and distance for moving the probe.
 
 This program originally required input in terms of a (clock) direction and distance. Somewhere in
@@ -5782,64 +5566,50 @@ input should still be done this way -- it's a real pain if the computer isn't wo
 is still confusing because it involves giving x and y motions, yet the coordinates are always
 displayed y - x, where +y is downward!"
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   (let ((navigation-mode nil)
         delta-y delta-x
         direction
         distance)
 
     (when (damagedp +navigation-system+)
-      (print-message (format nil "Computer damaged; manual navigation only~%"))
+      (print-message *message-window* (format nil "Computer damaged; manual navigation only~%"))
       (setf navigation-mode 'manual)
       (clear-type-ahead-buffer))
 
-    (do (token)
+    (do (token
+         input-item)
         (navigation-mode)
-      (when (not *line-tokens*) ; *input-item* is "move" on first loop, empty thereafter
+      (unless (input-available-p) ; input is "move" on first loop, nil thereafter
         (print-prompt "Manual or automatic: "))
-      (scan-input)
-      (if (numberp *input-item*) ; No input (<enter> key only) will loop
+      (setf input-item (scan-input))
+      (if (numberp input-item) ; No input (<enter> key only) will loop
           (progn
-            ;; TODO - short form of the command doesn't assume quadrant destination
-            (print-message (format nil "Manual navigation assumed.~%")) ; Per the original docs
+            (unscan-input input-item) ; put it back so a coordinate pair can be read below
+            (print-message *message-window* (format nil "Manual navigation assumed.~%")) ; Per the original docs
             (setf navigation-mode 'manual))
-          (when *input-item*
-            (setf token (match-token *input-item* (list "manual" "automatic")))
+          (when input-item
+            (setf token (match-token input-item (list "manual" "automatic")))
             (if token
-                (progn
-                  (if (string= token "manual")
-                      (setf navigation-mode 'manual)
-                      (setf navigation-mode 'automatic))
-                  (if *line-tokens*
-                      (scan-input)
-                      (setf *input-item* nil)))
+                (if (string= token "manual")
+                    (setf navigation-mode 'manual)
+                    (setf navigation-mode 'automatic))
                 (progn
                   (huh)
                   (clear-type-ahead-buffer)
                   (return-from get-probe-course-and-distance (values nil nil)))))))
 
     (if (eql navigation-mode 'automatic)
-        (do (sx sy qx qy)
-            (*input-item*
-             (setf qx (read-coordinate-number))
-             (setf *input-item* nil)
-             (when *line-tokens*
-               (scan-input)
-               (setf qy (read-coordinate-number)))
-             (when (>= (length *line-tokens*) 2) ; both quadrant and sector specified
-               (scan-input)
-               (setf sx (read-coordinate-number))
-               (scan-input)
-               (setf sy (read-coordinate-number)))
-             (when (and (not sx) (not sy))
+        (do (qx qy sx sy)
+            (qx
+             (when (and (not sx)
+                        (not sy))
                ;; Only quadrant specified -- go to center of destination quadrant
-               (setf sx (+ qx 0.5))
-               (setf sy (+ qy 0.5)))
-             (if (and (valid-quadrant-p qx qy) (valid-sector-p sx sy))
+               (setf sx 5)
+               (setf sy 5))
+             (if (and (valid-quadrant-p qx qy)
+                      (valid-sector-p sx sy))
                  (progn
-                   (skip-line)
+                   (skip-line *message-window*)
                    ;; Multiply sectors by 0.1 to scale them to the size of a quadrant
                    (setf delta-x (+ (- qy (coordinate-y *ship-quadrant*))
                                     (* 0.1 (- sy (coordinate-y *ship-sector*)))))
@@ -5848,25 +5618,28 @@ displayed y - x, where +y is downward!"
                  (progn
                    (huh)
                    (return-from get-probe-course-and-distance (values nil nil)))))
-          (print-prompt "Target quadrant or quadrant&sector: ")
-          (clear-type-ahead-buffer)
-          (scan-input))
+          (unless (input-available-p)
+            (print-prompt "Target quadrant or quadrant&sector: ")
+            (clear-type-ahead-buffer))
+          (multiple-value-setq (qx qy) (scan-coordinate-pair))
+          (when (two-input-items-available) ; both quadrant and sector specified
+            (multiple-value-setq (sx sy) (scan-coordinate-pair))))
         (progn ; manual
-          (do (nothing)
-              (*input-item*
-               (when (numberp *input-item*)
-                 (setf delta-x *input-item*))
-               (when *line-tokens*
-                 (scan-input)
-                 (when (numberp *input-item*)
-                   (setf delta-y *input-item*)))
+          (do (input-item)
+              (input-item
+               (when (numberp input-item)
+                 (setf delta-x input-item))
+               (when (input-available-p)
+                 (setf input-item (scan-input))
+                 (when (numberp input-item)
+                   (setf delta-y input-item)))
                (when (or (not delta-x) (not delta-y))
                  (huh)
                  (return-from get-probe-course-and-distance (values nil nil))))
-            (setf nothing nothing)
-            (print-prompt "X and Y displacements: ")
-            (clear-type-ahead-buffer)
-            (scan-input))))
+            (unless (input-available-p)
+              (print-prompt "X and Y displacements: ")
+              (clear-type-ahead-buffer))
+            (setf input-item (scan-input)))))
     ;; Check for zero movement
     (when (and (= delta-x 0) (= delta-y 0))
       (clear-type-ahead-buffer)
@@ -5891,12 +5664,11 @@ is still confusing because it involves giving x and y motions, yet the coordinat
 displayed y - x, where +y is downward!"
 
   ;; If user types bad values, return with course = -1.0.
-  (when *window-interface-p*
-    (select-window *message-window*))
+  (skip-line *message-window*)
 
   (when *landedp*
-    (print-message (format nil "Captain! You can't leave standard orbit until you~%"))
-    (print-message (format nil "are back aboard the ship.~%"))
+    (print-message *message-window* (format nil "Captain! You can't leave standard orbit until you~%"))
+    (print-message *message-window* (format nil "are back aboard the ship.~%"))
     (return-from get-ship-course-and-distance (values -1.0 0)))
 
   (let ((navigation-mode nil)
@@ -5905,62 +5677,47 @@ displayed y - x, where +y is downward!"
         delta-y delta-x)
 
     (when (damagedp +navigation-system+)
-      (print-message (format nil "Computer damaged; manual movement only~%"))
+      (print-message *message-window* (format nil "Computer damaged; manual movement only~%"))
       (setf navigation-mode 'manual)
       (clear-type-ahead-buffer))
 
-    (do (token)
+    (do (token
+         input-item)
         (navigation-mode)
-      (when (not *line-tokens*) ; *input-item* is "move" on first loop, empty thereafter
+      (unless (input-available-p) ; input is "move" on first loop, empty thereafter
         (print-prompt "Manual or automatic: ")
         (setf need-prompt-p t))
-      (scan-input)
-      (if (numberp *input-item*) ; No input (<enter> key only) will loop
+      (setf input-item (scan-input))
+      (if (numberp input-item) ; No input (<enter> key only) will loop
           (progn
-            (print-message (format nil "Manual movement assumed.~%")) ; Per the original docs
+            (unscan-input input-item) ; put it back so a coordinate pair can be read below
+            (print-message *message-window* (format nil "Manual movement assumed.~%")) ; Per the original docs
             (setf navigation-mode 'manual))
-          (when *input-item*
-            (setf token (match-token *input-item* (list "manual" "automatic")))
+          (when input-item
+            (setf token (match-token input-item (list "manual" "automatic")))
             (if token
                 (progn
                   (if (string= token "manual")
                       (setf navigation-mode 'manual)
-                      (setf navigation-mode 'automatic))
-                  (if *line-tokens*
-                      (scan-input)
-                      (setf *input-item* nil)))
+                      (setf navigation-mode 'automatic)))
                 (progn
                   (huh)
                   (return-from get-ship-course-and-distance (values -1.0 0)))))))
 
     (if (eql navigation-mode 'automatic)
         (do (sx sy qx qy)
-            (*input-item*
-             (setf sx (read-coordinate-number))
-             (setf *input-item* nil)
-             (when *line-tokens*
-               (scan-input)
-               (setf sy (read-coordinate-number)))
-             (when (>= (length *line-tokens*) 2) ; both quadrant and sector specified
-               (setf qx sx)
-               (setf qy sy)
-               (scan-input)
-               (setf sx (read-coordinate-number))
-               (scan-input)
-               (setf sy (read-coordinate-number)))
-             (when (and (not qy) (not qx))
-               (setf qx (coordinate-x *ship-quadrant*))
-               (setf qy (coordinate-y *ship-quadrant*))
-               (setf feedback-from 'sulu))
-             (if (and (valid-quadrant-p qx qy) (valid-sector-p sx sy))
+            (sx
+             (if (and (valid-quadrant-p qx qy)
+                      (valid-sector-p sx sy))
                  (progn
                    (if (eql feedback-from 'chekov)
-                       (print-message (format nil "Ensign Chekov- \"Course laid in, Captain.\"~%"))
+                       (print-message *message-window* (format nil "Ensign Chekov- \"Course laid in, Captain.\"~%"))
                        (when need-prompt-p
                          ;; Displayed coordinates are integers, use truncate
-                         (print-message (format nil "Helmsman Sulu- \"Course locked in for ~A.\"~%"
-                                                (format-sector-coordinates (make-coordinate :y (truncate sx)
-                                                                                            :x (truncate sy)))))
+                         (print-message *message-window* (format nil "Helmsman Sulu- \"Course locked in for ~A.\"~%"
+                                                (format-sector-coordinates
+                                                 (make-sector-coordinate :y (truncate sx)
+                                                                         :x (truncate sy)))))
                          (setf feedback-from 'nobody)))
                    ;; Multiply sectors by 0.1 to scale them to the size of a quadrant
                    (setf delta-x (+ (- qy (coordinate-y *ship-quadrant*))
@@ -5970,31 +5727,42 @@ displayed y - x, where +y is downward!"
                  (progn
                    (huh)
                    (return-from get-ship-course-and-distance (values -1.0 0)))))
-          (print-prompt "Destination sector or quadrant&sector: ")
-          (clear-type-ahead-buffer)
-          (setf need-prompt-p t)
-          (scan-input))
+          (unless (input-available-p)
+            (print-prompt "Destination sector or quadrant&sector: ")
+            (clear-type-ahead-buffer)
+            (setf need-prompt-p t))
+          (multiple-value-setq (sx sy) (scan-coordinate-pair))
+          (when (two-input-items-available) ; both quadrant and sector specified
+            (setf qx sx)
+            (setf qy sy)
+            (multiple-value-setq (sx sy) (scan-coordinate-pair)))
+          (when (and (not qy)
+                     (not qx))
+            (setf qx (coordinate-x *ship-quadrant*))
+            (setf qy (coordinate-y *ship-quadrant*))
+            (setf feedback-from 'sulu)))
         (progn ; manual
-          (do ()
-              (*input-item*
-               (when (numberp *input-item*)
-                 (setf delta-x *input-item*))
-               (when *line-tokens*
-                 (scan-input)
-                 (when (numberp *input-item*)
-                   (setf delta-y *input-item*)))
-               (when (or (not delta-x) (not delta-y))
+          (do (input-item)
+              (input-item
+               (when (numberp input-item)
+                 (setf delta-x input-item))
+               (when (input-available-p)
+                 (setf input-item (scan-input))
+                 (when (numberp input-item)
+                   (setf delta-y input-item)))
+               (when (or (not delta-x)
+                         (not delta-y))
                  (huh)
                  (return-from get-ship-course-and-distance (values -1.0 0)))
                (setf feedback-from 'sulu))
             (print-prompt "X and Y displacements: ")
             (clear-type-ahead-buffer)
-            (scan-input))))
+            (setf input-item (scan-input)))))
     ;; Check for zero movement
     (when (and (= delta-x 0) (= delta-y 0))
       (return-from get-ship-course-and-distance (values -1.0 0)))
     (when (eql feedback-from 'sulu)
-      (print-message (format nil "Helmsman Sulu- \"Aye, Sir.\"~%")))
+      (print-message *message-window* (format nil "Helmsman Sulu- \"Aye, Sir.\"~%")))
     (let ((course (* (atan delta-x delta-y) 1.90985932))
           (distance (sqrt (+ (expt delta-x 2) (expt delta-y 2)))))
       (when (< course 0.0)
@@ -6005,7 +5773,8 @@ displayed y - x, where +y is downward!"
 
   (when (damagedp +impluse-engines+)
     (clear-type-ahead-buffer)
-    (print-message (format nil "~%Engineer Scott- \"The impulse engines are damaged, Sir.\"~%"))
+    (print-message *message-window*
+                   (format nil "~%Engineer Scott- \"The impulse engines are damaged, Sir.\"~%"))
     (return-from move-under-impulse-power nil))
 
   (multiple-value-bind (course distance) (get-ship-course-and-distance)
@@ -6015,19 +5784,24 @@ displayed y - x, where +y is downward!"
     (when (or (>= (+ 20.0 (* 100.0 distance)) *ship-energy*)
               (<= *ship-energy* 30.0))
       ;; Insufficient power for trip
-      (print-message (format nil "~%First Officer Spock- \"Captain, the impulse engines~%"))
-      (print-message (format nil "require 20.0 units to engage, plus 100.0 units per~%"))
+      (print-message *message-window*
+                     (format nil "~%First Officer Spock- \"Captain, the impulse engines~%"))
+      (print-message *message-window*
+                     (format nil "require 20.0 units to engage, plus 100.0 units per~%"))
       (if (> *ship-energy* 30.0)
-          (print-message (format nil "quadrant.  We can go, therefore, a maximum of ~A quadrants.\"~%"
+          (print-message *message-window*
+                         (format nil "quadrant.  We can go, therefore, a maximum of ~A quadrants.\"~%"
                                  (truncate (- (* 0.01 (- *ship-energy* 20.0)) 0.05))))
-            (print-message (format nil "quadrant.  They are, therefore, useless.\"~%")))
+          (print-message *message-window*
+                         (format nil "quadrant.  They are, therefore, useless.\"~%")))
       (clear-type-ahead-buffer)
       (return-from move-under-impulse-power nil))
 
     ;; Make sure enough time is left for the trip
     (when (>= (/ distance 0.095) *remaining-time*)
-      (print-message (format nil "First Officer Spock- \"Captain, our speed under impulse~%"))
-      (print-message (format nil "power is only 0.95 sectors per stardate.~%"))
+      (print-message *message-window*
+                     (format nil "First Officer Spock- \"Captain, our speed under impulse~%"))
+      (print-message *message-window* (format nil "power is only 0.95 sectors per stardate.~%"))
       (print-prompt "Are you sure we dare spend the time?\" ")
       (unless (get-y-or-n-p)
         (return-from move-under-impulse-power nil)))
@@ -6081,7 +5855,7 @@ quadrant experiencing a supernova)."
             (setf curr-x (round prev-x))
             (setf curr-y (round prev-y))
             (when (and (valid-sector-p curr-x curr-y)
-                       (string/= (aref *quadrant-contents* curr-x curr-y) +empty-sector+))
+                       (string/= (aref *quadrant* curr-x curr-y) +empty-sector+))
               (setf engine-damage-p nil)
               (setf time-warp-p nil)
               (setf move-again-p nil))
@@ -6103,30 +5877,30 @@ quadrant experiencing a supernova)."
       (time-warp))
     (when engine-damage-p
       (setf (aref *device-damage* +warp-engines+) (* *damage-factor* (+ (* 3.0 (random 1.0)) 1.0)))
-      (print-message (format nil "%Engineering to bridge--~%"))
-      (print-message (format nil "  Scott here.  The warp engines are damaged.~%"))
-      (print-message (format nil "  We'll have to reduce speed to warp 4.~%")))
+      (print-message *message-window* (format nil "%Engineering to bridge--~%"))
+      (print-message *message-window* (format nil "  Scott here.  The warp engines are damaged.~%"))
+      (print-message *message-window* (format nil "  We'll have to reduce speed to warp 4.~%")))
     (setf *action-taken-p* t)))
 
 (defun move-under-warp-drive () ;  C: warp(bool timewarp)
 
   (when *cloakedp*
     (clear-type-ahead-buffer)
-    (print-message
+    (print-message *message-window*
      (format nil "~%Engineer Scott- \"The warp engines cannot be used while cloaked, Sir.\"~%"))
     (return-from move-under-warp-drive nil))
 
   (when (> (aref *device-damage* +warp-engines+) 10.0)
     (clear-type-ahead-buffer)
-    (print-message (format nil "~%Engineer Scott- \"The warp engines are damaged, Sir.\"~%"))
+    (print-message *message-window* (format nil "~%Engineer Scott- \"The warp engines are damaged, Sir.\"~%"))
     (return-from move-under-warp-drive nil))
 
   (when (and (damagedp +warp-engines+)
              (> *warp-factor* 4.0))
     (clear-type-ahead-buffer)
-    (skip-line)
-    (print-message (format nil "~%Engineer Scott- \"Sorry, Captain. Until this damage~%"))
-    (print-message (format nil "  is repaired, I can only give you warp 4.\"~%"))
+    (skip-line *message-window*)
+    (print-message *message-window* (format nil "~%Engineer Scott- \"Sorry, Captain. Until this damage~%"))
+    (print-message *message-window* (format nil "  is repaired, I can only give you warp 4.\"~%"))
     (return-from move-under-warp-drive nil))
 
   ;; Read in course and distance
@@ -6134,26 +5908,27 @@ quadrant experiencing a supernova)."
     (when (= course -1.0) ; TODO test this
       (return-from move-under-warp-drive nil))
 
-    (when *window-interface-p*
-      (select-window *message-window*))
     ;; TODO - put warp power calculations into a function?
     ;; Make sure starship has enough energy for the trip
     (let ((power (* (+ distance 0.05) (expt *warp-factor* 3) (if *shields-are-up-p* 2 1)))
           (iwarp (truncate (expt (/ *ship-energy* (+ distance 0.05)) 0.333333333))))
       (when (>= power *ship-energy*)
         ;; Insufficient power for trip
-        (print-message "~%Engineering to bridge--~%")
+        (print-message *message-window* "~%Engineering to bridge--~%")
         (if (or (not *shields-are-up-p*)
                 (> (* 0.5 power) *ship-energy*))
             (if (<= iwarp 0)
-                (print-message (format nil "We can't do it, Captain. We don't have enough energy.~%"))
+                (print-message *message-window*
+                               (format nil
+                                       "We can't do it, Captain. We don't have enough energy.~%"))
                 (progn
-                  (print-message
+                  (print-message *message-window*
                    (format nil "We don't have enough energy, but we could do it at warp ~A" iwarp))
                   (if *shields-are-up-p*
-                      (print-message (format nil ", if you'll lower the shields.~%"))
-                      (print-message (format nil ".~%")))))
-            (print-message
+                      (print-message *message-window*
+                                     (format nil ", if you'll lower the shields.~%"))
+                      (print-message *message-window* (format nil ".~%")))))
+            (print-message *message-window*
              (format nil "We haven't the energy to go that far with the shields up.~%")))
         (return-from move-under-warp-drive nil)))
 
@@ -6161,10 +5936,11 @@ quadrant experiencing a supernova)."
     (setf *time-taken-by-current-operation* (calculate-warp-movement-time :distance distance
                                                                           :warp-factor *warp-factor*))
     (when (>= *time-taken-by-current-operation* (* 0.8 *remaining-time*))
-      (print-message (format nil "~%First Officer Spock- \"Captain, I compute that such~%"))
-      (print-message (format nil "  a trip would require approximately %~,2F~%"
+      (print-message *message-window*
+                     (format nil "~%First Officer Spock- \"Captain, I compute that such~%"))
+      (print-message *message-window* (format nil "  a trip would require approximately %~,2F~%"
                          (/ (* 100.0 *time-taken-by-current-operation*) *remaining-time*)))
-      (print-message (format nil " percent of our remaining time.\"~%~%"))
+      (print-message *message-window* (format nil " percent of our remaining time.\"~%~%"))
       (print-prompt "\"Are you sure this is wise?\" ")
       (unless (get-y-or-n-p)
         (setf *time-taken-by-current-operation* 0)
@@ -6180,138 +5956,142 @@ quadrant experiencing a supernova)."
     ((= *probes-available* 0)
      (clear-type-ahead-buffer)
      (if (string= *ship* +enterprise+)
-         (print-message (format nil "~%Engineer Scott- \"We have no more deep space probes, Sir.\"~%"))
-         (print-message (format nil "~%Ye Faerie Queene has no deep space probes.~%"))))
+         (print-message *message-window*
+                        (format nil
+                                "~%Engineer Scott- \"We have no more deep space probes, Sir.\"~%"))
+         (print-message *message-window*
+                        (format nil "~%Ye Faerie Queene has no deep space probes.~%"))))
 
     ((damagedp +deep-space-probe-launcher+)
      (clear-type-ahead-buffer)
-     (print-message (format nil "~%Engineer Scott- \"The probe launcher is damaged, Sir.\"~%")))
+     (print-message *message-window*
+                    (format nil "~%Engineer Scott- \"The probe launcher is damaged, Sir.\"~%")))
 
-    ((is-scheduled-p +move-deep-space-probe+)
+    ((is-scheduled-p 'move-deep-space-probe)
      (clear-type-ahead-buffer)
-     (if (and (damagedp +subspace-radio+)
-              (not *dockedp*))
-         (progn
-           (print-message (format nil "~%Spock-  \"Records show the previous probe has not yet~%"))
-           (print-message (format nil "   reached its destination.\"~%")))
-         (print-message (format nil "~%Uhura- \"The previous probe is still reporting data, Sir.\"~%"))))
+     (if (subspace-radio-available-p)
+         (print-message *message-window* (format nil "~%Uhura- \"The previous probe is still reporting data, Sir.\"~%"))
+         (print-message *message-window* (format nil "~%Spock-  \"Records show the previous probe has not yet~%   reached its destination.\"~%"))))
 
     (t
-     (when (= (length *line-tokens*) 0)
-       ;; Slow mode, so let Kirk know how many probes there are left
-       (print-message (format nil "~A probe~:P left.~%" *probes-available*))
-       (print-prompt "Are you sure you want to fire a probe? ")
-       (unless (get-y-or-n-p)
-         (return-from launch-probe nil)))
-     (setf *probe-is-armed-p* nil)
-     (if (= (length *line-tokens*) 0)
-         (progn
-           (print-prompt "Arm NOVAMAX warhead? ")
-           (when (get-y-or-n-p)
-             (setf *probe-is-armed-p* t)))
-         (progn
-           (scan-input)
-           (cond ((numberp *input-item*)
-                  (unscan-input)) ; probably a quadrant coordinate, put it back
+     (let ((arm-probe-p nil))
+       (unless (input-available-p)
+         ;; Slow mode, so let Kirk know how many probes there are left
+         (print-message *message-window* (format nil "~A probe~:P left.~%" *probes-available*))
+         (print-prompt "Are you sure you want to fire a probe? ")
+         (unless (get-y-or-n-p)
+           (return-from launch-probe nil)))
+       (setf arm-probe-p nil)
+       (if (input-available-p)
+           (let ((input-item (scan-input)))
+             (cond ((numberp input-item)
+                    (unscan-input input-item)) ; probably a quadrant coordinate, put it back
 
-                 ((match-token *input-item* (list "yes"))
-                  (setf *probe-is-armed-p* t))
+                   ((match-token input-item (list "yes"))
+                    (setf arm-probe-p t))
 
-                 ((match-token *input-item* (list "no"))
-                  (setf *probe-is-armed-p* nil))
+                   ((match-token input-item (list "no"))
+                    (setf arm-probe-p nil))
 
-                 (t
-                  (huh)
-                  (return-from launch-probe nil)))))
-     (multiple-value-bind (direction distance) (get-probe-course-and-distance)
-       (when (and (not direction)
-                  (not distance))
-         (return-from launch-probe nil))
-       (setf *probes-available* (1- *probes-available*))
-       (let ((angle (* (- 15.0 direction) 0.5235988))
-             bigger)
-         (setf *probe-x-increment* (- (sin angle))) ; C: game.probeinx = -sin(angle);
-         (setf *probe-y-increment* (cos angle))
-         (if (> (abs *probe-x-increment*)
-                (abs *probe-y-increment*))
-             (setf bigger (abs *probe-x-increment*))
-             (setf bigger (abs *probe-y-increment*)))
-         (setf *probe-x-increment* (/ *probe-x-increment* bigger))
-         (setf *probe-y-increment* (/ *probe-y-increment* bigger))
-         (setf *moves-for-probe* (+ (* 10.0 distance bigger) 0.5)) ; TODO - is the half-sector needed?
-         ;; We will use better packing than original
-         (setf *probe-x-coord* (+ (* (coordinate-x *ship-quadrant*) +quadrant-size+)
-                                  (coordinate-x *ship-sector*)))
-         (setf *probe-y-coord* (+ (* (coordinate-y *ship-quadrant*) +quadrant-size+)
-                                  (coordinate-y *ship-sector*)))
-         (setf (coordinate-x *probe-reported-quadrant*) (coordinate-x *ship-quadrant*))
-         (setf (coordinate-y *probe-reported-quadrant*) (coordinate-y *ship-quadrant*)))
-       (schedule-event +move-deep-space-probe+ 0.01)) ; Time to move one sector
-     (print-message (format nil "Ensign Chekov-  \"The deep space probe is launched, Captain.\"~%"))
+                   (t
+                    (huh)
+                    (return-from launch-probe nil))))
+           (progn
+             (print-prompt "Arm NOVAMAX warhead? ")
+             (when (get-y-or-n-p)
+               (setf arm-probe-p t))))
+       (multiple-value-bind (direction distance) (get-probe-course-and-distance)
+         (when (and (not direction)
+                    (not distance))
+           (return-from launch-probe nil))
+         (setf *probe* (make-probe :is-armed-p arm-probe-p))
+         (decf *probes-available* 1)
+         (let ((angle (* (- 15.0 direction) 0.5235988))
+               bigger)
+           (setf (probe-inc-x *probe*) (- (sin angle))) ; C: game.probeinx = -sin(angle);
+           (setf (probe-inc-y *probe*) (cos angle))
+           (if (> (abs (probe-inc-x *probe*))
+                  (abs (probe-inc-y *probe*)))
+               (setf bigger (abs (probe-inc-x *probe*)))
+               (setf bigger (abs (probe-inc-y *probe*))))
+           (setf (probe-inc-x *probe*) (/ (probe-inc-x *probe*) bigger))
+           (setf (probe-inc-y *probe*) (/ (probe-inc-y *probe*) bigger))
+           ;; TODO - is the half-sector needed?
+           (setf (probe-moves-remaining *probe*) (+ (* 10.0 distance bigger) 0.5))
+           ;; We will use better packing than original: galaxy coordinates in sector units
+           (setf (probe-x *probe*) (+ (* (coordinate-x *ship-quadrant*) +quadrant-size+)
+                                      (coordinate-x *ship-sector*)))
+           (setf (probe-y *probe*) (+ (* (coordinate-y *ship-quadrant*) +quadrant-size+)
+                                      (coordinate-y *ship-sector*))))
+         (schedule-event 'move-deep-space-probe 0.01))) ; Time to move one sector
+     (print-message *message-window*
+                    (format nil "Ensign Chekov-  \"The deep space probe is launched, Captain.\"~%"))
      (setf *action-taken-p* t))))
 
 (defun set-warp-factor () ; C: setwarp(void)
   "Change the warp factor."
 
-  (if (> (length *line-tokens*) 0)
-      (scan-input)
-      (setf *input-item* nil))
-  (do ()
-      (*input-item*)
-    (print-prompt "Warp factor: ")
-    (scan-input))
-  (if (numberp *input-item*)
-      (cond
-        ((> (aref *device-damage* +warp-engines+) 10.0)
-         (print-message (format nil "~%Warp engines inoperative.~%")))
+  (let (input-item)
+    (when (input-available-p)
+        (setf input-item (scan-input)))
+    (do ()
+        (input-item)
+      (print-prompt "Warp factor: ")
+      (setf input-item (scan-input)))
+    (if (numberp input-item)
+        (cond
+          ((> (aref *device-damage* +warp-engines+) 10.0)
+           (print-message *message-window* (format nil "~%Warp engines inoperative.~%")))
 
-        ((and (damagedp +warp-engines+) (> *input-item* 4.0))
-         (print-message (format nil "~%Engineer Scott- \"I'm doing my best, Captain,~%"))
-         (print-message (format nil "  but right now we can only go warp 4.\"~%")))
+          ((and (damagedp +warp-engines+) (> input-item 4.0))
+           (print-message *message-window* (format nil "~%Engineer Scott- \"I'm doing my best, Captain,~%"))
+           (print-message *message-window* (format nil "  but right now we can only go warp 4.\"~%")))
 
-        ((> *input-item* 10.0)
-         (print-message (format nil "~%Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
+          ((> input-item 10.0)
+           (print-message *message-window* (format nil "~%Helmsman Sulu- \"Our top speed is warp 10, Captain.\"~%")))
 
-        ((< *input-item* 1.0)
-         (print-message (format nil "~%Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
+          ((< input-item 1.0)
+           (print-message *message-window* (format nil "~%Helmsman Sulu- \"We can't go below warp 1, Captain.\"~%")))
 
-        (t
-         (cond
-           ((or (<= *input-item* *warp-factor*)
-                (<= *input-item* 6.0))
-            (print-message
-             (format nil "~%Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate *input-item*))))
+          (t
+           (cond
+             ((or (<= input-item *warp-factor*)
+                  (<= input-item 6.0))
+              (print-message *message-window*
+               (format nil "~%Helmsman Sulu- \"Warp factor ~A, Captain.\"~%" (truncate input-item))))
 
-           ((< *input-item* 8.00)
-            (print-message
-             (format nil "~%Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
+             ((< input-item 8.00)
+              (print-message *message-window*
+               (format nil "~%Engineer Scott- \"Aye, but our maximum safe speed is warp 6.\"~%")))
 
-           ((= *input-item* 10.0)
-            (print-message (format nil "~%Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
+             ((= input-item 10.0)
+              (print-message *message-window* (format nil "~%Engineer Scott- \"Aye, Captain, we'll try it.\"~%")))
 
-           (t
-            (print-message
-             (format nil "~%Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
-         (setf *warp-factor* *input-item*)))
-      (huh)))
+             (t
+              (print-message *message-window*
+               (format nil
+                       "~%Engineer Scott- \"Aye, Captain, but our engines may not take it.\"~%"))))
+           (setf *warp-factor* input-item)))
+        (huh))))
 
 (defun wait () ; C: wait(void)
   "Wait on events."
 
   (let (original-time
-        time-to-wait)
+        time-to-wait
+        input-item)
     (setf *action-taken-p* nil)
-    (unless (> (length *line-tokens*) 0)
+    (unless (input-available-p)
       (print-prompt "How long? "))
-    (scan-input)
-    (when (not (numberp *input-item*))
+    (setf input-item (scan-input))
+    (unless (numberp input-item)
       (huh)
       (return-from wait nil))
-    (when (<= *input-item* 0.0)
+    (when (<= input-item 0.0)
       (return-from wait nil))
-    (setf original-time *input-item*)
-    (setf time-to-wait *input-item*)
-    (when (or (>= *input-item* *remaining-time*)
+    (setf original-time input-item)
+    (setf time-to-wait input-item)
+    (when (or (>= input-item *remaining-time*)
               (> *enemies-here* 0))
       ;; TODO - have Spock calculate remaining time and ask "Are you sure this is wise?"
       ;; TODO - for number of enemies just prompt "Are you sure?", player will figure it out eventually
@@ -6326,8 +6106,8 @@ quadrant experiencing a supernova)."
         ((quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*)))
       (when (<= time-to-wait 0)
         (setf *restingp* nil))
-      (when (not *restingp*)
-        (print-message (format nil "~A stardates left.~%" (truncate *remaining-time*)))
+      (unless *restingp*
+        (print-message *message-window* (format nil "~A stardates left.~%" (truncate *remaining-time*)))
         (return-from wait nil))
       (setf temp time-to-wait)
       (setf *time-taken-by-current-operation* time-to-wait)
@@ -6358,54 +6138,49 @@ quadrant experiencing a supernova)."
   ;; Finish with a BANG!
   (clear-type-ahead-buffer)
   (if (damagedp +computer+)
-      (print-message (format nil "~%Computer damaged; cannot execute destruct sequence.~%"))
+      (print-message *message-window* (format nil "~%Computer damaged; cannot execute destruct sequence.~%"))
       (progn
-        (print-message (format nil "~%---WORKING---~%") :print-slowly t)
-        (print-message (format nil "SELF-DESTRUCT-SEQUENCE-ACTIVATED~%") :print-slowly t)
-        (print-message (format nil "   10~%") :print-slowly t)
-        (print-message (format nil "       9~%") :print-slowly t)
-        (print-message (format nil "          8~%") :print-slowly t)
-        (print-message (format nil "             7~%") :print-slowly t)
-        (print-message (format nil "                6~%") :print-slowly t)
-        (print-message (format nil "~%ENTER-CORRECT-PASSWORD-TO-CONTINUE-~%"))
-        (print-message (format nil "~%~%SELF-DESTRUCT-SEQUENCE-OTHERWISE-~%"))
-        (print-message (format nil "~%~%SELF-DESTRUCT-SEQUENCE-WILL-BE-ABORTED~%"))
-        (skip-line 2)
-        (when *window-interface-p*
-          (select-window *prompt-window* :clear-window t))
+        (print-message *message-window* (format nil "~%---WORKING---~%") :print-slowly t)
+        (print-message *message-window* (format nil "SELF-DESTRUCT-SEQUENCE-ACTIVATED~%") :print-slowly t)
+        (print-message *message-window* (format nil "   10~%") :print-slowly t)
+        (print-message *message-window* (format nil "       9~%") :print-slowly t)
+        (print-message *message-window* (format nil "          8~%") :print-slowly t)
+        (print-message *message-window* (format nil "             7~%") :print-slowly t)
+        (print-message *message-window* (format nil "                6~%") :print-slowly t)
+        (print-message *message-window* (format nil "~%ENTER-CORRECT-PASSWORD-TO-CONTINUE-~%"))
+        (print-message *message-window* (format nil "~%~%SELF-DESTRUCT-SEQUENCE-OTHERWISE-~%"))
+        (print-message *message-window* (format nil "~%~%SELF-DESTRUCT-SEQUENCE-WILL-BE-ABORTED~%~%~%"))
+	(print-prompt "")
         (clear-type-ahead-buffer)
-        (scan-input)
-        (when (numberp *input-item*)
-          (setf *input-item* (write-to-string *input-item*))
-        (if (string= *self-destruct-password* *input-item*)
-            (progn
-              (print-message (format nil "PASSWORD-ACCEPTED~%") :print-slowly t)
-              (print-message (format nil "                   5~%") :print-slowly t)
-              (print-message (format nil "                      4~%")) :print-slowly t
-              (print-message (format nil "                         3~%") :print-slowly t)
-              (print-message (format nil "                            2~%") :print-slowly t)
-              (print-message (format nil "                              1~%") :print-slowly t)
-              (when (< (random 1.0) 0.15)
-                (print-message (format nil "GOODBYE-CRUEL-WORLD~%") :print-slowly t))
-              (kaboom))
-            (progn
-              (print-message (format nil "PASSWORD-REJECTED;~%") :print-slowly t)
-              (print-message (format nil "CONTINUITY-EFFECTED~%") :print-slowly t)))))))
+        (let ((input-item (scan-input)))
+          (when (numberp input-item)
+            (setf input-item (write-to-string input-item)))
+          (if (string= *self-destruct-password* input-item)
+              (progn
+                (print-message *message-window* (format nil "PASSWORD-ACCEPTED~%") :print-slowly t)
+                (print-message *message-window* (format nil "                   5~%") :print-slowly t)
+                (print-message *message-window* (format nil "                      4~%")) :print-slowly t
+                (print-message *message-window* (format nil "                         3~%") :print-slowly t)
+                (print-message *message-window* (format nil "                            2~%") :print-slowly t)
+                (print-message *message-window* (format nil "                              1~%") :print-slowly t)
+                (when (< (random 1.0) 0.15)
+                  (print-message *message-window* (format nil "GOODBYE-CRUEL-WORLD~%") :print-slowly t))
+                (kaboom))
+              (progn
+                (print-message *message-window* (format nil "PASSWORD-REJECTED;~%") :print-slowly t)
+                (print-message *message-window* (format nil "CONTINUITY-EFFECTED~%") :print-slowly t)))))))
 
 (defun calculate-eta () ; C: eta(void)
   "Use computer to get estimated time of arrival for a warp jump."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
 
   (when (damagedp +computer+)
-    (print-message (format nil "COMPUTER DAMAGED, TRAVEL CALCULATION NOT POSSIBLE.~%"))
+    (print-message *message-window* (format nil "COMPUTER DAMAGED, TRAVEL CALCULATION NOT POSSIBLE.~%"))
     (return-from calculate-eta nil))
 
-  (let (need-prompt wfl ttime twarp tpower trip-distance destination-quadrant)
-    (when (< (length *line-tokens*) 2)
+  (let (need-prompt wfl ttime twarp tpower trip-distance destination-quadrant input-item)
+    (unless (two-input-items-available)
       (setf need-prompt t)
       (clear-type-ahead-buffer)
       (print-prompt "~%Destination quadrant or quadrant&sector? "))
@@ -6431,24 +6206,24 @@ quadrant experiencing a supernova)."
                            (expt (* (+ (- qx (coordinate-x *ship-quadrant*)) 0.1)
                                     (- sx (coordinate-x *ship-sector*)))
                                  2))))
-            (setf destination-quadrant (make-coordinate :x qx :y qy)))
+            (setf destination-quadrant (make-quadrant-coordinate :x qx :y qy)))
           (return-from calculate-eta nil)))
 
     (when need-prompt
-      (print-message (format nil "Answer \"no\" if you don't know the value:~%")))
+      (print-message *message-window* (format nil "Answer \"no\" if you don't know the value:~%")))
     (do ()
         ((or ttime twarp))
       (clear-type-ahead-buffer)
       (print-prompt "Time or arrival date? ")
-      (scan-input)
-      (when (numberp *input-item*)
-        (setf ttime *input-item*)
+      (setf input-item (scan-input))
+      (when (numberp input-item)
+        (setf ttime input-item)
         (when (> ttime *stardate*)
           (decf ttime *stardate*)) ; Actually a star date
         (setf twarp (/ (+ (floor (* (sqrt (/ (* 10.0 trip-distance) ttime)) 10.0)) 1.0) 10.0))
         (when (or (<= ttime 1e-10) ; TODO - name the constant
                   (> twarp 10))
-          (print-message (format nil "We'll never make it, sir.~%"))
+          (print-message *message-window* (format nil "We'll never make it, sir.~%"))
           (clear-type-ahead-buffer)
           (return-from calculate-eta nil))
         (when (< twarp 1.0)
@@ -6456,17 +6231,17 @@ quadrant experiencing a supernova)."
       (unless ttime
         (clear-type-ahead-buffer)
         (print-prompt "Warp factor? ")
-        (scan-input)
-        (when (numberp *input-item*)
+        (setf input-item (scan-input))
+        (when (numberp input-item)
           (setf wfl t)
-          (setf twarp *input-item*)
+          (setf twarp input-item)
           (when (or (< twarp 1.0) (> twarp 10.0))
             (huh)
             (return-from calculate-eta nil))))
       (unless (or ttime twarp)
-        (print-message (format nil "Captain, certainly you can give me one of these.~%"))))
+        (print-message *message-window* (format nil "Captain, certainly you can give me one of these.~%"))))
 
-    (skip-line)
+    (skip-line *message-window*)
 
     (do ((try-another-warp-factor-p t))
         ((not try-another-warp-factor-p))
@@ -6476,21 +6251,20 @@ quadrant experiencing a supernova)."
       (setf tpower (* trip-distance (expt twarp 3) (if *shields-are-up-p* 2 1)))
       (if (>= tpower *ship-energy*)
           (progn
-            (print-message (format nil "Insufficient energy, sir."))
+            (print-message *message-window* (format nil "Insufficient energy, sir."))
             (when (or (not *shields-are-up-p*)
                       (> tpower (* *ship-energy* 2.0)))
               (unless wfl
                 (return-from calculate-eta nil))
-              (skip-line)
-              (print-prompt "New warp factor to try? ")
-              (scan-input)
-              (if (numberp *input-item*)
+              (print-prompt (format nil "~%New warp factor to try? "))
+              (setf input-item (scan-input))
+              (if (numberp input-item)
                   (if (and (>= twarp 1.0)
                            (<= twarp 10.0))
                       (progn
                         (setf wfl t)
                         (setf try-another-warp-factor-p t)
-                        (setf twarp *input-item*))
+                        (setf twarp input-item))
                       (progn
                         (huh)
                         (return-from calculate-eta nil)))
@@ -6498,43 +6272,50 @@ quadrant experiencing a supernova)."
                     (clear-type-ahead-buffer)
                     (return-from calculate-eta nil))))
             (unless try-another-warp-factor-p
-              (print-message (format nil "But if you lower your shields,~%"))
-              (print-message "remaining")
+              (print-message *message-window* (format nil "But if you lower your shields,~%"))
+              (print-message *message-window* "remaining")
               (setf tpower (/ tpower 2))))
           (progn
-            (when *window-interface-p*
-              (select-window *message-window*))
-            (print-message "Remaining")))
+            (print-message *message-window* "Remaining")))
       (unless try-another-warp-factor-p
-        (print-message (format nil " energy will be ~,2F.~%" (- *ship-energy* tpower)))
+        (print-message *message-window*
+                       (format nil " energy will be ~,2F.~%" (- *ship-energy* tpower)))
         (cond
           (wfl
-           (print-message (format nil "And we will arrive at stardate ~A.~%" (format-stardate (+ *stardate* ttime)))))
+           (print-message *message-window* (format nil "And we will arrive at stardate ~A.~%"
+                                  (format-stardate (+ *stardate* ttime)))))
+
           ((= twarp 1.0)
-           (print-message (format nil "Any warp speed is adequate.~%")))
+           (print-message *message-window* (format nil "Any warp speed is adequate.~%")))
+
           (t
-           (print-message (format nil "Minimum warp needed is ~,2F,~%" twarp))
-           (print-message (format nil "and we will arrive at stardate ~A.~%" (format-stardate (+ *stardate* ttime))))))
+           (print-message *message-window* (format nil "Minimum warp needed is ~,2F,~%" twarp))
+           (print-message *message-window* (format nil "and we will arrive at stardate ~A.~%"
+                                  (format-stardate (+ *stardate* ttime))))))
         (when (< *remaining-time* ttime)
-          (print-message (format nil "Unfortunately, the Federation will be destroyed by then.~%")))
+          (print-message *message-window*
+                         (format nil "Unfortunately, the Federation will be destroyed by then.~%")))
         (when (> twarp 6.0)
-          (print-message (format nil "You'll be taking risks at that speed, Captain.~%")))
+          (print-message *message-window*
+                         (format nil "You'll be taking risks at that speed, Captain.~%")))
         (when (or (and (eql *super-commander-attacking-base* 'attacking)
                        (coord-equal *super-commander-quadrant* destination-quadrant)
-                       (< (find-event +super-commander-destroys-base+) (+ *stardate* ttime)))
-                  (and (< (find-event +commander-destroys-base+) (+ *stardate* ttime))
+                       (< (event-date (find-event 'super-commander-destroys-base))
+                          (+ *stardate* ttime)))
+                  (and (< (event-date (find-event 'commander-destroys-base)) (+ *stardate* ttime))
                        (coord-equal *base-under-attack-quadrant* destination-quadrant)))
-          (print-message (format nil "The starbase there will be destroyed by then.~%")))
-        (skip-line)
+          (print-message *message-window*
+                         (format nil "The starbase there will be destroyed by then.~%")))
+        (skip-line *message-window*)
         (print-prompt "New warp factor to try? ")
-        (scan-input)
-        (if (numberp *input-item*)
+        (setf input-item (scan-input))
+        (if (numberp input-item)
           (if (and (>= twarp 1.0)
                    (<= twarp 10.0))
               (progn
                 (setf wfl t)
                 (setf try-another-warp-factor-p t)
-                (setf twarp *input-item*))
+                (setf twarp input-item))
               (progn
                 (huh)
                 (return-from calculate-eta nil)))
@@ -6542,82 +6323,68 @@ quadrant experiencing a supernova)."
             (clear-type-ahead-buffer)
             (return-from calculate-eta nil)))))))
 
-;; TODO - see the rechart() function in the C source and the next three comments
-;; TODO - The chart command can (should) do an implicit call to srscan or lrscan
-;; TODO - The chart command can (should) update from starbase records when docked
-;; TODO - The chart command can (should) do an implicit update from dsradio messages
 (defun chart () ; C: chart(void), and TODO - bring in the contents of makechart()
   "Display the start chart."
 
-  (if *window-interface-p*
-      (if *starchart-window*
-          (select-window *starchart-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  (if (eql *starchart-window* *message-window*)
+      (skip-line *starchart-window*)
+      (clear-window *starchart-window*))
 
-  (print-out (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
-  (when (> *stardate* *last-chart-update*)
-    (print-out (format nil "(Last surveillance update ~A stardates ago).~%"
-                       (truncate (- *stardate* *last-chart-update*)))))
-  (print-out (format nil "      1    2    3    4    5    6    7    8~%"))
+  (print-out *starchart-window* (format nil "       STAR CHART FOR THE KNOWN GALAXY~%"))
+  (print-out *starchart-window* (format nil "      1    2    3    4    5    6    7    8~%"))
   (do ((x 0 (1+ x)))
       ((>= x +galaxy-size+))
-    (print-out (format nil "~A |" (1+ x)))
+    (print-out *starchart-window* (format nil "~A |" (1+ x)))
     (do ((y 0 (1+ y)))
         ((>= y +galaxy-size+))
       (if (and (= x (coordinate-x *ship-quadrant*))
                (= y (coordinate-y *ship-quadrant*)))
-          (print-out "<")
-          (print-out " "))
+          (print-out *starchart-window* "<")
+          (print-out *starchart-window* " "))
       (cond
         ((quadrant-supernovap (aref *galaxy* x y))
-         (print-out "***"))
+         (print-out *starchart-window* "***"))
 
         ((and (not (quadrant-chartedp (aref *galaxy* x y)))
               (> (quadrant-starbases (aref *galaxy* x y)) 0))
-         (print-out ".1."))
+         (print-out *starchart-window* ".1."))
 
         ((quadrant-chartedp (aref *galaxy* x y))
-         (print-out (format nil "~3D" (+ (* (starchart-page-klingons (aref *starchart* x y)) 100)
+         (print-out *starchart-window* (format nil "~3D" (+ (* (starchart-page-klingons (aref *starchart* x y)) 100)
                                          (* (starchart-page-starbases (aref *starchart* x y)) 10)
                                          (starchart-page-stars (aref *starchart* x y))))))
 
         (t
-         (print-out "...")))
+         (print-out *starchart-window* "...")))
       (if (and (= x (coordinate-x *ship-quadrant*))
                (= y (coordinate-y *ship-quadrant*)))
-          (print-out ">")
-          (print-out " ")))
-    (print-out "|")
+          (print-out *starchart-window* ">")
+          (print-out *starchart-window* " ")))
+    (print-out *starchart-window* "|")
     (when (< x +galaxy-size+)
-      (skip-line))))
+      (skip-line *starchart-window*))))
 
 ;; TODO - make this a device status report. Show repair time of 0 when a device is not damaged.
+;;        Could use green/yellow/red highlighting for a fancy effect.
 ;;        The goal is to have a continuously updated console showing device status.
 (defun damage-report () ; C: damagereport(void)
   "List damaged devices and repair times for each."
 
-  (if *window-interface-p*
-      (if *damage-report-window*
-          (select-window *damage-report-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  (if (eql *damage-report-window* *message-window*)
+      (skip-line *damage-report-window*)
+      (clear-window *damage-report-window*))
 
   (do ((i 0 (1+ i))
        (header-printed-p nil))
       ((>= i +number-of-devices+)
-       (when (not header-printed-p)
-         (print-out (format nil "All devices functional.~%"))))
+       (unless header-printed-p
+         (print-out *damage-report-window* (format nil "All devices functional.~%"))))
     (when (damagedp i)
-      (when (not header-printed-p)
-        (print-out (format nil "~12@A~24@A~%" "DEVICE" "-REPAIR TIMES-"))
-        (print-out (format nil "~21A~8@A~8@A~%" " " "IN FLIGHT" "DOCKED"))
+      (unless header-printed-p
+        (print-out *damage-report-window* (format nil "~12@A~24@A~%" "DEVICE" "-REPAIR TIMES-"))
+        (print-out *damage-report-window* (format nil "~21A~8@A~8@A~%" " " "IN FLIGHT" "DOCKED"))
         (setf header-printed-p t))
-      (print-out (format nil "  ~17A~9,2F~9,2F~%"
+      (print-out *damage-report-window* (format nil "  ~17A~9,2F~9,2F~%"
                          (aref *devices* i)
                          (+ (aref *device-damage* i) 0.05)
                          (+ (* (aref *device-damage* i) +docked-repair-factor+) 0.005))))))
@@ -6625,92 +6392,87 @@ quadrant experiencing a supernova)."
 (defun report ()
   "Report on general game status."
 
-  (print-message (format nil "~%You are playing a ~A ~A game.~%"
+  (print-message *message-window* (format nil "~%You are playing a ~A ~A game.~%"
                          *game-length*
                          (rest (assoc *skill-level* *skill-level-labels*))))
   (when *tournament-number*
-    (print-message (format nil "This is tournament game ~A.~%" *tournament-number*)))
-  (print-message (format nil "Your secret password is \"~A\"~%" *self-destruct-password*))
-  (print-out (format nil "~A of ~A Klingons have been killed"
+    (print-message *message-window* (format nil "This is tournament game ~A.~%" *tournament-number*)))
+  (print-message *message-window* (format nil "Your secret password is \"~A\"~%" *self-destruct-password*))
+  (print-out *message-window*(format nil "~A of ~A Klingons have been killed"
                      (- (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)
                         (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*))
                      (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)))
   (cond
     ((> (- *initial-commanders* (length *commander-quadrants*)) 0)
-     (print-message (format nil ", including ~A Commander~:P.~%"
+     (print-message *message-window* (format nil ", including ~A Commander~:P.~%"
                             (- *initial-commanders* (length *commander-quadrants*)))))
 
     ((> (+ (- *initial-klingons* *remaining-klingons*)
            (- *initial-super-commanders* *remaining-super-commanders*))
         0)
-     (print-message (format nil ", but no Commanders.~%")))
+     (print-message *message-window* (format nil ", but no Commanders.~%")))
 
     (t
-     (print-message (format nil ".~%"))))
+     (print-message *message-window* (format nil ".~%"))))
   (when (> *skill-level* +fair+)
-    (print-message (format nil "The Super Commander has ~Abeen destroyed.~%"
+    (print-message *message-window* (format nil "The Super Commander has ~Abeen destroyed.~%"
                            (if (> *remaining-super-commanders* 0) "not " ""))))
   (if (/= *initial-bases* (length *base-quadrants*))
       (progn
-        (print-out "There ")
+        (print-out *message-window* "There ")
         (if (= (- *initial-bases* (length *base-quadrants*)) 1)
-            (print-out "has been 1 base")
-            (print-out (format nil "have been ~A bases" (- *initial-bases* (length *base-quadrants*)))))
-        (print-message (format nil " destroyed, ~A remaining.~%" (length *base-quadrants*))))
-      (print-message (format nil "There are ~A bases.~%" *initial-bases*)))
+            (print-out *message-window* "has been 1 base")
+            (print-out *message-window* (format nil "have been ~A bases" (- *initial-bases* (length *base-quadrants*)))))
+        (print-message *message-window* (format nil " destroyed, ~A remaining.~%" (length *base-quadrants*))))
+      (print-message *message-window* (format nil "There are ~A bases.~%" *initial-bases*)))
   ;; Don't report this if not seen and either the radio is damaged or not at base!
-  (when (or (not (damagedp +subspace-radio+))
-            *dockedp*
-            *base-attack-report-seen-p*)
+  (when (and (subspace-radio-available-p)
+             *base-attack-report-seen-p*)
     (attack-report))
   (when (> *casualties* 0)
-    (print-message (format nil "~A casualt~A suffered so far.~%" *casualties* (if (= *casualties* 1) "y" "ies"))))
+    (print-message *message-window* (format nil "~A casualt~A suffered so far.~%" *casualties* (if (= *casualties* 1) "y" "ies"))))
   (when (/= *brig-capacity* *brig-free*)
-    (print-message (format nil "~D Klingon~:P in brig.~%"
+    (print-message *message-window* (format nil "~D Klingon~:P in brig.~%"
                            (- *brig-capacity* *brig-free*))))
   (when (> *captured-klingons* 0)
-    (print-message (format nil "~D captured Klingon~:P turned in to Star Fleet.~%"
+    (print-message *message-window* (format nil "~D captured Klingon~:P turned in to Star Fleet.~%"
                            *captured-klingons*)))
   (when (> *calls-for-help* 0)
-    (print-message (format nil "There ~A ~A call~:P for help.~%"
+    (print-message *message-window* (format nil "There ~A ~A call~:P for help.~%"
                            (if (= *calls-for-help* 1) "was" "were")
                            *calls-for-help*)))
   (when (string= *ship* +enterprise+)
-    (print-message (format nil "You have ~A deep space probe~:P.~%"
+    (print-message *message-window* (format nil "You have ~A deep space probe~:P.~%"
                            (if (> *probes-available* 0) *probes-available* "no"))))
-    ;;(print-message (format nil "You have ~A deep space probe~A.~%"
-    ;;                       (if (> *probes-available* 0) *probes-available* "no")
-    ;;                       (if (/= *probes-available* 1) "s" ""))))
-  (when (and (or (not (damagedp +subspace-radio+))
-                 *dockedp*)
-             (is-scheduled-p +move-deep-space-probe+))
-    (if *probe-is-armed-p*
-        (print-out "An armed deep space probe is in ")
-        (print-out "A deep space probe is in "))
-    (print-message (format nil "~A.~%" (format-quadrant-coordinates *probe-reported-quadrant*))))
+  (when (and (subspace-radio-available-p)
+             (is-scheduled-p 'move-deep-space-probe))
+    (if (probe-is-armed-p *probe*)
+        (print-out *message-window* "An armed deep space probe is in ")
+        (print-out *message-window* "A deep space probe is in "))
+    (print-message *message-window*
+                   (format nil "~A.~%" (format-quadrant-coordinates
+                                        (make-quadrant-coordinate :x (galaxy-sector-to-quadrant (probe-x *probe*))
+                                                                  :y (galaxy-sector-to-quadrant (probe-y *probe*)))))))
   (when *dilithium-crystals-on-board-p*
     (if (<= *crystal-work-probability* 0.05)
-        (print-message (format nil "Dilithium crystals aboard ship... not yet used.~%"))
+        (print-message *message-window* (format nil "Dilithium crystals aboard ship... not yet used.~%"))
         ;; Calculate number of times crystals have been used, and display it.
         (do ((i 0 (1+ i))
              (ai 0.05 (* ai 2.0)))
             ((< *crystal-work-probability* ai)
-             (print-message (format nil "Dilithium crystals have been used ~A time~:P.~%" i)))))))
+             (print-message *message-window* (format nil "Dilithium crystals have been used ~A time~:P.~%" i)))))))
 
 (defun request () ; C: request()
   "Request a single item of status information."
 
   (let (req-item)
-    (unless *line-tokens*
+    (unless (input-available-p)
       (print-prompt "Information desired? "))
-    (scan-input)
-    (setf req-item (match-token *input-item* (list "date" "condition" "position" "lsupport"
+    (setf req-item (match-token (scan-input) (list "date" "condition" "position" "lsupport"
                                                    "warpfactor" "energy" "torpedoes" "shields"
                                                    "klingons" "time")))
     (unless req-item
       (setf req-item "?")) ; blank input still results in a help message
-    (when *window-interface-p*
-      (select-window *message-window*))
     (cond
       ((string= req-item "date")
        (ship-status 1))
@@ -6733,9 +6495,9 @@ quadrant experiencing a supernova)."
       ((string= req-item "time")
        (ship-status 10))
       (t
-       (print-message (format nil "~%UNRECOGNIZED REQUEST. Valid requests are:~%"))
-       (print-message (format nil "  date, condition, position, lsupport, warpfactor,~%"))
-       (print-message (format nil "  energy, torpedoes, shields, klingons, time.~%"))
+       (print-message *message-window* (format nil "~%UNRECOGNIZED REQUEST. Valid requests are:~%"))
+       (print-message *message-window* (format nil "  date, condition, position, lsupport, warpfactor,~%"))
+       (print-message *message-window* (format nil "  energy, torpedoes, shields, klingons, time.~%"))
        (clear-type-ahead-buffer)))))
 
 ;; Possible enhancements:
@@ -6754,9 +6516,6 @@ are out.
 Code swiped from BSD-Trek. Not necesssarily useful, as we automatically display all adjacent
 sectors on the short-range scan even when short-range sensors are out."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   ;; The C source uses an array of coordinate structs. Just use pairs of numbers here.
   (let (delta-index
         (visual-delta (make-array '(11 2) :initial-contents '((-1 -1)
@@ -6770,169 +6529,51 @@ sectors on the short-range scan even when short-range sensors are out."
                                                               (-1 -1)
                                                               (-1  0)
                                                               (-1  1))))
-        ix iy sector-contents)
-    (skip-line)
-    (when (not (numberp *input-item*))
-      (clear-type-ahead-buffer)
-      (print-prompt "Direction? ")
-      (scan-input)
-      (when (not (numberp *input-item*))
-        (huh)
-        (return-from visual-scan nil)))
-    (when (or (< *input-item* 0.0)
-              (> *input-item* 360.0))
+        ix iy sector-contents input-item)
+    (skip-line *message-window*)
+    (unless (input-available-p)
+      (print-prompt "Direction? "))
+    (setf input-item (scan-input))
+    (unless (numberp input-item)
+      (huh)
       (return-from visual-scan nil))
-    (when *window-interface-p*
-      (select-window *message-window*))
-    (setf delta-index (floor (/ (+ *input-item* 22) 45)))
+    (when (or (< input-item 0.0)
+              (> input-item 360.0))
+      (return-from visual-scan nil))
+    (setf delta-index (floor (/ (+ input-item 22) 45)))
     (setf ix (+ (coordinate-x *ship-sector*) (aref visual-delta delta-index 0)))
     (setf iy (+ (coordinate-y *ship-sector*) (aref visual-delta delta-index 1)))
     (if (or (< ix 0) (>= ix +quadrant-size+) (< iy 0) (>= iy +quadrant-size+))
         (setf sector-contents "?")
-        (setf sector-contents (aref *quadrant-contents* ix iy)))
-    (print-out (format nil "~A,~A ~A " (+ ix 1) (+ iy 1) sector-contents))
+        (setf sector-contents (aref *quadrant* ix iy)))
+    (print-out *message-window* (format nil "~A,~A ~A " (+ ix 1) (+ iy 1) sector-contents))
     (setf delta-index (+ delta-index 1))
     (setf ix (+ (coordinate-x *ship-sector*) (aref visual-delta delta-index 0)))
     (setf iy (+ (coordinate-y *ship-sector*) (aref visual-delta delta-index 1)))
     (if (or (< ix 0) (>= ix +quadrant-size+) (< iy 0) (>= iy +quadrant-size+))
         (setf sector-contents "?")
-        (setf sector-contents (aref *quadrant-contents* ix iy)))
-    (print-out (format nil "~A " sector-contents))
+        (setf sector-contents (aref *quadrant* ix iy)))
+    (print-out *message-window* (format nil "~A " sector-contents))
     (setf delta-index (+ delta-index 1))
     (setf ix (+ (coordinate-x *ship-sector*) (aref visual-delta delta-index 0)))
     (setf iy (+ (coordinate-y *ship-sector*) (aref visual-delta delta-index 1)))
     (if (or (< ix 0) (>= ix +quadrant-size+) (< iy 0) (>= iy +quadrant-size+))
         (setf sector-contents "?")
-        (setf sector-contents (aref *quadrant-contents* ix iy)))
-    (print-out (format nil "~A ~A,~A~%" sector-contents (+ ix 1) (+ iy 1)))
+        (setf sector-contents (aref *quadrant* ix iy)))
+    (print-out *message-window* (format nil "~A ~A,~A~%" sector-contents (+ ix 1) (+ iy 1)))
     (setf *time-taken-by-current-operation* 0.5)
     (setf *action-taken-p* t)))
-
-(defun clean-up ()
-  "Cleanup function to run at program exit."
-
-  (when *window-interface-p*
-    (endwin))
-
-  ;; Remove this cleanup function from the exit hooks
-  (delete '(clean-up) sb-ext:*exit-hooks*))
-
-(defun set-text-color (color)
-  "Set the current window to the specified color."
-
-  (when (and *current-window*
-             (has-colors))
-    (cond
-      ((equal color +default-color+)
-       (wattrset *current-window* 0))
-      ((equal color +black+)
-       (wattron *current-window* (color-pair color_black)))
-      ((equal color +blue+)
-       (wattron *current-window* (color-pair color_blue)))
-      ((equal color +green+)
-       (wattron *current-window* (color-pair color_green)))
-      ((equal color +cyan+)
-       (wattron *current-window* (color-pair color_cyan)))
-      ((equal color +red+)
-       (wattron *current-window* (color-pair color_red)))
-      ((equal color +magenta+)
-       (wattron *current-window* (color-pair color_magenta)))
-      ((equal color +brown+)
-       (wattron *current-window* (color-pair color_yellow)))
-      ((equal color +light-gray+)
-       (wattron *current-window* (color-pair color_white)))
-      ((equal color +dark-gray+)
-       (wattron *current-window* (logior (color-pair color_black) a_bold)))
-      ((equal color +light-blue+)
-       (wattron *current-window* (logior (color-pair color_blue) a_bold)))
-      ((equal color +light-green+)
-       (wattron *current-window* (logior (color-pair color_green) a_bold)))
-      ((equal color +light-cyan+)
-       (wattron *current-window* (logior (color-pair color_cyan) a_bold)))
-      ((equal color +light-red+)
-       (wattron *current-window* (logior (color-pair color_red) a_bold)))
-      ((equal color +light-magenta+)
-       (wattron *current-window* (logior (color-pair color_magenta) a_bold)))
-      ((equal color +yellow+)
-       (wattron *current-window* (logior (color-pair color_yellow) a_bold)))
-      ((equal color +white+)
-       (wattron *current-window* (logior (color-pair color_white) a_bold))))))
 
 (defun initialize ()
   "One-time start up actions. Initialize I/O, curses, data values, etc."
 
-  ;; Register a cleanup function to run on program exit.
-  (setf sb-ext:*exit-hooks* (append sb-ext:*exit-hooks* '(clean-up)))
-
   (setf *random-state* (make-random-state t)) ; Seed the random number generator
+  (initialize-windows))
 
-  (setf *print-right-margin* 80) ; should be good for both windowed and line-by-line
+(defun clean-up ()
+  "Carry out any needed housekeeping before exiting the program."
 
-  ;; Win32 environments get line-by-line mode until I have the patience for making pdcurses work
-  (if (string= (software-type) "Win32")
-      (setf *window-interface-p* nil)
-      (progn
-        (initscr)
-	(setf *window-interface-p* t)
-        ;; Ensure screen is large enough (24x80) for windows, otherwise use line-by-line mode.
-        (unless (and (>= *lines* 24)
-                     (>= *cols* 80))
-	  (endwin)
-          (setf *window-interface-p* nil))))
-
-  ;; DEBUG - force line-by-line mode
-  ;;(endwin)
-  ;;(setf *window-interface-p* nil)
-
-  (when *window-interface-p*
-     (keypad *stdscr* true) ; Assume the terminal has a keypad and function keys
-     (nonl)
-     (cbreak)
-     (when (has-colors)
-       (start-color)
-       (init-pair color_black color_black color_black)
-       (init-pair color_green color_green color_black)
-       (init-pair color_red color_red color_black)
-       (init-pair color_cyan color_cyan color_black)
-       (init-pair color_white color_white color_black)
-       (init-pair color_magenta color_magenta color_black)
-       (init-pair color_blue color_blue color_black)
-       (init-pair color_yellow color_yellow color_black))
-     (setf *current-window* *stdscr*)
-     (clear-window *stdscr*) ; After this point use curses window functions, not *stdscr* functions.
-
-     ;; In curses/window mode these windows are always created because they fit the minimum
-     ;; space required for windowed mode: short range scan, status, long range scan, game status,
-     ;; message, prompt. If more rows/columns are available then more windows are created.
-     ;;
-     ;; All output that doesn't go to a specific window is displayed in the message window.
-     ;; In line-by-line mode the full screen is effectively the message window.
-     ;;
-     ;; TODO - name all these constants that define window position and size?
-     (setf *short-range-scan-window* (newwin 12 24 0 0))
-     (setf *ship-status-window* (newwin 10 36 2 24))
-     (setf *long-range-scan-window* (newwin 5 19 0 60))
-     (setf *game-status-window* (newwin 3 19 8 60))
-     ;; The message window is allocated all space between the short range scan window and the
-     ;; prompt window. The message window must be at least 12 lines long to display a star chart.
-     (setf *message-window-lines* (- *lines* 1 11))
-     ;; Game narrative and general output
-     (setf *message-window* (newwin *message-window-lines* 80 12 0))
-     (scrollok *message-window* true)
-     (setf *prompt-window* (newwin 1 0 (- *lines* 1) 0))
-     (when (>= *cols* 125)
-       (setf *starchart-window* (newwin 10 45 0 81)))
-     (when (and (>= *cols* 119)
-                (>= *lines* 25))
-       (setf *damage-report-window* (newwin 15 38 11 81)))
-     (when (and (>= *cols* 185)
-                (>= *lines* 44))
-       (setf *planet-report-window* (newwin 44 59 0 126)))
-     (when (and (>= *cols* 187)
-                (>= *lines* 65))
-       (setf *score-window* (newwin 20 61 45 126)))
-     (set-text-color +default-color+)
-     (select-window *message-window*)))
+  (clean-up-windows))
 
 ;; TODO - every operation that uses time should call this, e.g. visual-scan.
 ;; TODO - can this function be merged into the process-events function?
@@ -6951,10 +6592,7 @@ was an event that requires aborting the operation carried out by the calling fun
 (defun shuttle () ; C: shuttle(void)
   "Use shuttle craft for planetary jaunt."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (cond
     ((damagedp +shuttle+)
      ;; TODO - The -1.0 value is a bizarre way of saying the current ship is the Faerie Queene
@@ -6962,40 +6600,41 @@ was an event that requires aborting the operation carried out by the calling fun
        ((= (aref *device-damage* +shuttle+) -1.0)
         (if (and *in-orbit-p*
                  (shuttle-landed-p *ship-quadrant*))
-            (print-message (format nil "Ye Faerie Queene has no shuttle craft bay to dock it at.~%"))
-            (print-message (format nil "Ye Faerie Queene had no shuttle craft.~%"))))
+            (print-message *message-window* (format nil "Ye Faerie Queene has no shuttle craft bay to dock it at.~%"))
+            (print-message *message-window* (format nil "Ye Faerie Queene had no shuttle craft.~%"))))
 
        ((> (aref *device-damage* +shuttle+) 0)
-        (print-message (format nil "The Galileo is damaged.~%")))
+        (print-message *message-window* (format nil "The Galileo is damaged.~%")))
 
        (t ; C: game.damage[DSHUTTL] < 0, or (< (aref *device-damage* +shuttle+) 0)
-        (print-message (format nil "Shuttle craft is now serving Big Macs.~%")))))
+        (print-message *message-window* (format nil "Shuttle craft is now serving Big Macs.~%")))))
 
     ((not *in-orbit-p*)
-     (print-message (format nil "~A not in standard orbit.~%" (format-ship-name))))
+     (print-message *message-window* (format nil "~A not in standard orbit.~%" (format-ship-name))))
 
     ((and (not (shuttle-landed-p *ship-quadrant*))
           (not (eql *shuttle-craft-location* 'on-ship)))
-     (print-message (format nil "Shuttle craft not currently available.~%")))
+     (print-message *message-window* (format nil "Shuttle craft not currently available.~%")))
 
     ((and (shuttle-landed-p *ship-quadrant*)
           (not *landedp*))
-     (print-message (format nil "You will have to beam down to retrieve the shuttle craft.~%")))
+     (print-message *message-window*
+                    (format nil "You will have to beam down to retrieve the shuttle craft.~%")))
 
     ((or *shields-are-up-p*
          *dockedp*)
-     (print-message (format nil "Shuttle craft cannot pass through shields.~%")))
+     (print-message *message-window* (format nil "Shuttle craft cannot pass through shields.~%")))
 
-    ((not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-     (print-message (format nil "Spock-  \"Captain, we have no information on this planet~%"))
-     (print-message (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
-     (print-message (format nil "  you may not fly down.\"~%")))
+    ((not (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
+     (print-message *message-window* (format nil "Spock-  \"Captain, we have no information on this planet~%"))
+     (print-message *message-window* (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
+     (print-message *message-window* (format nil "  you may not fly down.\"~%")))
 
     (t
      (setf *time-taken-by-current-operation* (* (expt 3.0 -5) *height-of-orbit*))
      (when (>= *time-taken-by-current-operation* (* 0.8 *remaining-time*))
-       (print-message (format nil "First Officer Spock-  \"Captain, I compute that such~%"))
-       (print-message
+       (print-message *message-window* (format nil "First Officer Spock-  \"Captain, I compute that such~%"))
+       (print-message *message-window*
         (format nil "  a maneuver would require approximately ~,2F% of our remaining time.~%"
                 (truncate (/ (* 100 *time-taken-by-current-operation*) *remaining-time*))))
        (print-prompt"Are you sure this is wise?\" " )
@@ -7007,30 +6646,30 @@ was an event that requires aborting the operation carried out by the calling fun
          (if (eql *shuttle-craft-location* 'on-ship)
              ;; Galileo on ship!
              (progn
-               (if (not (damagedp +transporter+))
+               (if (damagedp +transporter+)
+                   (print-message *message-window* "Rescue party")
                    (progn
                      (print-prompt "Spock-  \"Would you rather use the transporter?\" ")
                      (when (get-y-or-n-p)
                        (beam)
                        (return-from shuttle nil))
-                     (print-message "Shuttle crew"))
-                   (print-message "Rescue party"))
-               (print-message (format nil " boards Galileo and swoops toward planet surface.~%"))
+                     (print-message *message-window* "Shuttle crew")))
+               (print-message *message-window* (format nil " boards Galileo and swoops toward planet surface.~%"))
                (setf *shuttle-craft-location* 'off-ship)
                (setf *shuttle-craft-quadrant* *ship-quadrant*)
-               (skip-line)
+               (skip-line *message-window*)
                (when (consume-time)
                  (return-from shuttle nil))
-               (print-message (format nil "Trip complete.~%")))
+               (print-message *message-window* (format nil "Trip complete.~%")))
              (progn
                ;; Ready to go back to ship
-               (print-message (format nil "You and your mining party board the~%"))
-               (print-message (format nil "shuttle craft for the trip back to the Enterprise.~%"))
-               (print-message (format nil "~%The short hop begins . . .~%"))
-               (skip-line 2)
-               (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+               (print-message *message-window* (format nil "You and your mining party board the~%"))
+               (print-message *message-window* (format nil "shuttle craft for the trip back to the Enterprise.~%"))
+               (print-message *message-window* (format nil "~%The short hop begins . . .~%"))
+               (skip-line *message-window* 2)
+               (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
                  (setf (planet-knownp pl) t)
-                 (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
+                 (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) pl))
                (setf *in-shuttle-craft-p* t)
                (setf *landedp* nil)
                (when (consume-time)
@@ -7042,13 +6681,13 @@ was an event that requires aborting the operation carried out by the calling fun
                  (setf *dilithium-crystals-on-board-p* t)
                  (setf *crystal-work-probability* 0.05))
                (setf *miningp* nil)
-               (print-message (format nil "Trip complete.~%"))))
+               (print-message *message-window* (format nil "Trip complete.~%"))))
          (progn
            ;; Kirk on ship
            ;; and so is Galileo
-           (print-message (format nil "Mining party assembles in the hangar deck,~%"))
-           (print-message (format nil "ready to board the shuttle craft \"Galileo\".~%"))
-           (print-message (format nil "~%The hangar doors open; the trip begins.~%"))
+           (print-message *message-window* (format nil "Mining party assembles in the hangar deck,~%"))
+           (print-message *message-window* (format nil "ready to board the shuttle craft \"Galileo\".~%"))
+           (print-message *message-window* (format nil "~%The hangar doors open; the trip begins.~%"))
            (setf *in-shuttle-craft-p* t)
            (setf *shuttle-craft-location* 'off-ship)
            (setf *shuttle-craft-quadrant* *ship-quadrant*)
@@ -7056,57 +6695,61 @@ was an event that requires aborting the operation carried out by the calling fun
              (return-from shuttle nil))
            (setf *in-shuttle-craft-p* nil)
            (setf *landedp* t)
-           (print-message (format nil "~%Trip complete.~%")))))))
+           (print-message *message-window* (format nil "~%Trip complete.~%")))))))
 
 (defun beam () ; C: beam(void)
   "Use the transporter."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
   (let ((energy-needed (+ (* 50 *skill-level*) (/ *height-of-orbit* 100.0))))
-    (skip-line)
+    (skip-line *message-window*)
     (when (damagedp +transporter+)
-      (print-message (format nil "Transporter damaged.~%"))
+      (print-message *message-window* (format nil "Transporter damaged.~%"))
       ;; The shuttle is an option if it is not damaged and on the planet or on the ship
       (when (and (not (damagedp +shuttle+))
                  (or (shuttle-landed-p *ship-quadrant*)
                      (eql *shuttle-craft-location* 'on-ship)))
-        (skip-line)
+        (skip-line *message-window*)
         (print-prompt "Spock-  \"May I suggest the shuttle craft, Sir?\" ")
         (when (get-y-or-n-p)
           (shuttle)))
       (return-from beam nil))
-    (when (not *in-orbit-p*)
-      (print-message (format nil "~A not in standard orbit.~%" (format-ship-name)))
+    (unless *in-orbit-p*
+      (print-message *message-window* (format nil "~A not in standard orbit.~%" (format-ship-name)))
       (return-from beam nil))
     (when *shields-are-up-p*
-      (print-message (format nil "Impossible to transport through shields.~%"))
+      (print-message *message-window* (format nil "Impossible to transport through shields.~%"))
       (return-from beam nil))
-    (when (not (planet-knownp (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-      (print-message (format nil "Spock-  \"Captain, we have no information on this planet~%"))
-      (print-message (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
-      (print-message (format nil "  you may not go down.\"~%"))
+    (unless (planet-knownp (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))
+      (print-message *message-window*
+                     (format nil "Spock-  \"Captain, we have no information on this planet~%"))
+      (print-message *message-window*
+                     (format nil "  and Starfleet Regulations clearly state that in this situation~%"))
+      (print-message *message-window* (format nil "  you may not go down.\"~%"))
       (return-from beam nil))
     (when (and (not *landedp*)
-               (eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))
+               (eql (planet-crystals (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))
                     'absent))
-      (print-message (format nil "Spock-  \"Captain, I fail to see the logic in~%"))
-      (print-message (format nil "  exploring a planet with no dilithium crystals.~%"))
+      (print-message *message-window* (format nil "Spock-  \"Captain, I fail to see the logic in~%"))
+      (print-message *message-window*
+                     (format nil "  exploring a planet with no dilithium crystals.~%"))
       (print-prompt "  Are you sure this is wise?\" ")
       (unless (get-y-or-n-p)
         (return-from beam nil)))
     (when (> energy-needed *ship-energy*)
-      (print-message (format nil "Engineering to bridge--~%"))
-      (print-message (format nil "  Captain, we don't have enough energy for transportation.~%"))
+      (print-message *message-window* (format nil "Engineering to bridge--~%"))
+      (print-message *message-window*
+                     (format nil "  Captain, we don't have enough energy for transportation.~%"))
       (return-from beam nil))
     (when (and (not *landedp*)
                (> (* 2 energy-needed) *ship-energy*))
-      (print-message (format nil "Engineering to bridge--~%"))
-      (print-message (format nil "  Captain, we have enough energy only to transport you down to~%"))
-      (print-message (format nil "  the planet, but there wouldn't be any energy for the trip back.~%"))
+      (print-message *message-window* (format nil "Engineering to bridge--~%"))
+      (print-message *message-window*
+                     (format nil "  Captain, we have enough energy only to transport you down to~%"))
+      (print-message *message-window*
+                     (format nil "  the planet, but there wouldn't be any energy for the trip back.~%"))
       (when (shuttle-landed-p *ship-quadrant*)
-        (print-message (format nil "  Although the Galileo shuttle craft may still be on the surface.~%")))
+        (print-message *message-window*
+                       (format nil "  Although the Galileo shuttle craft may still be on the surface.~%")))
       (print-prompt "  Are you sure this is wise?\" ")
       (unless (get-y-or-n-p)
         (return-from beam nil)))
@@ -7117,32 +6760,35 @@ was an event that requires aborting the operation carried out by the calling fun
             (print-prompt "Spock-  \"Wouldn't you rather take the Galileo?\" ")
             (when (get-y-or-n-p)
               (return-from beam nil))
-            (print-message (format nil "Your crew hides the Galileo to prevent capture by aliens.~%")))
-          (print-message (format nil "Landing party assembled, ready to beam up.~%"))
-          (print-message (format nil "~%Kirk whips out communicator...~%"))
-          (print-message (format nil "BEEP  BEEP  BEEP~%") :print-slowly t)
-          (print-message (format nil "~%~%\"Kirk to enterprise-  Lock on coordinates...energize.\"~%")))
+            (print-message *message-window* (format nil
+                                   "Your crew hides the Galileo to prevent capture by aliens.~%")))
+          (print-message *message-window* (format nil "Landing party assembled, ready to beam up.~%"))
+          (print-message *message-window* (format nil "~%Kirk whips out communicator...~%"))
+          (print-message *message-window* (format nil "BEEP  BEEP  BEEP~%") :print-slowly t)
+          (print-message *message-window* (format nil
+                                 "~%~%\"Kirk to enterprise-  Lock on coordinates...energize.\"~%")))
         ;; Going to planet
         (progn
-          (print-message (format nil "Scotty-  \"Transporter room ready, Sir.\"~%"))
-          (print-message
+          (print-message *message-window* (format nil "Scotty-  \"Transporter room ready, Sir.\"~%"))
+          (print-message *message-window*
            (format nil "~%Kirk and landing party prepare to beam down to planet surface.~%"))
-          (print-message (format nil "~%Kirk-  \"Energize.\"~%"))))
+          (print-message *message-window* (format nil "~%Kirk-  \"Energize.\"~%"))))
     (setf *action-taken-p* t)
-    (print-message (format nil "~%WWHOOOIIIIIRRRRREEEE.E.E.  .  .  .  .   .    .~%") :print-slowly t)
-    (skip-line)
+    (print-message *message-window*
+                   (format nil "~%WWHOOOIIIIIRRRRREEEE.E.E.  .  .  .  .   .    .~%~%")
+                   :print-slowly t)
     (when (> (random 1.0) 0.98)
-      (print-message (format nil "BOOOIIIOOOIIOOOOIIIOIING . . .~%") :print-slowly t)
-      (print-message (format nil "~%Scotty-  \"Oh my God!  I've lost them.\"~%"))
+      (print-message *message-window* (format nil "BOOOIIIOOOIIOOOOIIIOIING . . .~%") :print-slowly t)
+      (print-message *message-window* (format nil "~%Scotty-  \"Oh my God!  I've lost them.\"~%"))
       (finish 'transporter-failure)
       (return-from beam nil))
-    (print-message (format nil ".    .   .  .  .  .  .E.E.EEEERRRRRIIIIIOOOHWW~%") :print-slowly t)
+    (print-message *message-window* (format nil ".    .   .  .  .  .  .E.E.EEEERRRRRIIIIIOOOHWW~%") :print-slowly t)
     (setf *landedp* (not *landedp*))
     (decf *ship-energy* energy-needed)
-    (print-message (format nil "~%~%Transport complete.~%"))
+    (print-message *message-window* (format nil "~%~%Transport complete.~%"))
     (when (and *landedp*
                (shuttle-landed-p *ship-quadrant*))
-      (print-message (format nil "The shuttle craft Galileo is here!~%")))
+      (print-message *message-window* (format nil "The shuttle craft Galileo is here!~%")))
     (when (and (not *landedp*)
                *miningp*)
       (setf *dilithium-crystals-on-board-p* t)
@@ -7152,141 +6798,152 @@ was an event that requires aborting the operation carried out by the calling fun
 (defun deathray () ; C: deathray(void)
   "Use the big zapper."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (setf *action-taken-p* nil)
-  (skip-line)
+  (skip-line *message-window*)
   (cond
     ((string= *ship* +faerie-queene+)
-     (print-message (format nil "Ye Faerie Queene has no death ray.~%")))
+     (print-message *message-window* (format nil "Ye Faerie Queene has no death ray.~%")))
 
     ((= *enemies-here* 0)
-     (print-message (format nil "Sulu-  \"But Sir, there are no enemies in this quadrant.\"~%")))
+     (print-message *message-window*
+                    (format nil "Sulu-  \"But Sir, there are no enemies in this quadrant.\"~%")))
 
     ((damagedp +death-ray+)
-     (print-message (format nil "Death Ray is damaged.~%")))
+     (print-message *message-window* (format nil "Death Ray is damaged.~%")))
 
     (t
-     (print-message (format nil "Spock-  \"Captain, the 'Experimental Death Ray'~%"))
-     (print-message (format nil "  is highly unpredictible.  Considering the alternatives,~%"))
+     (print-message *message-window* (format nil "Spock-  \"Captain, the 'Experimental Death Ray'~%"))
+     (print-message *message-window*
+                    (format nil "  is highly unpredictible.  Considering the alternatives,~%"))
      (print-prompt "  are you sure this is wise?\" ")
      (unless (get-y-or-n-p)
        (return-from deathray nil))
-     (print-message (format nil "Spock-  \"Acknowledged.\"~%"))
+     (print-message *message-window* (format nil "Spock-  \"Acknowledged.\"~%"))
      (setf *action-taken-p* t)
-     (print-message (format nil "~%WHOOEE ... WHOOEE ... WHOOEE ... WHOOEE~%") :print-slowly t)
-     (print-message (format nil "Crew scrambles in emergency preparation.~%"))
-     (print-message (format nil "Spock and Scotty ready the death ray and~%"))
-     (print-message (format nil "prepare to channel all ship's power to the device.~%"))
-     (print-message (format nil "~%Spock-  \"Preparations complete, sir.\"~%"))
-     (print-message (format nil "Kirk-  \"Engage!\"~%"))
-     (print-message (format nil "~%WHIRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR~%") :print-slowly t)
+     (print-message *message-window*
+                    (format nil "~%WHOOEE ... WHOOEE ... WHOOEE ... WHOOEE~%") :print-slowly t)
+     (print-message *message-window* (format nil "Crew scrambles in emergency preparation.~%"))
+     (print-message *message-window* (format nil "Spock and Scotty ready the death ray and~%"))
+     (print-message *message-window* (format nil "prepare to channel all ship's power to the device.~%"))
+     (print-message *message-window* (format nil "~%Spock-  \"Preparations complete, sir.\"~%"))
+     (print-message *message-window* (format nil "Kirk-  \"Engage!\"~%"))
+     (print-message *message-window*
+                    (format nil "~%WHIRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR~%") :print-slowly t)
      (if (> (random 1.0) +deathray-failure-chance+)
          (progn
-           (print-message (format nil "Sulu- \"Captain!  It's working!\"~%") :print-slowly t)
-           (skip-line)
-           (when (> *enemies-here* 0)
-             (dead-enemy (aref *klingon-sectors* 1)
-                         (coord-ref *quadrant-contents* (aref *klingon-sectors* 1))
-                         (aref *klingon-sectors* 1)))
-           (print-message (format nil "Ensign Chekov-  \"Congratulations, Captain!\"~%"))
-           (print-message
+           (print-message *message-window*
+                          (format nil "Sulu- \"Captain!  It's working!\"~%~%") :print-slowly t)
+           ;; This loop works because dead-enemy always compacts the array of enemies so that
+           ;; current enemies are at the lowest indexes.
+           (do (enemy-sector)
+               ((<= *enemies-here* 0))
+             (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* 0)))
+             (dead-enemy enemy-sector (coord-ref *quadrant* enemy-sector) enemy-sector))
+           (print-message *message-window*
+                          (format nil "Ensign Chekov-  \"Congratulations, Captain!\"~%"))
+           (print-message *message-window*
             (format nil "~%Spock-  \"Captain, I believe the `Experimental Death Ray'~%"))
            (if (<= (random 1.0) 0.05)
-               (print-message (format nil "   is still operational.\"~%"))
+               (print-message *message-window* (format nil "   is still operational.\"~%"))
                (progn
-                 (print-message (format nil "   has been rendered nonfunctional.\"~%"))
+                 (print-message *message-window*
+                                (format nil "   has been rendered nonfunctional.\"~%"))
                  (setf (aref *device-damage* +death-ray+) 39.95)))
            ;; In the C source the victory check was done before reporting on the status of the
            ;; deathray. That seems backwards - the deathray status report is irrelevant and out
            ;; of place after the text explaining that the game has been won.
-           (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+           (when (= (+ *remaining-klingons*
+                       (length *commander-quadrants*) *remaining-super-commanders*)
+                    0)
              (finish 'won)))
          (let ((r (random 1.0)))
            ;; Pick failure method
            (cond
              ((<= r 0.30)
-              (print-message (format nil "Sulu- \"Captain!  It's working!\"~%") :print-slowly t)
-              (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
-              (print-message (format nil "***MATTER-ANTIMATTER IMPLOSION IMMINENT!~%"))
-              (print-message
+              (print-message *message-window*
+                             (format nil "Sulu- \"Captain!  It's working!\"~%") :print-slowly t)
+              (print-message *message-window*
+                             (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
+              (print-message *message-window*
+                             (format nil "***MATTER-ANTIMATTER IMPLOSION IMMINENT!~%"))
+              (print-message *message-window*
                (format nil "~%***RED ALERT!  RED A*L********************************~%")
                :print-slowly t)
               (print-stars)
-              (print-message
+              (print-message *message-window*
                (format nil "******************   KA-BOOM!!!!   *******************~%")
                :print-slowly t)
               (kaboom))
 
              ((<= r 0.55)
-              (print-message
+              (print-message *message-window*
                (format nil "Sulu- \"Captain!  Yagabandaghangrapl, brachriigringlanbla!\"~%")
                :print-slowly t)
-              (print-message (format nil "Lt. Uhura-  \"Graaeek!  Graaeek!\"~%"))
-              (print-message (format nil "Spock-  \"Fascinating!  . . . All humans aboard~%"))
-              (print-message (format nil "  have apparently been transformed into strange mutations.~%"))
-              (print-message (format nil"  Vulcans do not seem to be affected.~%"))
-              (print-message (format nil "~%Kirk-  \"Raauch!  Raauch!\"~%"))
+              (print-message *message-window* (format nil "Lt. Uhura-  \"Graaeek!  Graaeek!\"~%"))
+              (print-message *message-window* (format nil "Spock-  \"Fascinating!  . . . All humans aboard~%"))
+              (print-message *message-window* (format nil "  have apparently been transformed into strange mutations.~%"))
+              (print-message *message-window* (format nil"  Vulcans do not seem to be affected.~%"))
+              (print-message *message-window* (format nil "~%Kirk-  \"Raauch!  Raauch!\"~%"))
               (finish 'death-ray-malfunction))
 
              ((<= r 0.75)
-              (print-message (format nil "Sulu- \"Captain!  It's   --WHAT?!?!\"~%") :print-slowly t)
-              (print-message "~%Spock-  \"I believe the word is")
-              (print-message " *ASTONISHING*"  :print-slowly t)
-              (print-message (format nil " Mr. Sulu.~%"))
+              (print-message *message-window*
+                             (format nil "Sulu- \"Captain!  It's   --WHAT?!?!\"~%") :print-slowly t)
+              (print-message *message-window* "~%Spock-  \"I believe the word is")
+              (print-message *message-window* " *ASTONISHING*"  :print-slowly t)
+              (print-message *message-window* (format nil " Mr. Sulu.~%"))
               (do ((i 0 (1+ i)))
                   ((>= i +quadrant-size+))
                 (do ((j 0 (1+ j)))
                     ((>= j +quadrant-size+))
-                  (when (string= (aref *quadrant-contents* i j) +empty-sector+)
-                    (setf (aref *quadrant-contents* i j) +thing+))))
-              (print-message (format nil "  Captain, our quadrant is now infested with~%"))
-              (print-message (format nil " - - - - - -  *THINGS*.~%") :print-slowly t)
-              (print-message (format nil "  I have no logical explanation.\"~%")))
+                  (when (string= (aref *quadrant* i j) +empty-sector+)
+                    (setf (aref *quadrant* i j) +thing+))))
+              (print-message *message-window*
+                             (format nil "  Captain, our quadrant is now infested with~%"))
+              (print-message *message-window*
+                             (format nil " - - - - - -  *THINGS*.~%") :print-slowly t)
+              (print-message *message-window* (format nil "  I have no logical explanation.\"~%")))
 
              (t
-              (print-message
+              (print-message *message-window*
                (format nil "Sulu- \"Captain!  The Death Ray is creating tribbles!\"~%")
                :print-slowly t)
-              (print-message (format nil "Scotty-  \"There are so many tribbles down here~%"))
-              (print-message (format nil "  in Engineering, we can't move for 'em, Captain.\"~%"))
+              (print-message *message-window*
+                             (format nil "Scotty-  \"There are so many tribbles down here~%"))
+              (print-message *message-window*
+                             (format nil "  in Engineering, we can't move for 'em, Captain.\"~%"))
               (finish 'death-ray-creates-tribbles))))))))
 
 (defun mine () ; C: mine(void)
   "Mine dilithium from a planet."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (cond
     ((not *landedp*)
-     (print-message (format nil "Mining party not on planet.~%")))
+     (print-message *message-window* (format nil "Mining party not on planet.~%")))
 
-    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'mined)
-     (print-message (format nil "This planet has already been mined for dilithium.~%")))
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))) 'mined)
+     (print-message *message-window* (format nil "This planet has already been mined for dilithium.~%")))
 
-    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))) 'absent)
-     (print-message (format nil "No dilithium crystals on this planet.~%")))
+    ((eql (planet-crystals (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))) 'absent)
+     (print-message *message-window* (format nil "No dilithium crystals on this planet.~%")))
 
     (*miningp*
-     (print-message (format nil "You've already mined enough crystals for this trip.~%")))
+     (print-message *message-window* (format nil "You've already mined enough crystals for this trip.~%")))
 
     ((and *dilithium-crystals-on-board-p*
           (= *crystal-work-probability* 0.05))
-     (print-message (format nil "With all those fresh crystals aboard the ~A~%" (format-ship-name)))
-     (print-message (format nil "there's no reason to mine more at this time.~%")))
+     (print-message *message-window* (format nil "With all those fresh crystals aboard the ~A~%" (format-ship-name)))
+     (print-message *message-window* (format nil "there's no reason to mine more at this time.~%")))
 
     (t
      (setf *time-taken-by-current-operation*
            (* (+ 0.1 (* 0.2 (random 1.0)))
-              (planet-class (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal)))))
+              (planet-class (rest (assoc *ship-quadrant* *planets* :test #'coord-equal)))))
      (unless (consume-time)
-       (print-message (format nil "~%Mining operation complete.~%"))
-       (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
+       (print-message *message-window* (format nil "~%Mining operation complete.~%"))
+       (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
          (setf (planet-crystals pl) 'mined)
-         (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl))
+         (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) pl))
        (setf *miningp* t)
        (setf *action-taken-p* t)))))
 
@@ -7301,32 +6958,29 @@ the planet."
     (when (damagedp +transporter+)
       (finish finish-reason)
       (return-from quadrant-exit-while-on-planet nil))
-    (print-message (format nil "Scotty rushes to the transporter controls.~%"))
+    (print-message *message-window* (format nil "Scotty rushes to the transporter controls.~%"))
     (when *shields-are-up-p*
-      (print-message (format nil "But with the shields up it's hopeless.~%"))
+      (print-message *message-window* (format nil "But with the shields up it's hopeless.~%"))
       (finish finish-reason)
       (return-from quadrant-exit-while-on-planet nil))
-    (print-message (format nil "His desperate attempt to rescue you . . .") :print-slowly t)
+    (print-message *message-window* (format nil "His desperate attempt to rescue you . . .") :print-slowly t)
     (if (<= (random 1.0) 0.05)
         (progn
-          (print-message (format nil "fails.~%"))
+          (print-message *message-window* (format nil "fails.~%"))
           (finish finish-reason))
         (progn
-          (print-message (format nil "SUCCEEDS!~%"))
+          (print-message *message-window* (format nil "SUCCEEDS!~%"))
           (when *miningp*
             (setf *miningp* nil)
-            (print-message "The crystals mined were ")
+            (print-message *message-window* "The crystals mined were ")
             (if (<= (random 1.0) 0.25)
-                (print-message (format nil "lost.~%"))
+                (print-message *message-window* (format nil "lost.~%"))
                 (progn
-                  (print-message (format nil "saved.~%"))
+                  (print-message *message-window* (format nil "saved.~%"))
                   (setf *dilithium-crystals-on-board-p* t))))))))
 
 (defun emergency-supernova-exit () ; C: atover()
   "Handle emergency exit from the quadrant due to a supernova."
-
-  (when *window-interface-p*
-    (select-window *message-window*))
 
   (quadrant-exit-while-on-planet 'nova-destroys-planet-while-landed)
   ;; TODO - is this the correct place for the shuttle craft check?
@@ -7335,41 +6989,42 @@ the planet."
     (finish 'super-nova-destroys-shuttle))
   (unless *all-done-p*
     ;; Inform captain of attempt to reach safety
-    (skip-line)
+    (skip-line *message-window*)
     (do ((power (* 0.75 *ship-energy*))
          (required-distance (+ 1.4142 (random 1.0))))
         ;; Repeat if another supernova
         ((not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))))
       (when *just-in-p*
-        (print-message (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
-        (print-message (format nil "The ~A has stopped in a quadrant containing~%" (format-ship-name)))
-        (print-message (format nil "   a supernova.~%") :print-slowly t)
-        (skip-line))
-      (print-message (format nil "***Emergency automatic override attempts to hurl ~A~%" (format-ship-name)))
-      (print-message (format nil "safely out of quadrant.~%"))
+        (print-message *message-window* (format nil "***RED ALERT!  RED ALERT!~%") :print-slowly t)
+        (print-message *message-window*
+         (format nil "The ~A has stopped in a quadrant containing~%" (format-ship-name)))
+        (print-message *message-window* (format nil "   a supernova.~%~%") :print-slowly t))
+      (print-message *message-window*
+       (format nil "***Emergency automatic override attempts to hurl ~A~%" (format-ship-name)))
+      (print-message *message-window* (format nil "safely out of quadrant.~%"))
       (setf (quadrant-chartedp (coord-ref *galaxy* *ship-quadrant*)) t)
       ;; Try to use warp engines
       (when (damagedp +warp-engines+)
-        (print-message (format nil "~%Warp engines damaged.~%"))
+        (print-message *message-window* (format nil "~%Warp engines damaged.~%"))
         (finish 'destroyed-by-supernova)
         (return-from emergency-supernova-exit nil))
       (setf *warp-factor* (+ 6.0 (* 2.0 (random 1.0))))
-      (print-message (format nil "Warp factor set to ~A~%" (truncate *warp-factor*)))
+      (print-message *message-window* (format nil "Warp factor set to ~,1F~%" *warp-factor*))
       (let ((course (* 12.0 (random 1.0))) ; How dumb! (really?)
             (distance (/ power (* (expt *warp-factor* 3) (if *shields-are-up-p* 2 1)))))
         (when (< required-distance distance)
           (setf distance required-distance))
-        (setf *time-taken-by-current-operation* (calculate-warp-movement-time :distance distance
-                                                                              :warp-factor *warp-factor*))
+        (setf *time-taken-by-current-operation*
+              (calculate-warp-movement-time :distance distance :warp-factor *warp-factor*))
         (setf *just-in-p* nil)
         (setf *in-orbit-p* nil)
         (execute-warp-move course distance))
-      (when (not *just-in-p*)
+      (unless *just-in-p*
         ;; This is bad news, we didn't leave the quadrant.
         (when *all-done-p*
           (return-from emergency-supernova-exit nil))
         ;; TODO - Not true in the case where the ship was blocked on the way out of the quadrant.
-        (print-message (format nil "~%Insufficient energy to leave quadrant.~%"))
+        (print-message *message-window* (format nil "~%Insufficient energy to leave quadrant.~%"))
         (finish 'destroyed-by-supernova)
         (return-from emergency-supernova-exit nil)))
     (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
@@ -7378,71 +7033,67 @@ the planet."
 (defun orbit () ; C: orbit(void)
   "Enter standard orbit."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (cond
     (*in-orbit-p*
-     (print-message (format nil "Already in standard orbit.~%")))
+     (print-message *message-window* (format nil "Already in standard orbit.~%")))
 
     ((and (damagedp +warp-engines+)
           (damagedp +impluse-engines+))
-     (print-message (format nil "Both warp and impulse engines damaged.~%")))
+     (print-message *message-window* (format nil "Both warp and impulse engines damaged.~%")))
 
     ((or (not *current-planet*)
          (> (abs (- (coordinate-x *ship-sector*) (coordinate-x *current-planet*))) 1)
          (> (abs (- (coordinate-y *ship-sector*) (coordinate-y *current-planet*))) 1))
-     (print-message (format nil "~A not adjacent to planet.~%~%" (format-ship-name))))
+     (print-message *message-window* (format nil "~A not adjacent to planet.~%~%" (format-ship-name))))
 
     (t
      (setf *time-taken-by-current-operation* (+ 0.02 (* 0.03 (random 1.0))))
-     (print-message (format nil "Helmsman Sulu-  \"Entering standard orbit, Sir.\"~%"))
-     (update-condition)
+     (print-message *message-window* (format nil "Helmsman Sulu-  \"Entering standard orbit, Sir.\"~%"))
+     (setf *dockedp* nil)
      (unless (consume-time)
        (setf *height-of-orbit* (+ 1400.0 (* 7200.0 (random 1.0))))
-       (print-message (format nil "Sulu-  \"Entered orbit at altitude ~,2F kilometers.\"~%" *height-of-orbit*))
+       (print-message *message-window*
+                      (format nil "Sulu-  \"Entered orbit at altitude ~,2F kilometers.\"~%"
+                              *height-of-orbit*))
        (setf *in-orbit-p* t)
        (setf *action-taken-p* t)))))
 
-;; TODO - respond in a reasonable way if there is an inhabited planet in the quadrant. There will
-;;        never be dilithium crystals (that's how the initialization code works - presumably if
-;;        the planet is inhabited the crystals have already been mined, or are not available for
-;;        the player to mine) but at least print the planet name.
 (defun sensor () ; C: sensor(void)
-  "Examine planets in this quadrant."
+  "Examine planets in this quadrant. Inhabited planets have a name but no dilithium crystals."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (cond
     ((and (damagedp +short-range-sensors+)
           (not *dockedp*))
-     (print-message (format nil "Short range sensors damaged.~%")))
+     (print-message *message-window* (format nil "Short range sensors damaged.~%")))
 
     ((not *current-planet*) ; sector coordinates or nil
-     (print-message (format nil "Spock- \"No planet in this quadrant, Captain.\"~%")))
+     (print-message *message-window* (format nil "Spock- \"No planet in this quadrant, Captain.\"~%")))
 
     (t ; Go ahead and scan even if the planet has been scanned before
-     (let ((pl (rest (assoc *ship-quadrant* *planet-information* :test #'coord-equal))))
-       (print-message (format nil "Spock-  \"Sensor scan for ~A -~%"
+     (let ((pl (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
+       (print-message *message-window* (format nil "Spock-  \"Sensor scan for ~A -~%"
                               (format-quadrant-coordinates *ship-quadrant*)))
-       ;; TODO - use pretty print justification
-       (print-message (format nil "~%         Planet at ~A is of class ~A.~%"
+       (print-message *message-window* (format nil "~%         Planet "))
+       (when (planet-inhabitedp pl)
+         (print-message *message-window* (format nil "'~A' " (planet-name pl))))
+       (print-message *message-window* (format nil "at ~A is of class ~A.~%"
                               (format-sector-coordinates *current-planet*)
                               (format-planet-class (planet-class pl))))
        (when (shuttle-landed-p *ship-quadrant*)
-         ;; TODO - use pretty print justification
-         (print-message (format nil "         Sensors show Galileo still on surface.~%")))
-       ;; TODO - use pretty print justification
-       (print-message "         Readings indicate")
-       (when (not (eql (planet-crystals pl) 'present))
-         (print-message " no"))
-       (print-message (format nil " dilithium crystals present.\"~%"))
+         (print-message *message-window* (format nil "         Sensors show Galileo still on surface.~%")))
+       (print-message *message-window* "         Readings indicate")
+       (unless (eql (planet-crystals pl) 'present)
+         (print-message *message-window* " no"))
+       (print-message *message-window* (format nil " dilithium crystals present.\"~%"))
        (setf (planet-knownp pl) t)
-       (rplacd (assoc *ship-quadrant* *planet-information* :test #'coord-equal) pl)))))
+       (rplacd (assoc *ship-quadrant* *planets* :test #'coord-equal) pl)))))
 
+;; TODO - a mayday failed but 2 (!!) sensor scans were displayed for the destination quadrant
+;;        before the end of game messages were displayed
+;; TODO - a mayday failed but the location of the ship in the starchart was shown as the
+;;        destination quadrant that would have been the destination if the mayday had succeeded
 (defun mayday () ; C: mayday(void)
   "Yell for help from nearest starbase. There's more than one way to move in this game!
 
@@ -7463,21 +7114,26 @@ it's your problem."
   ;; Test for conditions which prevent calling for help.
   (cond
     (*dockedp*
-     (print-message (format nil "Lt. Uhura-  \"But Captain, we're already docked.\"~%")))
+     (print-message *message-window* (format nil "Lt. Uhura-  \"But Captain, we're already docked.\"~%")))
 
     ((damagedp +subspace-radio+)
-     (print-message (format nil "Subspace radio damaged.~%")))
+     (print-message *message-window* (format nil "Subspace radio damaged.~%")))
 
     ((= (length *base-quadrants*) 0)
-     (print-message (format nil "Lt. Uhura-  \"Captain, I'm not getting any response from Starbase.\"~%")))
+     (print-message *message-window*
+      (format nil "Lt. Uhura-  \"Captain, I'm not getting any response from Starbase.\"~%")))
+
+    (*cloakedp*
+     (print-message *message-window*
+      (format nil "Lt. Uhura-  \"Captain, we can't use the subspace radio while cloaked.\"")))
 
     (*landedp*
-     (print-message (format nil "You must be aboard the ~A.~%" (format-ship-name))))
+     (print-message *message-window* (format nil "You must be aboard the ~A.~%" (format-ship-name))))
 
     (t ; OK -- call for help from nearest starbase
      (setf *calls-for-help* (1+ *calls-for-help*))
      (let (dest-dist probf)
-       (if (coordinate-p *base-sector*)
+       (if (sector-coordinate-p *base-sector*)
            ;; There's one in this quadrant
            (setf dest-dist (distance *base-sector* *ship-sector*))
            ;; Find the nearest starbase in another quadrant
@@ -7491,11 +7147,12 @@ it's your problem."
                  (setf dest-dist (* +quadrant-size+ (distance bq *ship-quadrant*)))
                  (setf dest-quadrant bq)))
              ;; The destination is not in the current quadrant so set up a new quadrant.
-             (setf *ship-quadrant* dest-quadrant)
+             (setf (coordinate-x *ship-quadrant*) (coordinate-x dest-quadrant))
+             (setf (coordinate-y *ship-quadrant*) (coordinate-y dest-quadrant))
              (new-quadrant)))
        ;; dematerialize starship
-       (setf (coord-ref *quadrant-contents* *ship-sector*) +empty-sector+)
-       (print-message (format nil "~%Starbase in ~A responds-- ~A dematerializes.~%"
+       (setf (coord-ref *quadrant* *ship-sector*) +empty-sector+)
+       (print-message *message-window* (format nil "~%Starbase in ~A responds-- ~A dematerializes.~%"
                               (format-quadrant-coordinates *ship-quadrant*)
                               (format-ship-name)))
        (setf *ship-sector* nil)
@@ -7507,12 +7164,12 @@ it's your problem."
          (setf x (truncate (+ (coordinate-x *base-sector*) (* 3.0 (random 1.0)) -1))) ; C: game.base.x+3.0*Rand()-1;
          (setf y (truncate (+ (coordinate-y *base-sector*) (* 3.0 (random 1.0)) -1)))
          (when (and (valid-sector-p x y)
-                    (string= (aref *quadrant-contents* x y) +empty-sector+))
+                    (string= (aref *quadrant* x y) +empty-sector+))
            ;; found one -- finish up
-           (setf *ship-sector* (make-coordinate :x x :y y))
+           (setf *ship-sector* (make-sector-coordinate :x x :y y))
            (setf found-empty-sector-p t)))
-       (when (not (coordinate-p *ship-sector*))
-         (print-message (format nil "~%You have been lost in space...~%"))
+       (unless (sector-coordinate-p *ship-sector*)
+         (print-message *message-window* (format nil "~%You have been lost in space...~%"))
          (finish 'failed-to-rematerialize)
          (return-from mayday nil))
        ;; Give starbase three chances to rematerialize starship
@@ -7521,16 +7178,16 @@ it's your problem."
             (succeeds-p nil))
            ((or succeeds-p
                 (>= three-tries 3 ))
-            (when (not succeeds-p)
-              (setf (coord-ref *quadrant-contents* *ship-sector*) +thing+) ; question mark
+            (unless succeeds-p
+              (setf (coord-ref *quadrant* *ship-sector*) +thing+) ; question mark
               (setf *alivep* nil)
               ;; Don't call the sensor scan even if in curses mode. The ship has been
               ;; lost/destroyed and Spock isn't doing anything now. Fill the windows so the player
               ;; isn't left with a blank screen.
-              (draw-windows)
+              (update-windows)
               (finish 'failed-to-rematerialize)
               (return-from mayday nil)))
-         (print-message (format nil "~A attempt to re-materialize ~A "
+         (print-message *message-window* (format nil "~A attempt to re-materialize ~A "
                                 (cond
                                   ((= three-tries 0) "1st")
                                   ((= three-tries 1) "2nd")
@@ -7540,106 +7197,104 @@ it's your problem."
          (if (> (random 1.0) probf)
              (setf succeeds-p t)
              (progn
-               (textcolor +red+)
-               (print-message (format nil "fails.~%"))
-               (textcolor +default-color+)))
+               (set-text-color *message-window* +red+)
+               (print-message *message-window* (format nil "fails.~%"))
+               (set-text-color *message-window* +default-color+)))
          (sleep 0.500)) ; half of a second?
-       (setf (coord-ref *quadrant-contents* *ship-sector*) *ship*)
-       (textcolor +green+)
-       (print-message (format nil "succeeds.~%"))
-       (textcolor +default-color+)
+       (setf (coord-ref *quadrant* *ship-sector*) *ship*)
+       (set-text-color *message-window* +green+)
+       (print-message *message-window* (format nil "succeeds.~%"))
+       (set-text-color *message-window* +default-color+)
        (dock))
-     (print-message (format nil "~%Lt. Uhura-  \"Captain, we made it!\"~%")))))
+     (print-message *message-window* (format nil "~%Lt. Uhura-  \"Captain, we made it!\"~%")))))
 
-;; TODO - there is no reason to limit the report to uninhabited planets. Sure, the only tactical
-;;        reason for the report is to remember where the crystals were located, but go ahead and
-;;        display inhabited worlds too. This is a "planet report" and the player gets a better
-;;        sense of having a history in the game if all the planets that were scanned are reported.
 (defun survey () ; C: survey(void)
-  "Report on (uninhabited) planets in the galaxy."
+  "Report on known planets in the galaxy."
 
-  (if *window-interface-p*
-      (if *planet-report-window*
-          (select-window *planet-report-window* :clear-window t)
-          (progn
-            (select-window *message-window*)
-            (skip-line)))
-      (skip-line))
+  (if (eql *planet-report-window* *message-window*)
+      (skip-line *planet-report-window*)
+      (clear-window *planet-report-window*))
 
   (if *planet-report-window*
-      (print-out (format nil "~36@A~%" "KNOWN PLANETS"))
-      (print-out (format nil "Spock-  \"Planet report follows, Captain.\"~%~%")))
+      (print-out *planet-report-window* (format nil "~36@A~%" "KNOWN PLANETS"))
+      (print-out *planet-report-window*
+                 (format nil "Spock-  \"Planet report follows, Captain.\"~%~%")))
   (let ((one-planet-knownp-p nil)
         pl)
-    (dolist (p-cons *planet-information*)
+    (dolist (p-cons *planets*)
       (setf pl (rest p-cons))
       (unless (planet-destroyedp pl)
-        (when (and (planet-knownp pl)
-                   (not (planet-inhabitedp pl)))
+        (when (planet-knownp pl)
           (setf one-planet-knownp-p t)
-          (print-out (format nil "~A  class ~A  "
+          (print-out *planet-report-window* (format nil "~A  class ~A  "
                              (format-quadrant-coordinates (first p-cons))
                              (format-planet-class (planet-class pl))))
-          (unless (eql (planet-crystals pl) 'present)
-            (print-out "no "))
-          (print-out (format nil "dilithium crystals present.~%"))
-          (when (shuttle-landed-p (first p-cons))
-            (print-out (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))
+          (if (planet-inhabitedp pl)
+              (print-out *planet-report-window* (format nil "~A~%" (planet-name pl)))
+              (progn
+                (unless (eql (planet-crystals pl) 'present)
+                  (print-out *planet-report-window* "no "))
+                (print-out *planet-report-window* (format nil "dilithium crystals present.~%"))
+                (when (shuttle-landed-p (first p-cons))
+                  (print-out *planet-report-window*
+                             (format nil "~58@A~%" "Shuttle Craft Galileo on surface."))))))))
     (unless one-planet-knownp-p
-      (print-out (format nil "No information available.~%")))))
+      (print-out *planet-report-window* (format nil "No information available.~%")))))
 
 (defun use-crystals () ; C: usecrystals(void)
   "Use dilithium crystals."
 
-  (setf *action-taken-p* nil)
-  (when (not *dilithium-crystals-on-board-p*)
-    (print-message (format nil "~%No dilithium crystals available.~%"))
+  (unless *dilithium-crystals-on-board-p*
+    (print-message *message-window* (format nil "~%No dilithium crystals available.~%"))
     (return-from use-crystals nil))
   (when (>= *ship-energy* 1000.0)
-    (print-message (format nil "~%Spock-  \"Captain, Starfleet Regulations prohibit such an operation~%"))
-    (print-message (format nil "  except when Condition Yellow exists due to low energy supply.~%"))
+    (print-message *message-window* (format nil "~%Spock-  \"Captain, Starfleet Regulations prohibit such an operation~%"))
+    (print-message *message-window*
+                   (format nil "  except when Condition Yellow exists due to low energy supply.~%"))
     (return-from use-crystals nil))
 
-  (print-message (format nil "~%Spock- \"Captain, I must warn you that loading~%"))
-  (print-message (format nil "  raw dilithium crystals into the ship's power~%"))
-  (print-message (format nil "  system may risk a severe explosion.~%"))
+  (print-message *message-window* (format nil "~%Spock- \"Captain, I must warn you that loading~%"))
+  (print-message *message-window* (format nil "  raw dilithium crystals into the ship's power~%"))
+  (print-message *message-window* (format nil "  system may risk a severe explosion.~%"))
   (print-prompt "  Are you sure this is wise?\" ")
   (unless (get-y-or-n-p)
     (return-from use-crystals nil))
-  (print-message (format nil "~%Engineering Officer Scott-  \"(GULP) Aye Sir.~%"))
-  (print-message (format nil "  Mr. Spock and I will try it.\"~%"))
-  (print-message (format nil "~%Spock-  \"Crystals in place, Sir.~%"))
-  (print-message (format nil "  Ready to activate circuit.\"~%"))
-  (print-message (format nil "~%Scotty-  \"Keep your fingers crossed, Sir!\"~%") :print-slowly t)
+  (print-message *message-window* (format nil "~%Engineering Officer Scott-  \"(GULP) Aye Sir.~%"))
+  (print-message *message-window* (format nil "  Mr. Spock and I will try it.\"~%"))
+  (print-message *message-window* (format nil "~%Spock-  \"Crystals in place, Sir.~%"))
+  (print-message *message-window* (format nil "  Ready to activate circuit.\"~%"))
+  (print-message *message-window*
+                 (format nil "~%Scotty-  \"Keep your fingers crossed, Sir!\"~%") :print-slowly t)
   (when (<= (random 1.0) *crystal-work-probability*)
-    (print-message (format nil "  \"Activating now! - - No good!  It's***~%") :print-slowly t)
+    (print-message *message-window*
+                   (format nil "  \"Activating now! - - No good!  It's***~%") :print-slowly t)
 
-    (print-message
+    (print-message *message-window*
      (format nil "~%***RED ALERT!  RED A*L********************************~%") :print-slowly t)
     (print-stars)
-    (print-message (format nil "******************   KA-BOOM!!!!   *******************~%")
+    (print-message *message-window*
+                   (format nil "******************   KA-BOOM!!!!   *******************~%")
                    :print-slowly t)
     (kaboom)
     (return-from use-crystals nil))
   (incf *ship-energy* (* 5000.0 (+ 1.0 (* 0.9 (random 1.0)))))
-  (print-message (format nil "  \"Activating now! - - ~%") :print-slowly t)
-  (print-message (format nil "   The instruments~%"))
-  (print-message (format nil "   are going crazy, but I think it's~%"))
-  (print-message (format nil "   going to work!!  Congratulations, Sir!\"~%"))
+  (print-message *message-window* (format nil "  \"Activating now! - - ~%") :print-slowly t)
+  (print-message *message-window* (format nil "   The instruments~%"))
+  (print-message *message-window* (format nil "   are going crazy, but I think it's~%"))
+  (print-message *message-window* (format nil "   going to work!!  Congratulations, Sir!\"~%"))
   (setf *crystal-work-probability* (* *crystal-work-probability* 2.0))
   (setf *action-taken-p* t))
 
+;; TODO - how to save and restore variables in other packages? :: seems inelegant
 (defun restore-game-from-checkpoint (&optional (file-name +checkpoint-file-name+)) ; C: bool thaw(void)
   "Restore a saved game. Return true or false for restore success or failure."
 
   (with-open-file (s file-name :direction :input :if-does-not-exist nil)
-    (setf events::*future-events* (read s))
+    (setf sst-events::*event-queue* (read s))
     (setf *random-state* (read s))
-    (setf *line-tokens* (read s))
-    (setf *input-item* (read s))
+    (setf sst-terminal-io::*line-tokens* (read s))
     (setf *ship-quadrant* (read s))
     (setf *ship-sector* (read s))
-    (setf *conquest-quadrant* (read s))
     (setf *tournament-number* (read s))
     (setf *game-length* (read s))
     (setf *skill-level* (read s))
@@ -7677,7 +7332,7 @@ it's your problem."
     (setf *destroyed-stars* (read s))
     (setf *destroyed-inhabited-planets* (read s))
     (setf *destroyed-uninhabited-planets* (read s))
-    (setf *planet-information* (read s))
+    (setf *planets* (read s))
     (setf *stardate* (read s))
     (setf *base-quadrants* (read s))
     (setf *commander-quadrants* (read s))
@@ -7685,11 +7340,8 @@ it's your problem."
     (setf *galaxy* (read s))
     (setf *starchart* (read s))
     (setf *snapshot* (read s))
-    (setf *quadrant-contents* (read s))
-    (setf *klingon-energy* (read s))
-    (setf *klingon-distance* (read s))
-    (setf *klingon-average-distance* (read s))
-    (setf *klingon-sectors* (read s))
+    (setf *quadrant* (read s))
+    (setf *quadrant-enemies* (read s))
     (setf *tholian-sector* (read s))
     (setf *base-sector* (read s))
     (setf *base-under-attack-quadrant* (read s))
@@ -7735,16 +7387,9 @@ it's your problem."
     (setf *current-planet* (read s))
     (setf *condition* (read s))
     (setf *time-taken-by-current-operation* (read s))
-    (setf *last-chart-update* (read s))
     (setf *crystal-work-probability* (read s))
-    (setf *probe-reported-quadrant* (read s))
-    (setf *probe-x-coord* (read s))
-    (setf *probe-y-coord* (read s))
-    (setf *probe-x-increment* (read s))
-    (setf *probe-y-increment* (read s))
-    (setf *moves-for-probe* (read s))
+    (setf *probe* (read s))
     (setf *probes-available* (read s))
-    (setf *probe-is-armed-p* (read s))
     (setf *height-of-orbit* (read s))
     (setf *thing-location* (read s))
     (setf *things-here* (read s))
@@ -7759,13 +7404,11 @@ it's your problem."
 loop, in effect continuously saving the current state of the game."
 
   (with-open-file (s file-name :direction :output :if-exists :supersede)
-    (print events::*future-events* s)
+    (print sst-events::*event-queue* s)
     (print *random-state* s)
-    (print *line-tokens* s)
-    (print *input-item* s)
+    (print sst-terminal-io::*line-tokens* s)
     (print *ship-quadrant* s)
     (print *ship-sector* s)
-    (print *conquest-quadrant* s)
     (print *tournament-number* s)
     (print *game-length* s)
     (print *skill-level* s)
@@ -7803,7 +7446,7 @@ loop, in effect continuously saving the current state of the game."
     (print *destroyed-stars* s)
     (print *destroyed-inhabited-planets* s)
     (print *destroyed-uninhabited-planets* s)
-    (print *planet-information* s)
+    (print *planets* s)
     (print *stardate* s)
     (print *base-quadrants* s)
     (print *commander-quadrants* s)
@@ -7811,11 +7454,8 @@ loop, in effect continuously saving the current state of the game."
     (print *galaxy* s)
     (print *starchart* s)
     (print *snapshot* s)
-    (print *quadrant-contents* s)
-    (print *klingon-energy* s)
-    (print *klingon-distance* s)
-    (print *klingon-average-distance* s)
-    (print *klingon-sectors* s)
+    (print *quadrant* s)
+    (print *quadrant-enemies* s)
     (print *tholian-sector* s)
     (print *base-sector* s)
     (print *base-under-attack-quadrant* s)
@@ -7861,16 +7501,9 @@ loop, in effect continuously saving the current state of the game."
     (print *current-planet* s)
     (print *condition* s)
     (print *time-taken-by-current-operation* s)
-    (print *last-chart-update* s)
     (print *crystal-work-probability* s)
-    (print *probe-reported-quadrant* s)
-    (print *probe-x-coord* s)
-    (print *probe-y-coord* s)
-    (print *probe-x-increment* s)
-    (print *probe-y-increment* s)
-    (print *moves-for-probe* s)
+    (print *probe* s)
     (print *probes-available* s)
-    (print *probe-is-armed-p* s)
     (print *height-of-orbit* s)
     (print *thing-location* s)
     (print *things-here* s)
@@ -7883,71 +7516,75 @@ loop, in effect continuously saving the current state of the game."
 Return game type, tournament number, and whether or not this is a restored game."
 
   (do ((game-type nil)
-       (tournament-number nil))
+       (tournament-number nil)
+       input-item)
       (game-type
        (return-from get-game-type (values game-type tournament-number)))
-    (when (= (length *line-tokens*) 0)
+    (unless (input-available-p)
       (print-prompt "Would you like a Regular or Tournament game? "))
-    (scan-input)
-    (setf game-type (match-token *input-item* (list "regular" "tournament")))
+    (setf input-item (scan-input))
+    (setf game-type (match-token input-item (list "regular" "tournament")))
     (cond
       ((string= game-type "tournament")
-       (unless *line-tokens*
+       (unless (input-available-p)
          (print-prompt "Type in name or number of tournament: "))
-       (scan-input)
-       (if *input-item*
-           (setf tournament-number *input-item*)
+       (setf input-item (scan-input))
+       (if input-item
+           (setf tournament-number input-item)
            (setf game-type nil))) ; no tournament name or number input so start over
 
       ((string= game-type "regular")
        t) ; Acknowledge the selection because any other input is an error.
 
       (t
-       (when *input-item*
-         (print-message (format nil "What is \"~A\"?~%" *input-item*)))
+       (when input-item
+         (print-message *message-window* (format nil "What is \"~A\"?~%" input-item)))
        (clear-type-ahead-buffer)))))
 
 (defun get-game-length () ; C: choose()
   "A game parameter used as a multiplier for some game settings."
 
-  (do ((game-length nil))
+  (do ((game-length nil)
+       input-item)
       (game-length
        (setf *game-length* game-length))
-    (when (= (length *line-tokens*) 0)
+    (unless (input-available-p)
       (print-prompt "Would you like a Short, Medium, or Long game? "))
-    (scan-input)
-    (setf game-length (match-token *input-item* (list "short" "medium" "long")))
+    (setf input-item (scan-input))
+    (setf game-length (match-token input-item (list "short" "medium" "long")))
     (unless game-length
-      (when *input-item*
-        (print-message (format nil "What is \"~A\"?~%" *input-item*)))
+      (when input-item
+        (print-message *message-window* (format nil "What is \"~A\"?~%" input-item)))
       (clear-type-ahead-buffer))))
 
 (defun get-skill-level () ; C: choose()
 
-  (do ((skill-level nil))
+  (do ((skill-level nil)
+       input-item)
       (skill-level
        (setf *skill-level* (first (rassoc skill-level *skill-level-labels* :test #'string=))))
-    (when (= (length *line-tokens*) 0)
+    (unless (input-available-p)
       (print-prompt "Are you a Novice, Fair, Good, Expert, or Emeritus player? "))
-    (scan-input)
-    (setf skill-level (match-token *input-item* (list "novice" "fair" "good" "expert" "emeritus")))
+    (setf input-item (scan-input))
+    (setf skill-level (match-token input-item (list "novice" "fair" "good" "expert" "emeritus")))
     (unless skill-level
-      (when *input-item*
-        (print-message (format nil "What is \"~A\"?~%" *input-item*)))
+      (when input-item
+        (print-message *message-window* (format nil "What is \"~A\"?~%" input-item)))
       (clear-type-ahead-buffer))))
 
 ;; TODO - add an option to generate a password if the player can't be bothered to make one up
 (defun get-game-password () ; C: setpassword()
   "Set the self-destruct password."
 
-  (do ((game-password nil))
+  (do ((game-password nil)
+       input-item)
       (game-password
        (return-from get-game-password game-password))
-    (when (= (length *line-tokens*) 0)
+    (unless (input-available-p)
       (print-prompt "Please type in a secret password: "))
-    (scan-input)
-    (when *input-item*
-      (setf game-password *input-item*)
+    (setf input-item (scan-input))
+    (when input-item
+      (setf game-password input-item)
       (when (numberp game-password)
         (setf game-password (write-to-string game-password))))))
 
@@ -7955,10 +7592,7 @@ Return game type, tournament number, and whether or not this is a restored game.
   "Prepare to play - set up the universe. Use input parameters to generate initial core game
 values, expecially number of entities in the game."
 
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (skip-line)
+  (skip-line *message-window*)
   (clear-type-ahead-buffer)
   ;; Choose game type, length, skill level, and password
   (multiple-value-bind (game-type tournament-number) (get-game-type)
@@ -8028,6 +7662,7 @@ values, expecially number of entities in the game."
     (setf *brig-free* *brig-capacity*)
     (setf *cloakedp* nil)
     (setf *cloakingp* nil)
+    (setf *dockedp* nil)
 
     ;; Set up assorted game parameters
     ;; TODO - should this be before or after the algeron date?
@@ -8065,15 +7700,15 @@ values, expecially number of entities in the game."
 
     (initialize-events)
     ;; Initialize times for extraneous events
-    (schedule-event +supernova+ (expran (* 0.5 *initial-time*))) ; C: expran(0.5 * game.intime)
-    (schedule-event +tractor-beam+
+    (schedule-event 'supernova (expran (* 0.5 *initial-time*))) ; C: expran(0.5 * game.intime)
+    (schedule-event 'tractor-beam
                     (expran (* 1.5 (/ *initial-time* *initial-commanders*)))) ; C: expran(1.5 * (game.intime / game.state.remcom))
-    (schedule-event +snapshot-for-time-warp+ (1+ (random 1))); Force an early snapshot, 1.0 + Rand()
-    (schedule-event +commander-attacks-base+ (expran (* 0.3 *initial-time*))) ; C: expran(0.3*game.intime)
+    (schedule-event 'snapshot-for-time-warp (1+ (random 1))); Force an early snapshot, 1.0 + Rand()
+    (schedule-event 'commander-attacks-base (expran (* 0.3 *initial-time*))) ; C: expran(0.3*game.intime)
     (when (> *remaining-super-commanders* 0)
-      (schedule-event +move-super-commander+ 0.2777))
+      (schedule-event 'move-super-commander 0.2777))
     (when (>= *skill-level* +good+)
-      (schedule-event +distress-call-from-inhabited-world+ (expran (+ 1.0 *initial-time*)))) ; C: expran(1.0 + game.intime)
+      (schedule-event 'distress-call-from-inhabited-world (expran (+ 1.0 *initial-time*)))) ; C: expran(1.0 + game.intime)
 
     ;; Initialize the starchart
     (setf *starchart* (make-array (list +galaxy-size+ +galaxy-size+)))
@@ -8084,9 +7719,6 @@ values, expecially number of entities in the game."
         (setf (aref *starchart* i j) (make-starchart-page :stars 0
                                                           :starbases 0
                                                           :klingons 0))))
-
-    ;; Starchart is functional but we've never seen it
-    (setf *last-chart-update* +forever+)
 
     ;; Put stars in the galaxy
     (setf *initial-stars* 0)
@@ -8190,27 +7822,25 @@ values, expecially number of entities in the game."
       (incf (quadrant-klingons (coord-ref *galaxy* c-coord)) 1))
 
     ;; Put planets in the galaxy, one planet per quadrant whether inhabited or uninhabited
-    (setf *planet-information* ())
+    (setf *planets* ())
     (do ((i 0 (1+ i))
          pl
          q)
         ((>= i *initial-planets*))
       (setf pl (make-planet))
       (do ((q-coord (get-random-quadrant) (get-random-quadrant)))
-          ((not (assoc q-coord *planet-information* :test #'coord-equal)) ; nil when planet does not exist
+          ((not (assoc q-coord *planets* :test #'coord-equal)) ; nil when planet does not exist
            (setf (planet-quadrant pl) q-coord)
            (setf q q-coord))) ; dumb code alert!
       (if (< i +habitable-planets+)
           (progn
             (setf (planet-class pl) +class-m+) ; All inhabited planets are class M
             (setf (planet-crystals pl) 'absent)
-            ;; ; TODO - "knownp" should only change when planets are scanned, we don't know them in advance
-            (setf (planet-knownp pl) t)
+            (setf (planet-knownp pl) nil)
             (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) t)
             (setf (planet-name pl) (aref *system-names* i))
-            (setf (planet-status pl) 'secure)
-            )
+            (setf (planet-status pl) 'secure))
           (progn
             (setf (planet-class pl) (+ (random 2) 1)) ; Planet class M, N, or O
             ;;(setf (planet-crystals pl) (* (random 1.0) 1.5)) ; 1 in 3 chance of crystals
@@ -8221,9 +7851,8 @@ values, expecially number of entities in the game."
             (setf (planet-destroyedp pl) nil)
             (setf (planet-inhabitedp pl) nil)
             (setf (planet-name pl) "")
-            (setf (planet-status pl) 'secure)
-            ))
-      (setf *planet-information* (acons q pl *planet-information*)))
+            (setf (planet-status pl) 'secure)))
+      (setf *planets* (acons q pl *planets*)))
 
     ;; Put Romulans in the galaxy
     (do ((i 0 (1+ i))
@@ -8247,40 +7876,40 @@ values, expecially number of entities in the game."
     (setf *snapshot-taken-p* nil)
 
     ;; Introduce the player to the current situation.
-    (skip-line 2)
+    (skip-line *message-window*)
     (if (= *skill-level* +novice+)
         (progn
-          (print-message (format nil "It is stardate ~A. The Federation is being attacked by~%"
+          (print-message *message-window* (format nil "It is stardate ~A. The Federation is being attacked by~%"
                                  (format-stardate *stardate*)))
-          (print-message (format nil "a deadly Klingon invasion force. As captain of the United~%"))
-          (print-message (format nil "Starship U.S.S. Enterprise, it is your mission to seek out~%"))
-          (print-message (format nil "and destroy this invasion force of ~A battle cruisers.~%"
+          (print-message *message-window* (format nil "a deadly Klingon invasion force. As captain of the United~%"))
+          (print-message *message-window* (format nil "Starship U.S.S. Enterprise, it is your mission to seek out~%"))
+          (print-message *message-window* (format nil "and destroy this invasion force of ~A battle cruisers.~%"
                                  (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)))
-          (print-message (format nil "You have an initial allotment of ~A stardates to complete~%"
+          (print-message *message-window* (format nil "You have an initial allotment of ~A stardates to complete~%"
                                  (truncate *initial-time*)))
-          (print-message (format nil "your mission. As you proceed you may be given more time.~%"))
-          (print-message (format nil "~%You will have ~A supporting starbases.~%" *initial-bases*))
-          (print-message "Starbase locations-  "))
+          (print-message *message-window* (format nil "your mission. As you proceed you may be given more time.~%"))
+          (print-message *message-window* (format nil "~%You will have ~A supporting starbases.~%" *initial-bases*))
+          (print-message *message-window* "Starbase locations-  "))
         (progn
-          (print-message (format nil "Stardate ~A.~%" (truncate *stardate*)))
-          (print-message
+          (print-message *message-window* (format nil "Stardate ~A.~%" (truncate *stardate*)))
+          (print-message *message-window*
            (format nil "~%~A klingons.~%"
                    (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)))
-          (print-message (format nil "An unknown number of Romulans.~%"))
+          (print-message *message-window* (format nil "An unknown number of Romulans.~%"))
           (when (> *remaining-super-commanders* 0)
-            (print-message (format nil "And one (GULP) Super-Commander.~%")))
-          (print-message (format nil "~A stardates.~%" (truncate *initial-time*)))
-          (print-message (format nil "~A starbases in " *initial-bases*))))
+            (print-message *message-window* (format nil "And one (GULP) Super-Commander.~%")))
+          (print-message *message-window* (format nil "~A stardates.~%" (truncate *initial-time*)))
+          (print-message *message-window* (format nil "~A starbases in " *initial-bases*))))
     (dolist (bq *base-quadrants*)
-      (print-message (format nil "~A  " (format-coordinates bq))))
-    (skip-line 2)
-    (print-message (format nil "The Enterprise is currently in ~A ~A~%"
+      (print-message *message-window* (format nil "~A  " (format-coordinates bq))))
+    (skip-line *message-window* 2)
+    (print-message *message-window* (format nil "The Enterprise is currently in ~A ~A~%"
                            (format-quadrant-coordinates *ship-quadrant*)
                            (format-sector-coordinates *ship-sector*)))
-    (print-message "~%Good Luck!")
+    (print-message *message-window* (format nil "~%Good Luck!"))
     (when (> *remaining-super-commanders* 0)
-      (print-message " YOU'LL NEED IT."))
-    (skip-line 2)
+      (print-message *message-window* " YOU'LL NEED IT."))
+    (skip-line *message-window* 2)
     (new-quadrant :show-thing nil)
     (when (> (- *enemies-here* *things-here* *tholians-here*) 0)
       (setf *shields-are-up-p* t))
@@ -8295,67 +7924,16 @@ consequences."
              (> *stardate* +algeron-date+)
              (not *cloaking-violation-reported-p*)
              *cloakedp*)
-    (print-message (format nil "The Romulan ship discovers you are breaking the Treaty of Algeron!~%"))
-    (setf *cloaking-violations* (1+ *cloaking-violations*))
+    (print-message *message-window* (format nil "The Romulan ship discovers you are breaking the Treaty of Algeron!~%"))
+    (incf *cloaking-violations* 1)
     (setf *cloaking-violation-reported-p* t)))
-
-(defun print-help-topics (help-topics)
-  "Print a list of help topics."
-
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (restart-message-window-paging)
-  (print-message (format nil "~%Available help topics are:~%"))
-  (skip-line)
-  (let ((longest-topic-title 0))
-    (dolist (topic help-topics)
-      (when (> (length topic) longest-topic-title)
-	(setf longest-topic-title (length topic))))
-    ;; TODO - how to eliminate the hard-coded 17?
-    ;; Arrange the help topics into columns and the columns into lines, then display one line at a
-    ;; time.
-    (dolist (topic-line (split-sequence #\newline (format nil "~{~17@<~%~:;~A ~>~}" help-topics)))
-      (print-message (format nil "~A~%" topic-line))))
-  (skip-line))
-
-(defun display-online-help () ; C: helpme(void)
-  "Browse on-line help."
-
-  (when *window-interface-p*
-    (select-window *message-window*))
-
-  (let (help-topics
-        topic)
-    (setf help-topics (mapcar #'first *help-database*))
-    (when (> (length *line-tokens*) 0)
-      (scan-input)
-      (setf topic (match-token *input-item* help-topics)))
-    ;; Prompt if no topic supplied, or a second try if the supplied topic didn't exist
-    (when (= (length topic) 0)
-      (print-help-topics help-topics)
-      (print-prompt "Help on what command or topic? ")
-      (clear-type-ahead-buffer)
-      (scan-input)
-      (setf topic (match-token *input-item* help-topics)))
-    (let (contents)
-      (setf contents (rest (assoc topic *help-database* :test #'string=)))
-      (skip-line)
-      (when (> (length contents) 0)
-        (restart-message-window-paging)
-        (print-message (format nil "Spock- \"Captain, I've found the following information:\"~%~%"))
-        (dolist (content-line (split-sequence #\newline contents))
-          (print-message (format nil "~A~%" content-line))))
-      (when (and (= (length contents) 0)
-                 (> (length topic) 0))
-        (print-message (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
 
 (defun display-commands (commands) ; C: listCommands(void)
   "Print a list of valid commands."
 
-  (print-message (format nil "Valid commands are:~%~%"))
+  (print-message *message-window* (format nil "Valid commands are:~%~%"))
   (dolist (command-line (split-sequence #\newline (format nil "~{~12@<~%~:;~A ~>~}" commands)))
-    (print-message (format nil "~A~%" command-line))))
+    (print-message *message-window* (format nil "~A~%" command-line))))
 
 (defun make-moves ()
   "Command interpretation loop. This is the heart of the game: read commands and carry them out.
@@ -8367,26 +7945,31 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
                        "damages" "deathray" "destruct" "emexit" "exit" "help"
                        "impulse" "lrscan" "move" "mayday" "mine" "orbit" "phasers" "photons"
                        "planets" "probe" "quit" "rest" "report" "request" "srscan" "status" "score"
-                       "sensors" "shields" "shuttle" "transport" "torpedoes" "visual" "warp"))
+                       "sensors" "shields" "shuttle" "transport" "torpedoes" "visual" "warp"
+                       "windows"))
        command
        hit-me-p) ;; When true, player has taken an action which consumes game time or a turn,
                  ;; after which enemies take their action turn, usually an attack.
       ((or *all-done-p*
            exit-game-p))
-    (when *window-interface-p*
-      (draw-windows)
-      (select-window *message-window*))
-    (skip-line)
-    (restart-message-window-paging)
+    (update-windows)
+    (skip-line *message-window*)
+    (restart-paging *message-window*)
     (setf hit-me-p nil)
     (setf *just-in-p* nil)
     (setf *time-taken-by-current-operation* 0.0)
     (setf *action-taken-p* nil)
     (print-prompt "COMMAND: ")
+    ;; TODO - possible error: after attacking but not killing a Klingon with a torpedo the Klingon
+    ;;        returned fire. The next command "pho 1 4 3" was interpreted as "NIL 1 4 3"
     (clear-type-ahead-buffer)
-    (scan-input)
-    (setf command (match-token *input-item* commands)) ; TODO - fix match-token to ignore all previous input on -1
-    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak
+    ;; TODO - fix match-token to ignore all previous input on -1
+    (setf command (match-token (scan-input) commands))
+    ;; In windowed mode commands are lost when the prompt window is refreshed.
+    (unless (eql *prompt-window* *message-window*)
+      (print-message *message-window* (format nil "COMMAND: ~A~A~%"
+                                              command (format-input-items))))
+    ;; TODO - check that commands that must be typed in full were: abandon destruct quit deathray cloak mayday
     (cond
       ((string= command "abandon")
        (abandon-ship))
@@ -8402,7 +7985,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (when *cloakingp*
          (attack-player :torpedoes-ok-p t) ; We will be seen while we cloak
          (setf *cloakingp* nil)
-         (when (not (damagedp +cloaking-device+)) ; Don't cloak if we got damaged while cloaking!
+         (unless (damagedp +cloaking-device+) ; Don't cloak if we got damaged while cloaking!
            (setf *cloakedp* t))))
       ((string= command "commands")
        (display-commands commands))
@@ -8433,7 +8016,6 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (display-online-help))
       ((string= command "impulse")
        (move-under-impulse-power))
-      ;; TODO - add load command
       ((string= command "lrscan")
        (long-range-scan))
       ((string= command "mayday") ; Call for help
@@ -8471,7 +8053,6 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (wait)
        (when *action-taken-p*
          (setf hit-me-p t)))
-      ;; TODO - add save command
       ((string= command "score")
        (score))
       ((string= command "sensors")
@@ -8486,7 +8067,7 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
        (when *action-taken-p*
          (setf hit-me-p t)))
       ((string= command "srscan")
-       (short-range-scan))
+       (short-range-scan *short-range-scan-window*))
       ((string= command "status")
        (all-statuses))
       ((string= command "photons")
@@ -8502,6 +8083,8 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
          (setf hit-me-p t)))
       ((string= command "warp")
        (set-warp-factor))
+      ((string= command "windows")
+       (toggle-windows))
       (t ; Unusable input, print a list of valid commands.
        (display-commands commands)))
 
@@ -8522,9 +8105,12 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
           ((quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
            (emergency-supernova-exit)) ; Supernova event scheduled or player landed in a supernova quadrant
 
+          ;; After docking player is attacked immediately, not after events are processed. This
+          ;; also means that if a player arrives by chance next to a starbase and docks he will
+          ;; be attacked immediately, although without photon torpedoes.
           ((and hit-me-p
                 (not *just-in-p*))
-           (attack-player)
+           (attack-player :torpedoes-ok-p t)
            (unless *all-done-p*
              (if (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
                  (emergency-supernova-exit) ; Attacker caused a supernova
@@ -8537,8 +8123,8 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
 (defun print-banner () ; C: prelim()
   "Print an introductory banner."
 
-  (select-window *message-window* :clear-window t)
-  (print-message (format nil "-SUPER- STAR TREK~%")))
+  (clear-window *message-window*)
+  (print-message *message-window* (format nil "-SUPER- STAR TREK~%")))
 
 ;; TODO - record and play back games.
 (defun sst () ; C: main()
@@ -8561,14 +8147,15 @@ The loop ends when the player wins by killing all Klingons, is killed, or decide
       ;; If there is no checkpoint file then this might be the first time this player has
       ;; played. Give them a little help.
       (unless (probe-file +checkpoint-file-name+)
-        (print-message (format nil "~%Enter `help' for help, `commands' for commands.~%~%"))))
+        (print-message *message-window*
+                       (format nil "~%Enter `help' for help, `commands' for commands.~%~%"))))
     (make-moves)
     (setf play-again-p nil)
 
-    (skip-line)
+    (skip-line *message-window*)
     (print-stars)
     (when *all-done-p*
-      (skip-line)
+      (skip-line *message-window*)
       (print-prompt "Do you want to play again? ")
       (setf play-again-p (get-y-or-n-p))
       (when play-again-p

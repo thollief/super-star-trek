@@ -1,8 +1,8 @@
 ;;;; Super Star Trek help
 
-(in-package help)
+(in-package sst-help)
 
-(defparameter *help-database* (list (cons "credits"
+(defvar *help-database* (list (cons "credits"
 "                SSSSS   U   U   PPPPP   EEEEE   RRRRR
                 S       U   U   P   P   E       R   R
                 SSSSS   U   U   PPPPP   EEEE    RRRRR
@@ -259,6 +259,8 @@ parameters, with the exception of the manual move command. If
 anything is not clear to you, experiment.  The worst you can do is
 lose a game or two.")
 
+                                    ;; TODO - how to document the game status?
+                                    ;; Update to show the probe symbol and the new ship status
                                     (cons "srscan"
 "Short-range Scan
 
@@ -309,7 +311,7 @@ short-range scan anytime you like.
 
 If your short-range sensors are damaged, this command will only show
 the contents of adjacent sectors.")
-;; TODO - fix the description of conditions
+
                                     (cons "status"
 "Status Report
 
@@ -321,13 +323,15 @@ starship as follows:
 
   STARDATE - The current date. A stardate is the same as a day.
 
-  CONDITION - There are four possible conditions:
-        DOCKED - docked at starbase.
-        RED    - in battle.
-        YELLOW - low on energy (<1000 units)
+  CONDITION - There are three possible conditions:
+        RED    - in battle
+        YELLOW - low on energy (<1000 units) or the ship is damaged
         GREEN  - none of the above
 
-  POSITION - Quadrant is given first, then sector
+  POSITION - Quadrant is given first, then sector. Additionaly, flight
+             status is shown if not in ordinary flight:
+        DOCKED - docked at starbase
+        IN ORBIT - orbiting a planet
 
   LIFE SUPPORT - If \"ACTIVE\" then life support systems are
         functioning normally. If on \"RESERVES\" the number is how many
@@ -362,7 +366,7 @@ See the SRSCAN command for details.
 
 Each item of information can be obtained singly by requesting it.
 See REQUEST command for details.")
-;; TODO - update the description of a supernova
+
                                     (cons "lrscan"
 "Long-range Scan
 
@@ -375,14 +379,14 @@ and what is around you.  Here is an example output.
     Long-range scan for Quadrant 5 - 1
        -1  107  103
        -1  316    5
-       -1  105 1000
+       -1  105  ***
 
 This scan says that you are in row 5, column 1 of the 8 by 8 galaxy.
 The numbers in the scan indicate how many of each kind of thing there
 is in your quadrant and all adjacent quadrants.  The digits are
 interpreted as follows.
 
-    Thousands digit:  1000 indicates a supernova (only)
+    ***:              indicates a supernova (only)
     Hundreds digit:   number of Klingons present
     Tens digit:       number of starbases present
     Ones digit:       number of stars present
@@ -678,9 +682,6 @@ specifying the <no> option, shields are not raised after firing.
 
 Phasers have no effect on starbases (which are shielded) or on stars.")
 
-;; TODO - mention that with autosave you will receive a report if you
-;;        resume a game that was in progress when you exited
-
                                     (cons "report"
 "  Mnemonic:  REPORT
   Shortest abbreviation: REP
@@ -704,8 +705,8 @@ retrieve if you are not playing at a hard-copy terminal.
        . How many casualties you have suffered
        . How many times you have called for help.
 
-This same information is automatically given to you when you start to
-play a frozen game.")
+This same information is automatically given to you when you return to
+a game from which you exited and then resumed.")
 
                                     (cons "computer"
 "  Mnemonic:  COMPUTER
@@ -988,39 +989,32 @@ considerable risk, Starfleet Regulations allow its use only during
 Mr. Spock presents you a list of the available information on planets
 in the galaxy.  Since planets do not show up on long-range scans, the
 only way to obtain this information is with the \"SENSORS\" command.")
-;; TODO - edit the explanation, save is a no-op but tournament info is useful
-                                    (cons "save"
-"Save The Game
 
-  Mnemonic:  FREEZE
-  (no abbreviation)
-  Full command:  FREEZE <FILE NAME>
+                                    (cons "saving"
+"Saving Game State
 
-The purpose of the FREEZE command is to allow a player to save the
-current state of the game, so that it can be finished later.  A
-plaque may not be generated from a frozen game. A file with the
-specified <file name> and type '.TRK' is created (if necessary) in
-the current directory, and all pertinent information about the game
-is written to that file. The game may be continued as usual or be
-terminated at the user's option.
+  Mnemonic:  none
 
-To restart a game created by the \"FREEZE\" command, the user need only
-type \"FROZEN\" in response to the initial question about the type of
-game desired, followed by the <file name>.
+The current state of the game is saved at the end of every turn. A file
+with the  name 'SSTCHKPT.TRK' is created as needed in the current
+directory, and all pertinent information about the game is written to
+that file. This allows the player to exit at any time and resume the
+game later. The game is continued automatically next time the player
+starts the game.
 
-NOTE: A \"tournament\" game is like a frozen game, with the following
-differences.  (1) Tournament games always start from the beginning,
-while a frozen game can start at any point.  (2) Tournament games
-require only that the player remember the name or number of the
-tournament, while the information about a frozen game must be kept on
-a file. Tournament games can be frozen, but then they behave like
-regular frozen games.
+Unlike earlier versions of Super Star Trek a plaque is always generated
+for winning Expert and Emeritus games - it is not required that games
+at those levels be completed in one playthrough to receive a plaque.
 
-A point worth noting is that 'FREEZE' does not save the seed for the
-random number generator, so that identical actions after restarting
-the same frozen game can lead to different results.  However,
-identical actions after starting a given tournament game always lead
-to the same results.")
+If a player wants functionality similar to the SAVE and LOAD commands
+previously available in Super Star Trek (and in other games) then they
+should exit the game and use file handling commands to copy and/or
+rename SSTCHKPT.TRK to obtain the desired result.
+
+A point worth noting is that the seed for the random number generator is
+also saved, so that identical actions after restarting the same frozen
+game lead to identical results.  Similarly, identical actions after
+starting a given tournament game always lead to the same results.")
 
                                     (cons "request"
 "Request Information
@@ -1104,7 +1098,7 @@ coordinates are specified they are assumed to be the quadrant and not
 the sector in the current quadrant!
 
 The Faerie Queene has no probes.")
-;; TODO - update the description to include current game save behaviour
+
                                     (cons "emexit"
 "Emergency Exit
 
@@ -1113,20 +1107,18 @@ The Faerie Queene has no probes.")
 
 This command provides a quick way to exit from the game when you
 observe a Klingon battle cruiser approaching your terminal.  Its
-effect is to freeze the game on the file 'EMSAVE.TRK' in your current
-directory, erase the screen, and exit.
+effect is to erase the screen, and exit. The game in progress is
+automatically saved as described in the introduction.")
 
-Of course, you do loose the chance to get a plaque when you use this
-maneuver.")
-;; TODO - edit the decription of what this command does
                                     (cons "help"
 "Ask For Help
 
   Mnemonic:  HELP
   Full command:  HELP <command>
 
-This command reads the appropriate section from the SST.DOC file,
-providing the file is in the current directory.")
+This command provides information about various aspects of game play, as
+well as details about every command you can enter. For a list of help
+topics enter 'help' at the prompt.")
 
                                     (cons "cloak"
 "Use Cloaking Device
@@ -1564,9 +1556,9 @@ The secret password must be entered by the player.
 Command aliases have been removed.
 
 The game now saves automatically every turn. That makes the EXIT and EMEXIT
-commands nearly identical, and the SAVE, and LOAD commands don't do
-anything. When you run Super Star Trek the game previously in progress is
-loaded, including Tournament games, and including the random state. Plaques are
+commands nearly identical, and the SAVE, and LOAD commands have been removed.
+When you run Super Star Trek the game previously in progress is loaded,
+including Tournament games, and including the random state. Plaques are
 provided to all players who win an \"expert\" or \"emeritus\" game.
 
 The plaque is written to a text file for the player to print or otherwise
@@ -1577,10 +1569,80 @@ documentation file removed (you can find the file - sst.doc - on the Internet
 if you want it.)")
 
                                     (cons "visual scan"
-"A visual scan is made of three sectors in the general direction specified.
+"Visual Scan
+
+  Mnemonic:  VISUAL
+  Shortest abbreviation:  V
+
+A visual scan is made of three sectors in the general direction specified.
 This takes time, and enemies can attack you, so it should be done only when
-the short-range sensors are out.")
-                                    )
-  "An alist of help keywords and information. The keywords should be lowercase. Keywords are taken from the
-user command by the same parser as regular game commands so the same restrictions apply. That is, input items
-are separated by spaces so the first word of each help topic must be unique.")
+the short-range sensors are out.
+
+This command is currently less useful that the Short Range Scan even when the
+short range sensors are damaged because the short range scan always shows all
+sectors immediately adjacent to the ship.")
+
+                                    (cons "windows"
+"Toggle Windowed Display
+
+  Mnemonic:  WINDOWS
+  Shortest abbreviation:  WI
+
+Information is normally displayed in panels, or windows, on the terminal. If windows can't be
+used for some reason then information is displayed in line-by-line mode. This command toggles
+between the two forms of display.
+
+This command clears the display, so existing narrative is also cleared.
+
+Win32 displays are always line-by-line."))
+
+  "An alist of help keywords and information. The keywords should be lowercase. Keywords are
+taken from the user command by the same parser as regular game commands so the same restrictions
+apply. That is, input items are separated by spaces so the first word of each help topic must be
+unique.")
+
+(defun print-help-topics (help-topics)
+  "Print a list of help topics."
+
+  (restart-paging *message-window*)
+  (print-message *message-window* (format nil "~%Available help topics are:~%~%"))
+  (let ((longest-topic-title 0))
+    (dolist (topic help-topics)
+      (when (> (length topic) longest-topic-title)
+	(setf longest-topic-title (length topic))))
+    ;; TODO - how to eliminate the hard-coded 17?
+    ;; Arrange the help topics into columns and the columns into lines, then display one line at a
+    ;; time.
+    (dolist (topic-line (split-sequence #\newline (format nil "~{~17@<~%~:;~A ~>~}" help-topics)))
+      (print-message *message-window* (format nil "~A~%" topic-line))))
+  (skip-line *message-window*))
+
+(defun display-online-help () ; C: helpme(void)
+  "Browse on-line help."
+
+  (let (help-topics
+        topic
+        input-item)
+    (setf help-topics (mapcar #'first *help-database*))
+    (when (input-available-p)
+      (setf input-item (scan-input))
+      (setf topic (match-token input-item help-topics)))
+    ;; Prompt if no topic supplied, or a second try if the supplied topic didn't exist
+    (when (= (length topic) 0)
+      (print-help-topics help-topics)
+      (print-prompt "Help on what command or topic? ")
+      (clear-type-ahead-buffer)
+      (setf input-item (scan-input))
+      (setf topic (match-token input-item help-topics)))
+    (let (contents)
+      (setf contents (rest (assoc topic *help-database* :test #'string=)))
+      (skip-line *message-window*)
+      (when (> (length contents) 0)
+        (restart-paging *message-window*)
+        (print-message *message-window* (format nil "Spock- \"Captain, I've found the following information:\"~%~%"))
+        (dolist (content-line (split-sequence #\newline contents))
+          (print-message *message-window* (format nil "~A~%" content-line))))
+      (when (and (= (length contents) 0)
+                 (> (length topic) 0))
+        (print-message *message-window*
+         (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
