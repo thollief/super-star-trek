@@ -156,17 +156,20 @@
   (:import-from sbcl-support
                 define-constant)
   (:export *stardate*
-           *future-events*
            event
            event-date
+           event-type
            event-quadrant
+           make-event
            initialize-events
            scheduled-for
            is-scheduled-p
            postpone-event
            schedule-event
            unschedule-event
-           find-event))
+           find-event
+           get-next-event
+           unget-event))
 
 (defpackage sst-help
   (:documentation "Help information for Super Star Trek")
@@ -216,17 +219,20 @@
                 galaxy-sector-to-local-sector)
   (:import-from sst-events
                 *stardate*
-                *future-events*
                 event
                 event-date
+                event-type
                 event-quadrant
+                make-event
                 initialize-events
                 scheduled-for
                 is-scheduled-p
                 postpone-event
                 schedule-event
                 unschedule-event
-                find-event)
+                find-event
+                get-next-event
+                unget-event)
   (:import-from sst-help
                 display-online-help)
   (:import-from sst-terminal-io
