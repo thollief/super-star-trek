@@ -74,7 +74,6 @@ output location if no function-specific window is available.")
   ;; window.
   ;;
   ;; (newwin #-of-lines #-of-cols starting-line starting-col)
-  ;; TODO - name all these constants that define window position and size?
   (setf *short-range-scan-window*
         (make-instance 'window :height 12 :width 24 :curses-window (newwin 12 24 0 0)))
   (setf *ship-status-window*
