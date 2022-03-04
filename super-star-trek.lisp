@@ -208,9 +208,6 @@ empty string if the planet class can't be determined."
 ;;        is being written it's not clear to me if collecting these things in a struct will improve
 ;;        code quality but it is what I understand the "right" way to be
 
-;; TODO - define a probe structure? It's also an entity that moves around the galaxy, as does the
-;;        super-commander and sometimes commanders.
-
 (defstruct quadrant ; C: quadrant
   "Information about a quadrant. Some entities in a quadrant are transient and don't need to be
 tracked, including Tholians, black holes, and space things.
@@ -1884,7 +1881,7 @@ tractor-beamed the ship then the other will not."
 ;; TODO - Line 10 should be the contents of the brig. When this is added, also move the game
 ;;        status window down one line so the bottoms of the status displays are aligned.
 (defun ship-status (&optional (line-to-print nil)) ; C: void status(int req)
-  "Print status reports next to short range scan lines. The classic line to print is one of
+  "Print status reports next to short range scan lines. The classic line to print was one of
 
    1 - Stardate
    2 - Condition
@@ -1909,15 +1906,13 @@ With the addition of probes and other ship information, and the game status wind
    7 - Torpedoes
    8 - Shields
    9 - Probes
-
-There is no line 10.
+  10 - Brig free/max
 "
 
   (when (= line-to-print 1)
     ;; TODO - update the player condition every turn, not only when checking status
     (update-condition)
-    (print-out *ship-status-window* "Condition ")
-    (print-out *ship-status-window* *condition*)
+    (print-out *ship-status-window* (format nil "Condition ~A" *condition*))
     (when (> (damaged-device-count) 0)
       (print-out *ship-status-window* (format nil ", ~A DAMAGE~:@(~:P~)" (damaged-device-count))))
     (skip-line *ship-status-window*))
@@ -1956,10 +1951,7 @@ There is no line 10.
       (print-out *ship-status-window* " (have crystals)"))
     (skip-line *ship-status-window*))
   (when (= line-to-print 7)
-    (print-out *ship-status-window* (format nil "~34@<Torpedoes ~A~>" *torpedoes*))
-    (if (eql *ship-status-window* *message-window*)
-        (game-status 1)
-        (skip-line *ship-status-window*)))
+    (print-out *ship-status-window* (format nil "~34@<Torpedoes ~A~>~%" *torpedoes*)))
   (when (= line-to-print 8)
     (print-out *ship-status-window* (format nil "~34@<Shields ~A, ~D%, ~,1F units~;~>"
                        (cond
@@ -1972,7 +1964,7 @@ There is no line 10.
                        (round (/ (* 100.0 *shield-energy*) *initial-shield-energy*))
                        *shield-energy*))
     (if (eql *ship-status-window* *message-window*)
-        (game-status 2)
+        (game-status 1)
         (skip-line *ship-status-window*)))
   (when (= line-to-print 9)
     (print-out *ship-status-window*
@@ -1984,6 +1976,12 @@ There is no line 10.
                                      :x (galaxy-sector-to-quadrant (probe-x *probe*))
                                      :y (galaxy-sector-to-quadrant (probe-y *probe*)))))
                            (format nil "s ~A" *probes-available*))))
+    (if (eql *ship-status-window* *message-window*)
+        (game-status 2)
+        (skip-line *ship-status-window*)))
+  (when (= line-to-print 10)
+    (print-out *ship-status-window*
+               (format nil "Brig ~A/~A" (- *brig-capacity* *brig-free*) *brig-capacity*))
     (if (eql *ship-status-window* *message-window*)
         (game-status 3)
         (skip-line *ship-status-window*))))
@@ -2006,6 +2004,7 @@ range scan."
   (ship-status 7)
   (ship-status 8)
   (ship-status 9)
+  (ship-status 10)
 
   ;; In line-by-line mode game statuses are printed by the ship status function
   (unless (eql *game-status-window* *message-window*)
@@ -2647,8 +2646,6 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
           ;; they can't be fired on unless they are adjacent to the ship.
           ;; TODO - write the enhancements to the visual-scan function and then allow firing on
           ;;        Commanders, Super-commanders, and Romulan) that are detected by the visual scan
-          ;; TODO - the recommended energy amounts for manual fire can vary if the input loop is
-          ;;        repeated. Is this a bug or a feature?
           (setf requested-energy 0.0)
           (do ((current-enemy 0) ; the loop restarts with the first enemy if too much energy is requested
                (display-available-energy-p t)
@@ -3216,8 +3213,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                    ;; Tholian is destroyed
                    ((>= (calculate-torpedo-damage initial-position torpedo-sector bullseye-angle)
                         600)
-                    (setf (coord-ref *quadrant* torpedo-sector)
-                          +empty-sector+)
+                    (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
                     (setf *tholians-here* 0)
                     (dead-enemy torpedo-sector sector-contents torpedo-sector))
                    ;; Tholian survives
@@ -3234,7 +3230,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                     (setf (coord-ref *quadrant* torpedo-sector)
                           +tholian-web+)
                     (setf *tholians-here* 0)
-                    (setf *enemies-here* (1- *enemies-here*))
+                    (decf *enemies-here* 1)
                     (drop-entity-in-sector +black-hole+))))
                 ;; Problem!
                 (t
@@ -4195,7 +4191,7 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
   (print-stars)
   (when (string= *ship* +enterprise+)
     ;; Extra stars so the lengths of the output lines are the same
-    (print-message *message-window* "***") :print-slowly t)
+    (print-message *message-window* "***" :print-slowly t))
   (print-message *message-window*
    (format nil "********* Entropy of ~A maximized *********~%"
            (format-ship-name)) :print-slowly t)
@@ -4321,6 +4317,7 @@ Return the sector coordinates, distance from the ship, and Tholian power."
 (defun sort-klingons () ; C: sortklings(void)
   "Sort klingons by distance from us, closest Klingons first in the list."
 
+  ;; TODO - things can be angry, and tholians get added to the enemies list too.
   (when (> (- *enemies-here* *things-here* *tholians-here*) 1)
     ;; Bubble sort
     (do ((exchanged t))
@@ -4830,7 +4827,7 @@ object then it waits, in case the player helpfully removes the blocking object."
                (drop-entity-in-sector +black-hole+)
                (print-message *message-window* (format nil "***Tholian at ~A completes web.~%" (format-sector-coordinates *tholian-sector*)))
                (setf *tholians-here* 0)
-               (setf *enemies-here* (1- *enemies-here*))))
+               (decf *enemies-here* 1)))
           (when (and (string/= (aref *quadrant* 1 i) +tholian-web+)
                      (string/= (aref *quadrant* 1 i) +tholian+))
             (setf all-holes-plugged-p nil))
@@ -5058,7 +5055,7 @@ retreat, especially at high skill levels.
         (setf crawl-x (if (< delta-x 0) 1 -1))
         (setf crawl-y (if (< delta-y 0) 1 -1))
         (setf success nil)
-        (do ((attempts 0 (1+ attempts)) ; Settle mysterious hang problem
+        (do ((attempts 0 (1+ attempts)) ; Settle mysterious hang problem (TODO - fix the "fix")
              (end-attempt-p nil))
             ((or (>= attempts 20)
                  success
@@ -5202,7 +5199,7 @@ the player completes their turn."
                                   (> *super-commanders-here* 0))
                               (not *just-in-p*))
                          (= *skill-level* +emeritus+))
-                     torpedoes-ok-p)
+                     torpedoes-ok-p) ; TODO - why should use of torpedoes affect movement?
             (move-enemies))
           ;; If no enemies remain after movement, we're done
           (unless (or (<= *enemies-here* 0)
@@ -6502,7 +6499,7 @@ quadrant experiencing a supernova)."
       (setf req-item "?")) ; blank input still results in a help message
     (cond
       ((string= req-item "date")
-       (ship-status 1))
+       (game-status 1))
       ((string= req-item "condition")
        (ship-status 2))
       ((string= req-item "position")
@@ -6518,12 +6515,13 @@ quadrant experiencing a supernova)."
       ((string= req-item "shields")
        (ship-status 8))
       ((string= req-item "klingons")
-       (ship-status 9))
+       (game-status 2))
       ((string= req-item "time")
-       (ship-status 10))
+       (game-status 3))
       (t
        (print-message *message-window* (format nil "~%UNRECOGNIZED REQUEST. Valid requests are:~%"))
-       (print-message *message-window* (format nil "  date, condition, position, lsupport, warpfactor,~%"))
+       (print-message *message-window*
+                      (format nil "  date, condition, position, lsupport, warpfactor,~%"))
        (print-message *message-window* (format nil "  energy, torpedoes, shields, klingons, time.~%"))
        (clear-type-ahead-buffer)))))
 

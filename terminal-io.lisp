@@ -81,7 +81,7 @@ output location if no function-specific window is available.")
   (setf *long-range-scan-window*
         (make-instance 'window :height 5 :width 19 :curses-window (newwin 5 19 0 60)))
   (setf *game-status-window*
-        (make-instance 'window :height 3 :width 19 :curses-window (newwin 3 19 8 60)))
+        (make-instance 'window :height 3 :width 19 :curses-window (newwin 3 19 9 60)))
   (setf *prompt-window*
         (make-instance 'window :height 1 :width *cols*
                                :curses-window (newwin 1 *cols* (- *lines* 1) 0)))
