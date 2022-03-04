@@ -447,9 +447,6 @@ greater or lesser."
 (defvar *miningp* nil) ; C: imine
 (defvar *restingp* nil) ; C: resting, rest time
 (defvar *super-commander-attack-enterprise-p* nil) ; C: iscate
-;; TODO - put the super-commander base attack sequence into the event handling structure
-(defvar *super-commander-attacking-base* 'not-attacking
-  "Possible states are attacking, not attacking, in the process of destroying.") ; C: isatb
 (defvar *shuttle-craft-location* 'on-ship
   "Location of the shuttle craft. One of 'on-ship, 'off-ship, or 'removed. 'off-ship is effectively
 the same as being on a planet.") ; C: iscraft
@@ -667,23 +664,26 @@ shuttle craft landed on it."
 (defun attack-report () ; void attackreport(bool curt)
   "Report the status of bases under attack."
 
-  (cond
-    ((is-scheduled-p 'commander-destroys-base)
-     (let ((e (find-event 'commander-destroys-base)))
+  (let (e)
+    (cond
+      ((is-scheduled-p 'commander-destroys-base)
+       (setf e (find-event 'commander-destroys-base))
        (print-message *message-window*
                       (format nil "Starbase in ~A is currently under Commander attack.~%"
                               (format-quadrant-coordinates (event-quadrant e))))
        (print-message *message-window* (format nil "It can hold out until Stardate ~A.~%"
-                                               (format-stardate (truncate (event-date e)))))))
+                                               (format-stardate (truncate (event-date e))))))
 
-    ((eql *super-commander-attacking-base* 'attacking)
-     (print-message *message-window* (format nil "Starbase in ~A is under Super-commander attack.~%"
-                            (format-quadrant-coordinates *super-commander-quadrant*)))
-     (print-message *message-window* (format nil "It can hold out until Stardate ~A.~%"
-                            (format-stardate (truncate (scheduled-for 'super-commander-destroys-base))))))
+      ((is-scheduled-p 'super-commander-destroys-base)
+       (setf e (find-event 'super-commander-destroys-base))
+       (print-message *message-window*
+                      (format nil "Starbase in ~A is under Super-commander attack.~%"
+                              (format-quadrant-coordinates (event-quadrant e))))
+       (print-message *message-window* (format nil "It can hold out until Stardate ~A.~%"
+                                               (format-stardate (truncate (event-date e))))))
 
-    (t
-     (print-message *message-window* (format nil "No Starbase is currently under attack.~%")))))
+      (t
+       (print-message *message-window* (format nil "No Starbase is currently under attack.~%"))))))
 
 (defun update-condition () ; C: void newcnd(void)
   "Update our alert status to one of Green, Yellow, or Red. Yellow supercedes Green and Red
@@ -981,9 +981,9 @@ affected."
   (when (and *super-commander-quadrant*
              (coord-equal nova-quadrant *super-commander-quadrant*))
     ;; did in the Super-Commander!
-    (setf *remaining-super-commanders* 0)
+    (decf *remaining-super-commanders* 1)
     (setf *super-commander-quadrant* nil)
-    (setf *super-commander-attacking-base* 'not-attacking)
+    (unschedule-event 'super-commander-destroys-base)
     (setf *super-commander-attack-enterprise-p* nil)
     (unschedule-event 'move-super-commander)
     (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1)
@@ -1195,7 +1195,7 @@ Return true on successful move."
   (when (> *super-commanders-here* 0)
     ;; SC has scooted, remove him from current quadrant
     (setf *super-commander-attack-enterprise-p* nil)
-    (setf *super-commander-attacking-base* 'not-attacking)
+    (unschedule-event 'super-commander-destroys-base)
     (setf *super-commanders-here* 0)
     (setf *attempted-escape-from-super-commander-p* nil)
     (unschedule-event 'super-commander-destroys-base)
@@ -1336,8 +1336,7 @@ Return true on successful move."
               (unless (and e
                            (not (coord-equal (event-quadrant e) *super-commander-quadrant*)))
                 (setf *base-attack-report-seen-p* nil)
-                (setf *super-commander-attacking-base* 'attacking)
-                (schedule-event 'super-commander-destroys-base (+ 1.0 (* 2.0 (random 1.0))))
+                (schedule-event 'super-commander-destroys-base (+ 1.0 (* 2.0 (random 1.0))) bq)
                 (when (is-scheduled-p 'commander-destroys-base)
                   (postpone-event 'super-commander-destroys-base
                                   (- (scheduled-for 'commander-destroys-base) *stardate*)))
@@ -1568,7 +1567,7 @@ tractor-beamed the ship then the other will not."
               super-commander-used-tractor-beam-p
               *dockedp*
               *cloakedp* ; Cannot tractor beam if we can't be seen!
-              (eql *super-commander-attacking-base* 'attacking)
+              (is-scheduled-p 'super-commander-destroys-base) ; Busy with another task
               *super-commander-attack-enterprise-p*)
           (setf allow-player-input t))
 
@@ -1682,7 +1681,7 @@ tractor-beamed the ship then the other will not."
                    (schedule-event 'commander-destroys-base (1+ (random 3.0)) commander-quad)
                    ;; TODO - this when clause seems inconsistent with the base search because bases
                    ;;        under attack by the SC are skipped.
-                   (when (eql *super-commander-attacking-base* 'attacking) ; extra time if SC already attacking
+                   (when (is-scheduled-p 'super-commander-destroys-base) ; extra time if SC already attacking
                      (postpone-event 'commander-destroys-base
                                      (- (scheduled-for 'super-commander-destroys-base) *stardate*)))
                    (schedule-event 'commander-attacks-base
@@ -1708,10 +1707,7 @@ tractor-beamed the ship then the other will not."
                    (unschedule-event 'commander-destroys-base))))))
       ;; Super-Commander destroys base
       ((eql (event-type e) 'super-commander-destroys-base)
-       (setf *super-commander-attacking-base* 'destroying)
-       (when (> (quadrant-starbases (coord-ref *galaxy* *super-commander-quadrant*)) 0)
-         (destroy-starbase *super-commander-quadrant*))
-       (setf *super-commander-attacking-base* 'not-attacking))
+       (destroy-starbase e))
       ;; Commander succeeds in destroying base
       ((eql (event-type e) 'commander-destroys-base)
        ;; TODO - The original C code seemed to engage in pointless loops and if statements to
@@ -1723,11 +1719,11 @@ tractor-beamed the ship then the other will not."
        (destroy-starbase e))
       ;; Super-Commander moves
       ((eql (event-type e) 'move-super-commander)
-       (when (and (not *attempted-escape-from-super-commander-p*)
-                  (not super-commander-used-tractor-beam-p)
-                  (not (eql *super-commander-attacking-base* 'attacking))
-                  (or (not *super-commander-attack-enterprise-p*)
-                      (not *just-in-p*)))
+       (unless (or *attempted-escape-from-super-commander-p*
+                   super-commander-used-tractor-beam-p
+                   (find-event 'super-commander-destroys-base)
+                   (and *super-commander-attack-enterprise-p*
+                        *just-in-p*))
          (move-super-commander))
        (schedule-event 'move-super-commander 0.2777)) ; TODO name the magic constant
       ;; Move deep space probe
@@ -2226,7 +2222,6 @@ scan. Long-range sensors can scan all adjacent quadrants."
      (decf *remaining-super-commanders* 1)
      (decf *super-commanders-here* 1)
      (setf *super-commander-quadrant* nil)
-     (setf *super-commander-attacking-base* 'not-attacking)
      (setf *super-commander-attack-enterprise-p* nil)
      (unschedule-event 'move-super-commander)
      (unschedule-event 'super-commander-destroys-base)))
@@ -3115,12 +3110,18 @@ handling the result. Return the amount of damage if the player ship was hit."
                        (remove *ship-quadrant* *base-quadrants* :test #'coord-equal))
                  (setf *base-sector* nil)
                  (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
-                 (setf (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*))
-                       (1- (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*))))
-                 (setf (starchart-page-starbases (coord-ref *starchart* *ship-quadrant*))
-                       (1- (starchart-page-starbases (coord-ref *starchart* *ship-quadrant*))))
-                 (setf *destroyed-bases* (1+ *destroyed-bases*))
-                 (setf *dockedp* nil))
+                 (decf (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 1)
+                 (decf (starchart-page-starbases (coord-ref *starchart* *ship-quadrant*)) 1)
+                 (incf *destroyed-bases* 1)
+                 (setf *dockedp* nil)
+                 (let ((e (find-event 'commander-destroys-base)))
+                   (when (and e
+                              (coord-equal (event-quadrant e) *ship-quadrant*))
+                     (unschedule-event 'commander-destroys-base))
+                   (setf e (find-event 'super-commander-destroys-base))
+                   (when (and e
+                              (coord-equal (event-quadrant e) *ship-quadrant*))
+                     (unschedule-event 'super-commander-destroys-base))))
                 ;; Hit a planet
                 ((string= sector-contents +planet+)
                  (print-message
@@ -4683,8 +4684,7 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
        (setf *brig-free* *brig-capacity*))
      ;; TODO - Possible approach for base attack report seen: make each report an event and only
      ;;        report the event when the radio is functioning or after it has been repaired.
-     (when (and (or (eql *super-commander-attacking-base* 'attacking)
-                    (eql *super-commander-attacking-base* 'destroying)
+     (when (and (or (is-scheduled-p 'super-commander-destroys-base)
                     (is-scheduled-p 'commander-destroys-base))
                 (not *base-attack-report-seen-p*))
        ;; Get attack report from base
@@ -4725,7 +4725,6 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
           (when (> *remaining-super-commanders* 0)
             (unschedule-event 'move-super-commander)
             (schedule-event 'move-super-commander 0.2777))
-          (setf *super-commander-attacking-base* 'not-attacking)
           (unschedule-event 'super-commander-destroys-base)
           (cond
             ;; Make sure Galileo is consistent -- Snapshot may have been taken when on planet,
@@ -4909,7 +4908,6 @@ object then it waits, in case the player helpfully removes the blocking object."
           (setf *super-commanders-here* 0)
           (setf *super-commander-attack-enterprise-p* nil)
           (setf *attempted-escape-from-super-commander-p* nil)
-          (setf *super-commander-attacking-base* 'not-attacking)
           (schedule-event 'move-super-commander 0.2777)
           (unschedule-event 'super-commander-destroys-base)
           (setf *super-commander-quadrant* destination-quadrant))
@@ -5020,9 +5018,8 @@ retreat, especially at high skill levels.
     ;; Calculate preferred number of steps
     (let (number-of-steps ; C: nsteps
           maximum-distance ; C: mdist, Nearest integer distance
-          delta-x ; C: mx
-          delta-y) ; C: my
-      (setf number-of-steps (if (< motion 0) (- motion) motion))
+          delta-x delta-y) ; C: mx ; C: my
+      (setf number-of-steps (abs motion))
       (setf maximum-distance (truncate (+ enemy-dist 0.5)))
       (when (and (> motion 0)
                  (> number-of-steps maximum-distance))
@@ -5045,15 +5042,19 @@ retreat, especially at high skill levels.
       (setf next-sector enemy-sector)
       ;; Main move loop
       (do ((loop-counter 0 (1+ loop-counter)) ; C: ll
-           (look (make-sector-coordinate)); C: look
+           (look (copy-sector-coordinate next-sector)); C: look
            crawl-x crawl-y ; C: krawlx, krawly
            success ; C: success
            (end-move-loop-p nil))
           ((or end-move-loop-p
                (>= loop-counter number-of-steps)))
         ;; Check if preferred position available
-        (setf (coordinate-x look) (+ (coordinate-x next-sector) delta-x))
-        (setf (coordinate-y look) (+ (coordinate-y next-sector) delta-y))
+        (unless (or (= (coordinate-x next-sector) 0) ; Don't increment if at edge of quadrant
+                    (= (coordinate-x next-sector) (1- +quadrant-size+)))
+          (setf (coordinate-x look) (+ (coordinate-x next-sector) delta-x)))
+        (unless (or (= (coordinate-y next-sector) 0) ; Don't increment if at edge of quadrant
+                    (= (coordinate-y next-sector) (1- +quadrant-size+)))
+          (setf (coordinate-y look) (+ (coordinate-y next-sector) delta-y)))
         (setf crawl-x (if (< delta-x 0) 1 -1))
         (setf crawl-y (if (< delta-y 0) 1 -1))
         (setf success nil)
@@ -5063,8 +5064,9 @@ retreat, especially at high skill levels.
                  success
                  end-attempt-p))
           (cond
-            ((or (< (coordinate-x look) 1)
-                 (> (coordinate-x look) +quadrant-size+))
+            ;; At the edge of the quadrant, what to do?
+            ((or (= (coordinate-x look) 0)
+                 (= (coordinate-x look) (1- +quadrant-size+)))
              (when (and (< motion 0)
                         (try-exit look enemy-letter enemy-index run-away))
                (return-from move-one-enemy t))
@@ -5074,9 +5076,9 @@ retreat, especially at high skill levels.
                  (progn
                    (setf (coordinate-x look) (+ (coordinate-x next-sector) crawl-x))
                    (setf crawl-x (- crawl-x)))))
-
-            ((or (< (coordinate-y look) 1)
-                 (> (coordinate-y look) +quadrant-size+))
+            ;; At the edge of the quadrant, what to do?
+            ((or (= (coordinate-y look) 0)
+                 (= (coordinate-y look) (1- +quadrant-size+)))
              (when (and (< motion 0)
                         (try-exit look enemy-letter enemy-index run-away))
                (return-from move-one-enemy t))
@@ -5086,7 +5088,7 @@ retreat, especially at high skill levels.
                  (progn
                    (setf (coordinate-y look) (+ (coordinate-y next-sector) crawl-y))
                    (setf crawl-y (- crawl-y)))))
-
+            ;; Something is in the way, what to do?
             ((string/= (coord-ref *quadrant* look) +empty-sector+)
              ;; See if we should ram ship
              (when (and (string= (coord-ref *quadrant* look) *ship*)
@@ -5109,7 +5111,9 @@ retreat, especially at high skill levels.
                 (setf end-attempt-p t)))) ; We have failed
 
             (t
-             (setf success t))))
+             (setf success t)))
+          (unless (valid-p look)
+            (setf end-attempt-p t)))
         (if success
             (setf next-sector look)
             (setf end-move-loop-p t)))) ; Done early
@@ -5139,33 +5143,39 @@ retreat, especially at high skill levels.
 
   ;; Figure out which Klingon is the commander (or Supercommander) and do the move
   (when (> *commanders-here* 0)
-    (do ((i 0 (1+ i))
-         enemy-sector)
+    (do ((i 0 (1+ i)))
         ((or (>= i *enemies-here*)
-             (string= (coord-ref *quadrant* enemy-sector) +commander+))
-         (when (string= (coord-ref *quadrant* enemy-sector) +commander+)
-           (move-one-enemy enemy-sector i +commander+)))
-      (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
+             ;; TODO - this is ridiculous, just make *quadrant-enemies* a 2d array and use the
+             ;;        same coordinate pair as for *quadrant*
+             (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                      +commander+))
+         (when (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                        +commander+)
+           (move-one-enemy (enemy-sector-coordinates (aref *quadrant-enemies* i)) i +commander+)))))
   (when (> *super-commanders-here* 0)
-    (do ((i 0 (1+ i))
-         enemy-sector)
+    (do ((i 0 (1+ i)))
         ((or (>= i *enemies-here*)
-             (string= (coord-ref *quadrant* enemy-sector) +super-commander+))
-         (when (string= (coord-ref *quadrant* enemy-sector) +super-commander+)
-           (move-one-enemy enemy-sector i +super-commander+)))
-      (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
+             (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                      +super-commander+))
+         (when (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                        +super-commander+)
+           (move-one-enemy (enemy-sector-coordinates (aref *quadrant-enemies* i)) i +super-commander+)))))
   ;; If skill level is high, move other Klingons and Romulans too!
   ;; Move these last so they can base their actions on what the commander(s) do.
   (when (>= *skill-level* +expert+)
-    (do ((i 0 (1+ i))
-         enemy-sector)
+    (do ((i 0 (1+ i)))
         ((or (>= i *enemies-here*)
-             (or (string= (coord-ref *quadrant* enemy-sector) +klingon+)
-                   (string= (coord-ref *quadrant* enemy-sector) +romulan+)))
-         (when (or (string= (coord-ref *quadrant* enemy-sector) +klingon+)
-                   (string= (coord-ref *quadrant* enemy-sector) +romulan+))
-           (move-one-enemy enemy-sector i (coord-ref *quadrant* enemy-sector))))
-      (setf enemy-sector (enemy-sector-coordinates (aref *quadrant-enemies* i)))))
+             (or (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                          +klingon+)
+                 (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                          +romulan+)))
+         (when (or (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                            +klingon+)
+                   (string= (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))
+                            +romulan+))
+           (move-one-enemy (enemy-sector-coordinates (aref *quadrant-enemies* i))
+                           i
+                           (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i))))))))
   (sort-klingons))
 
 (defun attack-player (&key (torpedoes-ok-p nil)) ; C: attack(bool torps_ok)
@@ -6312,16 +6322,14 @@ quadrant experiencing a supernova)."
                          (format nil "You'll be taking risks at that speed, Captain.~%")))
         (let ((c-e (find-event 'commander-destroys-base))
               (sc-e (find-event 'super-commander-destroys-base)))
-          (when (or (and (eql *super-commander-attacking-base* 'attacking)
-                         (coord-equal *super-commander-quadrant* destination-quadrant)
-                         sc-e
+          (when (or (and sc-e
+                         (coord-equal (event-quadrant sc-e) destination-quadrant)
                          (< (event-date sc-e) (+ *stardate* ttime)))
                     (and c-e
                          (< (event-date c-e) (+ *stardate* ttime))
                          (coord-equal (event-quadrant c-e) destination-quadrant)))
             (print-message *message-window*
-                           (format nil "The starbase there will be destroyed by then.~%")))
-        )
+                           (format nil "The starbase there will be destroyed by then.~%"))))
         (skip-line *message-window*)
         (print-prompt "New warp factor to try? ")
         (setf input-item (scan-input))
@@ -7372,7 +7380,6 @@ it's your problem."
     (setf *miningp* (read s))
     (setf *restingp* (read s))
     (setf *super-commander-attack-enterprise-p* (read s))
-    (setf *super-commander-attacking-base* (read s))
     (setf *shuttle-craft-location* (read s))
     (setf *shuttle-craft-quadrant* (read s))
     (setf *alivep* (read s))
@@ -7485,7 +7492,6 @@ loop, in effect continuously saving the current state of the game."
     (print *miningp* s)
     (print *restingp* s)
     (print *super-commander-attack-enterprise-p* s)
-    (print *super-commander-attacking-base* s)
     (print *shuttle-craft-location* s)
     (print *shuttle-craft-quadrant* s)
     (print *alivep* s)
@@ -7695,7 +7701,6 @@ values, expecially number of entities in the game."
     (setf *miningp* nil)
     (setf *restingp* nil)
     (setf *super-commander-attack-enterprise-p* nil)
-    (setf *super-commander-attacking-base* 'not-attacking)
     (setf *destroyed-inhabited-planets* 0)
     (setf *destroyed-uninhabited-planets* 0)
     (setf *destroyed-bases* 0)
