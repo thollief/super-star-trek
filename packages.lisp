@@ -74,7 +74,7 @@
            copy-sector-coordinate
            quadrant-coordinate
            make-quadrant-coordinate
-           valid-p
+           valid-coordinate-p
            coord-ref
            valid-quadrant-p
            valid-sector-p
@@ -204,7 +204,7 @@
                 copy-sector-coordinate
                 quadrant-coordinate
                 make-quadrant-coordinate
-                valid-p
+                valid-coordinate-p
                 coord-ref
                 valid-quadrant-p
                 valid-sector-p
