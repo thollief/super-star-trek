@@ -354,7 +354,6 @@ the entity may continue moving indefinitely, until it exits the current sector (
 (defvar *crew* +full-crew+) ; C: crew, crew complement
 (defvar *abandoned-crew* 0 "Count of crew abandoned in space") ; C: abandoned
 (defvar *casualties* 0) ; C: casual
-;; TODO - show brig free/capacity as part of the ship status
 (defvar *brig-capacity* 0 "How many Klingons the brig will hold") ; C: brigcapacity
 (defvar *brig-free* 0 "room in the brig") ; C: brigfree
 (defvar *dilithium-crystals-on-board-p* nil) ; C: icrystl
@@ -487,7 +486,7 @@ the same as the ship if the shuttle craft location is on-ship.")
 (defvar *just-in-p* nil
   "True when the player has entered the quadrant but not yet taken any action.") ; C: justin
 (defvar *klingons-here* nil) ; C: klhere
-(defvar *commanders-here* nil) ; C: comhere - TODO could this be in the quadrant structure like Klingons and Romulans?
+(defvar *commanders-here* nil) ; C: comhere
 (defvar *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
 (defvar *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
 (defvar *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
@@ -657,6 +656,11 @@ shuttle craft landed on it."
   (/ (* 10.0 distance) (expt warp-factor 2)))
 
 ;; TODO - write a calculate-remaining-time function
+
+(defun enemies-remaining-p ()
+  "Indicate whether or not there are enemies remaining in the game."
+
+  (> (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0))
 
 (defun attack-report () ; void attackreport(bool curt)
   "Report the status of bases under attack."
@@ -986,7 +990,6 @@ affected."
     (unschedule-event 'move-super-commander)
     (decf (quadrant-klingons (coord-ref *galaxy* nova-quadrant)) 1)
     (decf *remaining-klingons* 1))
-  ;; TODO - can there be two commanders in one quadrant?
   (when (position nova-quadrant *commander-quadrants* :test #'coord-equal)
     ;; Destroyed a Commander
     (setf *commander-quadrants* (remove nova-quadrant *commander-quadrants* :test #'coord-equal))
@@ -1014,7 +1017,7 @@ affected."
   ;; Either case ends the game but neither necessarily occurs. There is no default case.
   (cond
     ((and (not (coord-equal *ship-quadrant* nova-quadrant))
-          (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0))
+          (not (enemies-remaining-p)))
      ;; If supernova destroys last Klingons give special message
      (skip-line *message-window*)
      ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep
@@ -1708,12 +1711,6 @@ tractor-beamed the ship then the other will not."
        (destroy-starbase e))
       ;; Commander succeeds in destroying base
       ((eql (event-type e) 'commander-destroys-base)
-       ;; TODO - The original C code seemed to engage in pointless loops and if statements to
-       ;;        determine if there was a commander present to destroy the base, if there were any
-       ;;        bases at all, if there was a base in the quadrant where the destruction was
-       ;;        scheduled to occur. Those checks seem pointless because if a commander moves away
-       ;;        from a base under attack it is the job of the movement function to undschedule
-       ;;        the destruction. This event handler has been re-written to just do it.
        (destroy-starbase e))
       ;; Super-Commander moves
       ((eql (event-type e) 'move-super-commander)
@@ -1879,8 +1876,6 @@ tractor-beamed the ship then the other will not."
   (when (= line-to-print 3)
     (print-out *game-status-window* (format nil "Time Left ~,2,,,F~%" *remaining-time*))))
 
-;; TODO - Line 10 should be the contents of the brig. When this is added, also move the game
-;;        status window down one line so the bottoms of the status displays are aligned.
 (defun ship-status (&optional (line-to-print nil)) ; C: void status(int req)
   "Print status reports next to short range scan lines. The classic line to print was one of
 
@@ -1911,7 +1906,6 @@ With the addition of probes and other ship information, and the game status wind
 "
 
   (when (= line-to-print 1)
-    ;; TODO - update the player condition every turn, not only when checking status
     (update-condition)
     (print-out *ship-status-window* (format nil "Condition ~A" *condition*))
     (when (> (damaged-device-count) 0)
@@ -2231,7 +2225,7 @@ scan. Long-range sensors can scan all adjacent quadrants."
   (print-message *message-window* (format nil " destroyed.~%"))
   (setf (coord-ref *quadrant* enemy-coord) +empty-sector+)
   (update-chart (coordinate-x *ship-quadrant*) (coordinate-y *ship-quadrant*))
-  (when (> (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+  (when (enemies-remaining-p)
     (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
         (setf *remaining-time* (/ *remaining-resources* (+ *remaining-klingons* (* 4 (length *commander-quadrants*)))))
         (setf *remaining-time* 99))
@@ -2450,9 +2444,8 @@ Return t if the shields were successfully raised or lowered, nil if there was a 
         (setf *thing-is-angry-p* t))
       (if (= (enemy-energy (aref *quadrant-enemies* enemy-index)) 0)
           (progn
-            (dead-enemy e-coord (coord-ref *quadrant* e-coord)
-                        e-coord)
-            (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+            (dead-enemy e-coord (coord-ref *quadrant* e-coord) e-coord)
+            (when (not (enemies-remaining-p))
               (finish 'won))
             (when *all-done-p*
               (return-from apply-phaser-hits t))
@@ -2828,7 +2821,7 @@ is a function of that Klingon's remaining power, our power, etc."
                      (decf *brig-free* klingons-captured)
                      (print-message *message-window* (format nil "~D captives taken~%" klingons-captured)))))
              (dead-enemy k-coord (coord-ref *quadrant* k-coord) k-coord)
-             (when (= *remaining-klingons* 0)
+             (when (not (enemies-remaining-p))
                (finish 'won)))))))
 
 (defun select-klingon-for-capture () ; C: int selectklingon()
@@ -3238,9 +3231,9 @@ handling the result. Return the amount of damage if the player ship was hit."
   "Verfiy that the parameter x and y coordinates are an acceptable target for a photon torpedo.
  Return the course direction of the target or nil."
 
-  ;; TODO - fractional sector coordinates are allowed, valid-coordinate-p checks may need to be relaxed to
-  ;;        allow fractional coords, or find a different way to represent coordinates. The
-  ;;        place to check might be when a coordinate is used as an array index. That is,
+  ;; TODO - fractional sector coordinates are allowed, valid-coordinate-p checks may need to be
+  ;;        relaxed to allow fractional coords, or find a different way to represent coordinates.
+  ;;        The place to check might be when a coordinate is used as an array index. That is,
   ;;        coordinates are used as array indices but they could equally be an offset into an
   ;;        array. The storage format of sector information should not restrict the valid values
   ;;        of coordinates.
@@ -3395,8 +3388,7 @@ there was an error (including -1 entered by the player to exit the command)."
                           (quadrant-supernovap
                            (coord-ref *galaxy* *ship-quadrant*)))
                   (return-from fire-photon-torpedoes nil))))))
-      ;; TODO - is this a common idiom suitable for a function? Yes - (enemies-remaining-p)
-      (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+      (when (not (enemies-remaining-p))
         (finish 'won)))))
 
 (defun subspace-radio-available-p ()
@@ -3651,7 +3643,7 @@ coordinates of the enemy being rammed or the original coordinates of ramming ene
                                                              (random 1.0)))
                                                      *damage-factor*))))))
   (print-message *message-window* (format nil "***~A heavily damaged.~%" (format-ship-name)))
-  (if (> (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+  (if (enemies-remaining-p)
       (damage-report)
       (finish 'won)))
 
@@ -3736,7 +3728,7 @@ damage multiplier to determine how much damage is done by ramming this enemy."
 
   (let ((time-used (- *stardate* *initial-stardate*)))
     (when (and (or (= time-used 0)
-                   (/= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0))
+                   (enemies-remaining-p))
                (< time-used 5.0))
       (setf time-used 5.0))
     (return-from klingons-per-stardate (/ (- (+ *initial-klingons* *initial-commanders* *initial-super-commanders*)
@@ -4021,7 +4013,8 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
                     (format nil "and you are put on trial as a war criminal.  On the~%"))
      (print-message *message-window* "basis of your record, you are ")
      (if (> (* (+ *remaining-klingons*
-                  (length *commander-quadrants*) *remaining-super-commanders*) 3.0)
+                  (length *commander-quadrants*) *remaining-super-commanders*)
+               3.0)
             (+ *initial-klingons* *initial-commanders* *initial-super-commanders*))
          (progn
            (print-message *message-window* (format nil "acquitted.~%"))
@@ -4147,14 +4140,12 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
     (setf *ship* +no-ship+))
   (when (string= *ship* +enterprise+)
     (setf *ship* +faerie-queene+))
-  (if (/= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+  (if (enemies-remaining-p)
       (let ((for 0)
             (against 0))
         (setf for (/ *remaining-resources* *initial-resources*))
-        (setf against (/ (+ *remaining-klingons*
-                            (* 2.0 (length *commander-quadrants*)))
-                         (+ *initial-klingons*
-                            (* 2.0 *initial-commanders*))))
+        (setf against (/ (+ *remaining-klingons* (* 2.0 (length *commander-quadrants*)))
+                         (+ *initial-klingons* (* 2.0 *initial-commanders*))))
         (if (>= (/ for against)
                 (+ 1.0 (* 0.5 (random 1.0))))
             (progn
@@ -4182,7 +4173,7 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
     ;; Extra stars so the lengths of the output lines are the same
     (print-message *message-window* "***" :print-slowly t))
   (print-message *message-window*
-   (format nil "********* Entropy of ~A maximized *********~%"
+   (format nil "********** Entropy of ~A maximized ***********~%"
            (format-ship-name)) :print-slowly t)
   (print-stars)
   (let ((whammo (* 25.0 *ship-energy*)))
@@ -5257,7 +5248,7 @@ hit on the player, and the total amount of hits on the player."
               (setf random-variation (- (* (+ (random 1.0) (random 1.0)) 0.5) 0.5))
               (incf random-variation (* 0.002 (enemy-energy enemy) random-variation))
               (setf hit (move-torpedo-within-quadrant course random-variation enemy-sector 1 1))
-              (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+              (when (not (enemies-remaining-p))
                 (finish 'won)) ; Klingons did themselves in!
               (when (or (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
                         *all-done-p*)
@@ -6885,9 +6876,7 @@ was an event that requires aborting the operation carried out by the calling fun
            ;; In the C source the victory check was done before reporting on the status of the
            ;; deathray. That seems backwards - the deathray status report is irrelevant and out
            ;; of place after the text explaining that the game has been won.
-           (when (= (+ *remaining-klingons*
-                       (length *commander-quadrants*) *remaining-super-commanders*)
-                    0)
+           (when (not (enemies-remaining-p))
              (finish 'won)))
          (let ((r (random 1.0)))
            ;; Pick failure method
@@ -7061,7 +7050,7 @@ the planet."
         (print-message *message-window* (format nil "~%Insufficient energy to leave quadrant.~%"))
         (finish 'destroyed-by-supernova)
         (return-from emergency-supernova-exit nil)))
-    (when (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0)
+    (when (not (enemies-remaining-p))
       (finish 'won)))) ; Supernova killed remaining enemies.
 
 (defun orbit () ; C: orbit(void)
