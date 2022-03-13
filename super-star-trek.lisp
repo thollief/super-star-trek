@@ -1016,7 +1016,7 @@ affected."
     ((and (not (coord-equal *ship-quadrant* nova-quadrant))
           (= (+ *remaining-klingons* (length *commander-quadrants*) *remaining-super-commanders*) 0))
      ;; If supernova destroys last Klingons give special message
-     (skip-line *message-window* 2)
+     (skip-line *message-window*)
      ;; TODO - the C source only printed "Lucky you" if the supernova was not caused by a deep
      ;; space probe, that is, not induced by the player. Restore this? If yes, then also restore
      ;; the score updates performed in this function when a probe causes a supernova.
@@ -1209,8 +1209,7 @@ Return true on successful move."
          (setf (aref *quadrant-enemies* i) (aref *quadrant-enemies* (1- *enemies-here*)))))
     (decf *klingons-here* 1)
     (decf *enemies-here* 1)
-    (update-condition)
-    (sort-klingons))
+    (update-condition))
   ;; Check for a helpful planet
   (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planets* :test #'coord-equal))))
     (when (and helpful-planet
@@ -1835,8 +1834,7 @@ tractor-beamed the ship then the other will not."
                              (make-enemy :energy power
                                          :distance distance
                                          :average-distance distance
-                                         :sector-coordinates coordinates)))
-                     (sort-klingons))
+                                         :sector-coordinates coordinates))))
                    ;; recompute time left (ported directly from the C source)
                    (setf *remaining-time*
                          (if (> (+ *remaining-klingons* (length *commander-quadrants*)) 0)
@@ -2986,7 +2984,7 @@ handling the result. Return the amount of damage if the player ship was hit."
          displaced-to-sector ; C: coord jw, coordinate to which a ship is displaced
          (shovedp nil)) ; C: bool shoved, a ship was moved by a torpedo hit
         (movement-ended-p
-         ;; Displaced enemies don't exit the sector
+         ;; Displaced enemies may not exit the quadrant
          (when (and shovedp
                     (valid-coordinate-p displaced-to-sector))
            (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
@@ -2996,13 +2994,7 @@ handling the result. Return the amount of damage if the player ship was hit."
              (print-message *message-window* (format nil " displaced by blast to ~A ~%"
                                     (format-sector-coordinates displaced-to-sector))))
            ;; A ship was displaced, reset all distances for next attack on player.
-           (do ((i 0 (1+ i)))
-               ((>= i *enemies-here*))
-             (setf (enemy-distance (aref *quadrant-enemies* i))
-                   (distance *ship-sector* (enemy-sector-coordinates (aref *quadrant-enemies* i))))
-             (setf (enemy-average-distance (aref *quadrant-enemies* i))
-                   (distance *ship-sector* (enemy-sector-coordinates (aref *quadrant-enemies* i))))
-             (sort-klingons))))
+           (calculate-enemy-distances)))
       (incf torp-x delta-x)
       (incf torp-y delta-y)
       (setf torpedo-sector (make-sector-coordinate :x (round torp-x) :y (round torp-y)))
@@ -4307,19 +4299,32 @@ Return the sector coordinates, distance from the ship, and Tholian power."
         (setf sector-ok-p t)
         (setf sector-ok-p nil))))
 
-;; resume here
-(defun update-average-distances (player-coord)
+(defun update-average-distances (ship-coord)
   "Calculate the average of the previous distance from the player ship and the current distance.
 The player-coord parameter is needed because the current position in the global variable might
 not be updated at the time this function is called, that is, during ship movement."
 
-  (setf player-coord player-coord))
+  (do ((m 0 (1+ m))
+       (final-distance 0))
+      ((>= m *enemies-here*))
+    (setf final-distance (distance ship-coord
+                                   (enemy-sector-coordinates (aref *quadrant-enemies* m))))
+    (setf (enemy-average-distance (aref *quadrant-enemies* m))
+          (/ (+ final-distance (enemy-distance (aref *quadrant-enemies* m))) 2.0))
+    (setf (enemy-distance (aref *quadrant-enemies* m)) final-distance))
 
-;; resume here
+)
+
 (defun calculate-enemy-distances ()
-  "Calculate the distance of all enemies from the player ship."
+  "Calculate the distance of all enemies from the player ship and store the result in the enemy
+structure."
 
-  )
+  (do ((i 0 (1+ i)))
+      ((>= i *enemies-here*))
+    (setf (enemy-distance (aref *quadrant-enemies* i))
+          (distance *ship-sector* (enemy-sector-coordinates (aref *quadrant-enemies* i))))
+    (setf (enemy-average-distance (aref *quadrant-enemies* i))
+          (distance *ship-sector* (enemy-sector-coordinates (aref *quadrant-enemies* i))))))
 
 (defun enemies-sorted-by-distance ()
   "Return a list of enemy structs in the current quadrant, sorted by distance of the enemy from the
@@ -4336,26 +4341,6 @@ not be updated at the time this function is called, that is, during ship movemen
       ((>= i *enemies-here*)
        (return-from quadrant-enemies enemy-list))
     (push (aref *quadrant-enemies* i) enemy-list)))
-
-;; TODO - can Lisp sort function be used?
-(defun sort-klingons () ; C: sortklings(void)
-  "Sort klingons by distance from us, closest Klingons first in the list."
-
-  ;; TODO - things can be angry, and tholians get added to the enemies list too.
-  (when (> (- *enemies-here* *things-here* *tholians-here*) 1)
-    ;; Bubble sort
-    (do ((exchanged t))
-        ((not exchanged))
-      (setf exchanged nil)
-      (do ((j 0 (1+ j))
-           temp)
-          ((< j *enemies-here*))
-        (when (> (enemy-distance (aref *quadrant-enemies* j))
-                 (enemy-distance (aref *quadrant-enemies* (1+ j))))
-          (setf exchanged t)
-          (setf temp (aref *quadrant-enemies* j))
-          (setf (aref *quadrant-enemies* j) (aref *quadrant-enemies* (1+ j)))
-          (setf (aref *quadrant-enemies* (1+ j)) temp))))))
 
 (defun new-quadrant (&key (show-thing t))
   "Set up a new quadrant when it is entered or re-entered. The thing should only be shown when the
@@ -4518,8 +4503,6 @@ player has reached a base by abandoning ship or using the SOS command."
         (setf (aref *quadrant* (- +quadrant-size+ 1) 0) +reserved+))
       (when (string= (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)
         (setf (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)))
-
-    (sort-klingons)
 
     ;; Put in a few black holes
     (do ((i 0 (1+ i)))
@@ -5202,8 +5185,7 @@ retreat, especially at high skill levels.
                             +romulan+))
            (move-one-enemy (enemy-sector-coordinates (aref *quadrant-enemies* i))
                            i
-                           (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i))))))))
-  (sort-klingons))
+                           (coord-ref *quadrant* (enemy-sector-coordinates (aref *quadrant-enemies* i)))))))))
 
 (defun perform-enemy-attacks (torpedoes-ok-p)
   "Each enemy in the quadrant carries out an attack, if possible for that enemy. Return whether or
@@ -5409,15 +5391,9 @@ this occurs every turn even if other enemies present might not attack."
                               (> *romulans-here* 0))
                       (print-message *message-window*
                                      (format nil "***Enemies decide against attacking your ship.~%")))))))
-          ;; Reset distances to the ship. Enemy attacks could have moved either the player or
-          ;; an enemy, for example if a star nova'd by an enemy buffets another enemy.
-          (do ((n 0 (1+ n)))
-              ((>= n *enemies-here*)
-               (sort-klingons))
-            (setf (enemy-distance (aref *quadrant-enemies* n))
-                  (distance (enemy-sector-coordinates (aref *quadrant-enemies* n)) *ship-sector*))
-            (setf (enemy-average-distance (aref *quadrant-enemies* n))
-                  (distance (enemy-sector-coordinates (aref *quadrant-enemies* n)) *ship-sector*))))))))
+            ;; Reset distances to the ship. Enemy attacks could have moved either the player or
+            ;; an enemy, for example if a star nova'd by an enemy buffets another enemy.
+            (calculate-enemy-distances))))))
 
 ;; TODO - Error: the ship doesn't always leave the quadrant, and no E appears in the short range
 ;;        scan seems to occur when moving at warp 10 over a distance of 3 or so quadrants. The
@@ -5494,19 +5470,16 @@ can occur."
                    (> *klingons-here* 0) ; Romulans don't get another attack
                    (> *skill-level* +good+)
                    (not *cloakedp*))
-            ;; The ship has moved during this turn so update average distance before attacking
-            (do ((m 0 (1+ m)))
-                ((>= m *enemies-here*))
-              (setf (enemy-average-distance (aref *quadrant-enemies* m))
-                    (/ (+ (distance s-coord (enemy-sector-coordinates (aref *quadrant-enemies* m)))
-                          (enemy-distance (aref *quadrant-enemies* m)))
-                       2.0)))
-            (attack-player)
-            (when *all-done-p*
-              (return-from move-ship-within-quadrant t)))
+          ;; The ship has moved during this turn so update average distance before attacking
+          (update-average-distances s-coord)
+          (attack-player)
+          (when *all-done-p*
+            (return-from move-ship-within-quadrant t)))
         ;; Compute final position -- new quadrant and sector
-        (setf prev-x (+ (* +quadrant-size+ (coordinate-x *ship-quadrant*)) (coordinate-x *ship-sector*)))
-        (setf prev-y (+ (* +quadrant-size+ (coordinate-y *ship-quadrant*)) (coordinate-y *ship-sector*)))
+        (setf prev-x (+ (* +quadrant-size+ (coordinate-x *ship-quadrant*))
+                        (coordinate-x *ship-sector*)))
+        (setf prev-y (+ (* +quadrant-size+ (coordinate-y *ship-quadrant*))
+                        (coordinate-y *ship-sector*)))
         ;; position in units of sectors
         (setf (coordinate-x s-coord) (truncate (+ prev-x (* 10.0 distance bigger delta-x) 0.5)))
         (setf (coordinate-y s-coord) (truncate (+ prev-y (* 10.0 distance bigger delta-y) 0.5)))
@@ -5606,18 +5579,8 @@ can occur."
     (setf (coordinate-y *ship-sector*) (coordinate-y s-coord))
     ;; Movement completed and no quadrant change -- compute new average enemy distances
     (setf (coord-ref *quadrant* *ship-sector*) *ship*)
-    (when (> *enemies-here* 0)
-      (do ((m 0 (1+ m))
-           (final-distance 0))
-          ((>= m *enemies-here*))
-        (setf final-distance (distance *ship-sector*
-                                       (enemy-sector-coordinates (aref *quadrant-enemies* m))))
-        (setf (enemy-average-distance (aref *quadrant-enemies* m))
-              (/ (+ final-distance (enemy-distance (aref *quadrant-enemies* m))) 2.0))
-        (setf (enemy-distance (aref *quadrant-enemies* m)) final-distance))
-      (sort-klingons)
-      (unless (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*))
-        (attack-player)))
+    (update-average-distances *ship-sector*)
+    (attack-player)
     (update-condition)
     (update-windows)))
 
