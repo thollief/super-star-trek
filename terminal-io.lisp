@@ -71,9 +71,9 @@ output location if no function-specific window is available.")
   ;; space required for windowed mode: short range scan, status, long range scan, game
   ;; status, message, prompt. If more rows/columns are available then more windows are
   ;; created. All output that doesn't go to a specific window is displayed in the message
-  ;;window.
+  ;; window.
   ;;
-  ;; TODO - name all these constants that define window position and size?
+  ;; (newwin #-of-lines #-of-cols starting-line starting-col)
   (setf *short-range-scan-window*
         (make-instance 'window :height 12 :width 24 :curses-window (newwin 12 24 0 0)))
   (setf *ship-status-window*
@@ -81,7 +81,7 @@ output location if no function-specific window is available.")
   (setf *long-range-scan-window*
         (make-instance 'window :height 5 :width 19 :curses-window (newwin 5 19 0 60)))
   (setf *game-status-window*
-        (make-instance 'window :height 3 :width 19 :curses-window (newwin 3 19 8 60)))
+        (make-instance 'window :height 3 :width 19 :curses-window (newwin 3 19 9 60)))
   (setf *prompt-window*
         (make-instance 'window :height 1 :width *cols*
                                :curses-window (newwin 1 *cols* (- *lines* 1) 0)))
@@ -109,11 +109,11 @@ output location if no function-specific window is available.")
             (make-instance 'window :height 44 :width 59
                                    :curses-window (newwin 44 59 0 126)))
       (setf *planet-report-window* *message-window*))
-  (if (and (>= *cols* 187)
+  (if (and (>= *cols* 142)
            (>= *lines* 65))
       (setf *score-window*
             (make-instance 'window :height 20 :width 61
-                                   :curses-window (newwin 20 61 45 126)))
+                                   :curses-window (newwin 20 61 45 81)))
       (setf *score-window* *message-window*)))
 
 (defun set-line-by-line-windows ()

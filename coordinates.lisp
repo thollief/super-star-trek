@@ -20,22 +20,22 @@
 (defstruct (quadrant-coordinate (:include coordinate))
   "Coordinate pair for a quadrant.")
 
-(defgeneric valid-p (coord)
+(defgeneric valid-coordinate-p (coord)
   (:documentation "Return true if the x and y slot values of a coordinate are valid, false
 otherwise."))
 
-(defmethod valid-p ((coord coordinate))
+(defmethod valid-coordinate-p ((coord coordinate))
     (and (numberp (coordinate-x coord))
          (numberp (coordinate-y coord))
          (>= (coordinate-x coord) 0)
          (>= (coordinate-y coord) 0)))
 
-(defmethod valid-p ((coord sector-coordinate))
+(defmethod valid-coordinate-p ((coord sector-coordinate))
   (and (call-next-method)
        (< (coordinate-x coord) +quadrant-size+)
        (< (coordinate-y coord) +quadrant-size+)))
 
-(defmethod valid-p ((coord quadrant-coordinate))
+(defmethod valid-coordinate-p ((coord quadrant-coordinate))
   (and (call-next-method)
        (< (coordinate-x coord) +galaxy-size+)
        (< (coordinate-y coord) +galaxy-size+)))
@@ -53,7 +53,7 @@ coordinates."
            (numberp x)
            (numberp y))
       ;; TODO - make-quadrant-coordinate should fail if x and y are not valid
-      (valid-p (make-quadrant-coordinate :x x :y y))
+      (valid-coordinate-p (make-quadrant-coordinate :x x :y y))
       (return-from valid-quadrant-p nil)))
 
 (defun valid-sector-p (x y) ; C: VALID_SECTOR(x, y)
@@ -64,7 +64,7 @@ coordinates."
            (numberp x)
            (numberp y))
       ;; TODO - make-sector-coordinate should fail if x and y are not valid
-      (valid-p (make-sector-coordinate :x x :y y))
+      (valid-coordinate-p (make-sector-coordinate :x x :y y))
       (return-from valid-sector-p nil)))
 
 (defun coord-equal (c1 c2) ; C: same(c1, c2)

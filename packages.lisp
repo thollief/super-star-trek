@@ -1,6 +1,6 @@
 ;;;; Super Star Trek package definitions
 
-;;;; Possible enhancementsl
+;;;; Possible enhancements:
 ;;;; 1. Offer a randomized password instead of requiring user input. The C source for this port
 ;;;;    required a password if a "plain" game was selected and generated a random password if a
 ;;;;    "fancy" game was selected.
@@ -26,7 +26,6 @@
 ;;;;    * There is a small probility that a nova event will leave a black hole.
 ;;;;    * Multiple laser banks and beam spreading.
 ;;;; 5. Black holes can warp you to another location in the galaxy. This should have low probability.
-;;;; 7. Add an undock command
 
 ;;;; TODO - add quadrants to events - every event occurs in a quadrant
 ;;;; TODO - bsdtrek mentioned boarding parties to capture a klingon, klingons could try it too
@@ -37,9 +36,6 @@
 ;;;; TODO remove the original C names from the C source if/when they are no longer needed
 
 ;;;; TODO - Does the transporter work while cloaked? Can the ship be cloaked while in orbit?
-;;;; TODO - Can the capture mechanic be enhanced by carefully damaging opponents? "Thrash them to
-;;;;        within an inch of their lives", that is use enough phaser energy to weaken them to
-;;;;        the point of not being able to fight back.
 ;;;; TODO - are enemies that run away limited by their current energy value? That is, do they use
 ;;;;        energy to move? If yes, then getting hit hard enough could prevent them from running
 ;;;;        away to another quadrant and make them easier to capture. This could also be added to
@@ -75,9 +71,10 @@
            sector-coordinate
            sector-coordinate-p
            make-sector-coordinate
+           copy-sector-coordinate
            quadrant-coordinate
            make-quadrant-coordinate
-           valid-p
+           valid-coordinate-p
            coord-ref
            valid-quadrant-p
            valid-sector-p
@@ -204,9 +201,10 @@
                 sector-coordinate
                 sector-coordinate-p
                 make-sector-coordinate
+                copy-sector-coordinate
                 quadrant-coordinate
                 make-quadrant-coordinate
-                valid-p
+                valid-coordinate-p
                 coord-ref
                 valid-quadrant-p
                 valid-sector-p

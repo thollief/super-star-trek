@@ -36,12 +36,12 @@ instance of each type of event in the queue.")
 
   (setf *event-queue* ()))
 
-(defun scheduled-for (event) ; C: scheduled(int evtype)
+(defun scheduled-for (event-to-find) ; C: scheduled(int evtype)
   "When will this event happen?"
 
-  (let ((pos (position nil *event-queue* :key #'(lambda (x) (eql event (event-type x))))))
-    (when pos
-      (event-date (car (subseq *event-queue* pos pos))))))
+  (let ((event (find event-to-find *event-queue* :test #'eql :key #'event-type)))
+    (when event
+      (event-date event))))
 
 (defun is-scheduled-p (event) ; C: is_scheduled(int evtype)
   "Is an event of the specified type scheduled."
@@ -90,12 +90,10 @@ instance of each type of event in the queue.")
   (setf *event-queue* (delete event *event-queue*
                               :key #'(lambda (x) (eql event (event-type x))))))
 
-(defun find-event (event) ; C: #define findevent(evtype)	&game.future[evtype]
+(defun find-event (event-to-find) ; C: #define findevent(evtype)	&game.future[evtype]
   "Find an event in the array of events using event-type as an index."
 
-  (let ((pos (position nil *event-queue* :key #'(lambda (x) (eql event (event-type x))))))
-    (when pos
-      (car (subseq *event-queue* pos pos)))))
+    (return-from find-event (find event-to-find *event-queue* :test #'eql :key #'event-type)))
 
 (defun get-next-event ()
   "Retmove the next event from the event queue and return it. In other words, pop the queue."
