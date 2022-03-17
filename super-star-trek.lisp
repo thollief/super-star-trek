@@ -419,6 +419,8 @@ Average distance is the average of the distances between the player ship and an 
  the enemy's attack on the player, not the previous or current distances, either of which could be
 greater or lesser."
 
+  letter ; The symbol to display for this enemy on a short-range scan
+  name ; The name of the type of enemy as displayed in messages
   energy ; C: kpower
   distance ; C: kdist
   average-distance ; C: kavgd
@@ -432,7 +434,6 @@ greater or lesser."
   "The contents of the current quadrant as seen on a short range scan. That is, an array of
  strings, each containing a single character.") ; C: feature quad[QUADSIZE+1][QUADSIZE+1];
 
-(defvar *tholian-sector* nil) ; C: coord tholian, coordinates of tholian
 (defvar *base-sector* nil) ; C: base, coordinate position of base in current quadrant
 
 ;; Other game events to keep track of
@@ -2638,7 +2639,6 @@ order by enemy distance from the player."
                  (decf *ship-energy* 200) ; TODO - name the constant
                  (unless (toggle-high-speed-shield-control requested-energy)
                    (return-from fire-phasers nil)))
-               ;; resume here - applying phaser hits is slow, could it be the reverse?
                (apply-phaser-hits hits)
                (setf *action-taken-p* t))
             (setf fire-selection-complete t)
@@ -4252,23 +4252,25 @@ ship, and Thing power."
 
 (defun drop-tholian-in-sector ()
   "Drop a Tholian into the current quadrant. Tholians only occupy the perimeter of a quadrant.
-Return the sector coordinates, distance from the ship, and Tholian power."
+Return the enemy object."
 
   (do ((sector-ok-p nil)
        x y c)
       (sector-ok-p
-       (setf (aref *quadrant* x y) +tholian+)
        (setf c (make-sector-coordinate :x x :y y))
+       (setf (coord-ref *quadrant* c) +tholian+)
        (return-from drop-tholian-in-sector
-         (values c
-                 (distance *ship-sector* c)
-                 (+ (* (random 1.0) 400.0) 100.0
-                    (* 25.0 *skill-level*))))) ; Rand()*400.0 +100.0 +25.0*game.skill
+         (make-enemy :letter +tholian+ :name "Tholian"
+                     ;; Rand()*400.0 +100.0 +25.0*game.skill
+                     :energy (+ (* (random 1.0) 400.0) 100.0 (* 25.0 *skill-level*))
+                     :distance (distance *ship-sector* c)
+                     :average-distance (distance *ship-sector* c)
+                     :sector-coordinates c)))
     (if (> (random 1.0) 0.5)
-        (setf x (- +quadrant-size+ 1))
+        (setf x (1- +quadrant-size+))
         (setf x 0))
     (if (> (random 1.0) 0.5)
-        (setf y (- +quadrant-size+ 1))
+        (setf y (1- +quadrant-size+))
         (setf y 0))
     (if (string= (aref *quadrant* x y) +empty-sector+)
         (setf sector-ok-p t)
@@ -4397,9 +4399,6 @@ player has reached a base by abandoning ship or using the SOS command."
             (setf *current-planet* (drop-entity-in-sector +world+))
             (setf *current-planet* (drop-entity-in-sector +planet+)))))
 
-    ;; Check for condition
-    (update-condition)
-
     ;; And finally the stars
     (do ((i 1 (1+ i))) ; another count
         ((> i (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
@@ -4443,12 +4442,8 @@ player has reached a base by abandoning ship or using the SOS command."
               (and (> *skill-level* +good+)
                    (<= (random 1.0) 0.08)))
       (setf *tholians-here* 1)
-      (multiple-value-bind (coordinates distance power) (drop-tholian-in-sector)
-        (setf *tholian-sector* coordinates)
-        (push (make-enemy :energy power :distance distance :average-distance distance
-                          :sector-coordinates coordinates)
-              *quadrant-enemies*)
-        (incf *enemies-here* 1))
+      (push (drop-tholian-in-sector) *quadrant-enemies*)
+      (incf *enemies-here* 1)
       ;; Reserve unoccupied corners
       (when (string= (aref *quadrant* 0 0) +empty-sector+)
         (setf (aref *quadrant* 0 0) +reserved+))
@@ -4474,7 +4469,10 @@ player has reached a base by abandoning ship or using the SOS command."
       (when (string= (aref *quadrant* (- +quadrant-size+ 1) 0) +reserved+)
         (setf (aref *quadrant* (- +quadrant-size+ 1) 0) +empty-sector+))
       (when (string= (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +reserved+)
-        (setf (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))))
+        (setf (aref *quadrant* (- +quadrant-size+ 1) (- +quadrant-size+ 1)) +empty-sector+)))
+
+    ;; Check for condition
+    (update-condition)))
 
 (defun abandon-ship () ; C: abandon(void)
   "The ship is abandoned. If your current ship is the Faire Queene, or if your shuttle craft is
@@ -4715,7 +4713,6 @@ exchange. Of course, this can't happen unless you have taken some prisoners."
   (new-quadrant)
   (process-events)) ; Stas Sergeev added this -- do pending events
 
-;; TODO - Tholians don't seem to move
 (defun move-tholian () ; C: void movetholian(void)
   "Move the Tholian. Tholians always start in a corner and move along the edge of the quadrant. At
 each turn the Tholian moves counterclockwise, building the Tholian Web along the next edge. On the
@@ -4724,81 +4721,86 @@ object then it waits, in case the player helpfully removes the blocking object."
 
   (when (and (> *tholians-here* 1)
              (not *just-in-p*))
-    (let ((new-x 0)
+    (let (tholian
+          tholian-sector
+          (new-x 0)
           (new-y 0))
+      (dolist (enemy (quadrant-enemies))
+        (when (string= (enemy-letter enemy) +tholian+)
+          (setf tholian enemy)))
+      (setf tholian-sector (enemy-sector-coordinates tholian))
+      ;; No default case
       (cond
-        ((and (= (coordinate-x *tholian-sector*) 1)
-              (= (coordinate-x *tholian-sector*) 1))
-         (setf new-x 1)
-         (setf new-y +quadrant-size+))
+        ((and (= (coordinate-x tholian-sector) 0)
+              (= (coordinate-y tholian-sector) 0))
+         (setf new-x 0)
+         (setf new-y (1- +quadrant-size+)))
 
-        ((and (= (coordinate-x *tholian-sector*) 1)
-              (= (coordinate-x *tholian-sector*) +quadrant-size+))
-         (setf new-x +quadrant-size+)
-         (setf new-y +quadrant-size+))
+        ((and (= (coordinate-x tholian-sector) 0)
+              (= (coordinate-y tholian-sector) (1- +quadrant-size+)))
+         (setf new-x (1- +quadrant-size+))
+         (setf new-y (1- +quadrant-size+)))
 
-        ((and (= (coordinate-x *tholian-sector*) +quadrant-size+)
-              (= (coordinate-x *tholian-sector*) +quadrant-size+))
-         (setf new-x +quadrant-size+)
-         (setf new-y 1))
+        ((and (= (coordinate-x tholian-sector) (1- +quadrant-size+))
+              (= (coordinate-y tholian-sector) (1- +quadrant-size+)))
+         (setf new-x (1- +quadrant-size+))
+         (setf new-y 0))
 
-        ((and (= (coordinate-x *tholian-sector*) +quadrant-size+)
-              (= (coordinate-x *tholian-sector*) 1))
-         (setf new-x 1)
-         (setf new-y 1))
-
-        (t
-         ;; Something is wrong!
-         (setf *tholians-here* 0)
-         (return-from move-tholian nil)))
+        ((and (= (coordinate-x tholian-sector) (1- +quadrant-size+))
+              (= (coordinate-y tholian-sector) 0))
+         (setf new-x 0)
+         (setf new-y 0)))
       ;; Do nothing if we are blocked
       (when (or (string= (aref *quadrant* new-x new-y) +empty-sector+)
                 (string= (aref *quadrant* new-x new-y) +tholian-web+))
         (setf (aref *quadrant* new-x new-y) +tholian-web+)
         (cond
           ;; Move in x axis
-          ((/= (coordinate-x *tholian-sector*) new-x)
-           (do ((incr-x (/ (abs (- new-x (coordinate-x *tholian-sector*)))
-                           (- new-x (coordinate-x *tholian-sector*)))))
-               ((= (coordinate-x *tholian-sector*) new-x))
-             (setf (coordinate-x *tholian-sector*) incr-x)
-             (when (string= (coord-ref *quadrant* *tholian-sector*) +empty-sector+)
-               (setf (coord-ref *quadrant* *tholian-sector*) +tholian-web+))))
+          ((/= (coordinate-x tholian-sector) new-x)
+           (do ((incr-x (/ (abs (- new-x (coordinate-x tholian-sector)))
+                           (- new-x (coordinate-x tholian-sector)))))
+               ((= (coordinate-x tholian-sector) new-x))
+             (setf (coordinate-x tholian-sector) incr-x)
+             (when (string= (coord-ref *quadrant* tholian-sector) +empty-sector+)
+               (setf (coord-ref *quadrant* tholian-sector) +tholian-web+))))
           ;; Move in y axis
-          ((/= (coordinate-y *tholian-sector*) new-y)
-           (do ((incr-y (/ (abs (- new-y (coordinate-y *tholian-sector*)))
-                          (- new-y (coordinate-y *tholian-sector*)))))
-               ((= (coordinate-y *tholian-sector*) new-y))
-             (setf (coordinate-y *tholian-sector*) incr-y)
-             (when (string= (coord-ref *quadrant* *tholian-sector*) +empty-sector+)
-               (setf (coord-ref *quadrant* *tholian-sector*) +tholian-web+)))))
-        (dolist (enemy *quadrant-enemies*)
-          (when (string= (coord-ref *quadrant* (enemy-sector-coordinates enemy)) +tholian+)
-            (setf (enemy-sector-coordinates enemy) *tholian-sector*)))
-        (setf (coord-ref *quadrant* *tholian-sector*) +tholian+)
+          ((/= (coordinate-y tholian-sector) new-y)
+           (do ((incr-y (/ (abs (- new-y (coordinate-y tholian-sector)))
+                          (- new-y (coordinate-y tholian-sector)))))
+               ((= (coordinate-y tholian-sector) new-y))
+             (setf (coordinate-y tholian-sector) incr-y)
+             (when (string= (coord-ref *quadrant* tholian-sector) +empty-sector+)
+               (setf (coord-ref *quadrant* tholian-sector) +tholian-web+)))))
+        (setf (enemy-sector-coordinates tholian) tholian-sector)
+        (setf (coord-ref *quadrant* tholian-sector) +tholian+)
         ;; Check to see if all holes plugged
-        (do ((i 1 (1+ i))
+        (do ((i 0 (1+ i))
              (all-holes-plugged-p t))
             ((or (>= i +quadrant-size+)
                  (not all-holes-plugged-p))
              (when all-holes-plugged-p
                ;; All plugged up -- Tholian splits
-               (setf (coord-ref *quadrant* *tholian-sector*) +tholian-web+)
+               (setf (coord-ref *quadrant* tholian-sector) +tholian-web+)
                (drop-entity-in-sector +black-hole+)
-               (print-message *message-window* (format nil "***Tholian at ~A completes web.~%" (format-sector-coordinates *tholian-sector*)))
+               (print-message *message-window*
+                              (format nil "***Tholian at ~A completes web.~%"
+                                      (format-sector-coordinates tholian-sector)))
+               (setf *quadrant-enemies* (remove tholian-sector *quadrant-enemies*
+                                         :test #'coord-equal
+                                         :key #'enemy-sector-coordinates))
                (setf *tholians-here* 0)
                (decf *enemies-here* 1)))
-          (when (and (string/= (aref *quadrant* 1 i) +tholian-web+)
-                     (string/= (aref *quadrant* 1 i) +tholian+))
+          (when (and (string/= (aref *quadrant* 0 i) +tholian-web+)
+                     (string/= (aref *quadrant* 0 i) +tholian+))
             (setf all-holes-plugged-p nil))
-          (when (and (string/= (aref *quadrant* +quadrant-size+ i) +tholian-web+)
-                     (string/= (aref *quadrant* +quadrant-size+ i) +tholian+))
+          (when (and (string/= (aref *quadrant* (1- +quadrant-size+) i) +tholian-web+)
+                     (string/= (aref *quadrant* (1- +quadrant-size+) i) +tholian+))
             (setf all-holes-plugged-p nil))
-          (when (and (string/= (aref *quadrant* i 1) +tholian-web+)
-                     (string/= (aref *quadrant* i 1) +tholian+))
+          (when (and (string/= (aref *quadrant* i 0) +tholian-web+)
+                     (string/= (aref *quadrant* i 0) +tholian+))
             (setf all-holes-plugged-p nil))
-          (when (and (string/= (aref *quadrant* i +quadrant-size+ ) +tholian-web+)
-                     (string/= (aref *quadrant* i +quadrant-size+) +tholian+))
+          (when (and (string/= (aref *quadrant* i (1- +quadrant-size+)) +tholian-web+)
+                     (string/= (aref *quadrant* i (1- +quadrant-size+)) +tholian+))
             (setf all-holes-plugged-p nil)))))))
 
 ;; TODO - The code to move enemies produces odd, possibly non-adjacent, destination quadrants. The
@@ -7162,6 +7164,7 @@ it's your problem."
                                   ((= three-tries 1) "2nd")
                                   ((= three-tries 2) "3rd"))
                                 (format-ship-name)))
+         ;; In windowed mode, display the materialize symbols
          (warble)
          (if (> (random 1.0) probf)
              (setf succeeds-p t)
@@ -7311,7 +7314,6 @@ it's your problem."
     (setf *snapshot* (read s))
     (setf *quadrant* (read s))
     (setf *quadrant-enemies* (read s))
-    (setf *tholian-sector* (read s))
     (setf *base-sector* (read s))
     (setf *abandoned-crew* (read s))
     (setf *casualties* (read s))
@@ -7423,7 +7425,6 @@ loop, in effect continuously saving the current state of the game."
     (print *snapshot* s)
     (print *quadrant* s)
     (print *quadrant-enemies* s)
-    (print *tholian-sector* s)
     (print *base-sector* s)
     (print *abandoned-crew* s)
     (print *casualties* s)
