@@ -1822,7 +1822,7 @@ tractor-beamed the ship then the other will not."
                    (when (coord-equal *ship-quadrant* build-quadrant)
                      (incf *enemies-here* 1)
                      (incf *klingons-here* 1)
-                     (multiple-value-bind (coordinates distance power) (drop-klingon-in-sector)
+                     (multiple-value-bind (coordinates distance power) (drop-klingon-in-quadrant)
                        ;; Add the new enemy to the list of enemies
                        (push (make-enemy :energy power :distance distance
                                          :average-distance distance
@@ -3196,7 +3196,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                           +tholian-web+)
                     (setf *tholians-here* 0)
                     (decf *enemies-here* 1)
-                    (drop-entity-in-sector +black-hole+))))
+                    (drop-entity-in-quadrant +black-hole+))))
                 ;; Problem!
                 (t
                  (print-message *message-window*
@@ -4188,65 +4188,71 @@ This function name and doc string should be more informative."
 
   (make-sector-coordinate :x (random +quadrant-size+) :y (random +quadrant-size+)))
 
-(defun drop-entity-in-sector (entity) ; coord dropin(feature iquad)
+(defun drop-entity-in-quadrant (entity) ; coord dropin(feature iquad)
   "Drop a game entity in a random sector in the current quadrant. Return the sector coordinates
 of the entity."
 
   (do ((c (get-random-sector) (get-random-sector)))
       ((string= (coord-ref *quadrant* c) +empty-sector+)
        (setf (coord-ref *quadrant* c) entity)
-       (return-from drop-entity-in-sector c))))
+       (return-from drop-entity-in-quadrant c))))
 
-(defun drop-klingon-in-sector () ; coord newkling(int i)
+(defun drop-klingon-in-quadrant () ; coord newkling(int i)
   "Drop a new Klingon into the current quadrant. Return the sector coordinates, distance from the
 ship, and Klingon power."
 
-  (let ((c (drop-entity-in-sector +klingon+)))
-    (return-from drop-klingon-in-sector
-      (values c
-              (distance *ship-sector* c)
-              (+ (* (random 1.0) 150.0) 300.0
-                 (* 25.0 *skill-level*)))))) ; Rand()*150.0 +300.0 +25.0*game.skill
+  (let ((c (drop-entity-in-quadrant +klingon+)))
+    (return-from drop-klingon-in-quadrant
+      (make-enemy :letter +klingon+ :name "Klingon"
+                  ;; Rand()*150.0 +300.0 +25.0*game.skill
+                  :energy (+ (* (random 1.0) 150.0) 300.0 (* 25.0 *skill-level*))
+                  :distance (distance *ship-sector* c)
+                  :average-distance (distance *ship-sector* c)
+                  :sector-coordinates c))))
 
-(defun drop-commander-in-sector ()
+(defun drop-commander-in-quadrant ()
   "Drop a new Commander into the current quadrant. Return the sector coordinates, distance from the
 ship, and Commander power."
 
-  (let ((c (drop-entity-in-sector +commander+)))
-    (return-from drop-commander-in-sector
-      (values c
-              (distance *ship-sector* c)
-              (+ 950.0 (* (random 1.0) 400.0)
-                 (* 50.0 *skill-level*)))))) ; 950.0+400.0*Rand()+50.0*game.skill
+  (let ((c (drop-entity-in-quadrant +commander+)))
+    (return-from drop-commander-in-quadrant
+      (make-enemy :letter +commander+ :name "Commander"
+                  ;; 950.0+400.0*Rand()+50.0*game.skill
+                  :energy (+ 950.0 (* (random 1.0) 400.0) (* 50.0 *skill-level*))
+                  :distance (distance *ship-sector* c)
+                  :average-distance (distance *ship-sector* c)
+                  :sector-coordinates c))))
 
-(defun drop-super-commander-in-sector ()
+(defun drop-super-commander-in-quadrant ()
   "Drop a new Super-commander into the current quadrant. Return the sector coordinates, distance
 from the ship, and Super-commander power."
 
-  (let ((c (drop-entity-in-sector +super-commander+)))
-    (return-from drop-super-commander-in-sector
-      (values c
-              (distance *ship-sector* c)
-              (+ 1175.0 (* (random 1.0) 400.0)
-                 (* 125.0 *skill-level*)))))) ; 1175.0 + 400.0*Rand() + 125.0*game.skill
+  (let ((c (drop-entity-in-quadrant +super-commander+)))
+    (return-from drop-super-commander-in-quadrant
+      (make-enemy :letter +super-commander+ :name "Super-commander"
+                  ;; 1175.0 + 400.0*Rand() + 125.0*game.skill
+                  :energy (+ 1175.0 (* (random 1.0) 400.0) (* 125.0 *skill-level*))
+                  :distance (distance *ship-sector* c)
+                  :average-distance (distance *ship-sector* c)
+                  :sector-coordinates c))))
 
-(defun drop-romulan-in-sector ()
-  "Drop a new Romulan into the current quadrant. Return the sector coordinates, distance from the
-ship, and Romulan power."
+(defun drop-romulan-in-quadrant ()
+  "Drop a new Romulan into the current quadrant. Return the enemy-object."
 
-  (let ((c (drop-entity-in-sector +romulan+)))
-    (return-from drop-romulan-in-sector
-      (values c
-              (distance *ship-sector* c)
-              (+ (* (random 1.0) 400.0) 450.0
-                 (* 50.0 *skill-level*)))))) ; Rand()*400.0 + 450.0 + 50.0*game.skill
+  (let ((c (drop-entity-in-quadrant +romulan+)))
+    (return-from drop-romulan-in-quadrant
+      (make-enemy :letter +romulan+ :name "Romulan"
+                  ;; Rand()*400.0 + 450.0 + 50.0*game.skill
+                  :energy (+ (* (random 1.0) 400.0) 450.0 (* 50.0 *skill-level*))
+                  :distance (distance *ship-sector* c)
+                  :average-distance (distance *ship-sector* c)
+                  :sector-coordinates c))))
 
-(defun drop-space-thing-in-sector ()
-  "Drop a Space Thing into the current quadrant. Return the sector coordinates, distance from the
-ship, and Thing power."
+(defun drop-space-thing-in-quadrant ()
+  "Drop a Space Thing into the current quadrant. Return the enemy object."
 
-  (let ((c (drop-entity-in-sector +thing+)))
-    (return-from drop-space-thing-in-sector
+  (let ((c (drop-entity-in-quadrant +thing+)))
+    (return-from drop-space-thing-in-quadrant
       (make-enemy :letter +thing+ :name "Thing"
                   ;; Rand()*6000.0 +500.0 +250.0*game.skill
                   :energy (+ (* (random 1.0) 6000.0) 500.0 *skill-level*)
@@ -4254,7 +4260,7 @@ ship, and Thing power."
                   :average-distance (distance *ship-sector* c)
                   :sector-coordinates c))))
 
-(defun drop-tholian-in-sector ()
+(defun drop-tholian-in-quadrant ()
   "Drop a Tholian into the current quadrant. Tholians only occupy the perimeter of a quadrant.
 Return the enemy object."
 
@@ -4263,7 +4269,7 @@ Return the enemy object."
       (sector-ok-p
        (setf c (make-sector-coordinate :x x :y y))
        (setf (coord-ref *quadrant* c) +tholian+)
-       (return-from drop-tholian-in-sector
+       (return-from drop-tholian-in-quadrant
          (make-enemy :letter +tholian+ :name "Tholian"
                      ;; Rand()*400.0 +100.0 +25.0*game.skill
                      :energy (+ (* (random 1.0) 400.0) 100.0 (* 25.0 *skill-level*))
@@ -4355,58 +4361,43 @@ player has reached a base by abandoning ship or using the SOS command."
     ;; Position starship. Do this first, all sectors are still empty.
     (setf (coord-ref *quadrant* *ship-sector*) *ship*)
 
-    (when (or (> (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 0)
-              (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0))
-      (let ((remaining-klingons (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*))))
-        ;; Put the super-commander in the quadrant if present
-        (when (and *super-commander-quadrant*
-                   (coord-equal *ship-quadrant* *super-commander-quadrant*))
-          (multiple-value-bind (coordinates distance power) (drop-super-commander-in-sector)
-            (push (make-enemy :energy power :distance distance :average-distance distance
-                              :sector-coordinates coordinates)
-                  *quadrant-enemies*))
-          (incf *super-commanders-here* 1)
-          (decf remaining-klingons 1))
-        ;; Put a Commander in the quadrant if there is one.
-        (dolist (cq *commander-quadrants*)
-          (when (coord-equal *ship-quadrant* cq)
-            (multiple-value-bind (coordinates distance power) (drop-commander-in-sector)
-              (push (make-enemy :energy power :distance distance :average-distance distance
-                                :sector-coordinates coordinates)
-                    *quadrant-enemies*))
-            (incf *commanders-here* 1)
-            (decf remaining-klingons 1)))
-        ;; Position ordinary Klingons
-        (do ((i 1 (1+ i)))
-            ((> i remaining-klingons))
-          (multiple-value-bind (coordinates distance power) (drop-klingon-in-sector)
-            (push (make-enemy :energy power :distance distance :average-distance distance
-                              :sector-coordinates coordinates)
-                  *quadrant-enemies*)))
-        ;; Put in Romulans if needed
-        (do ((r 1 (1+ r))) ; This is a count
-            ((> r (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*))))
-          (multiple-value-bind (coordinates distance power) (drop-romulan-in-sector)
-            (push (make-enemy :energy power :distance distance :average-distance distance
-                              :sector-coordinates coordinates)
-                  *quadrant-enemies*)))))
+    ;; Put the super-commander in the quadrant if present
+    (when (and *super-commander-quadrant*
+               (coord-equal *ship-quadrant* *super-commander-quadrant*))
+      (push (drop-super-commander-in-quadrant) *quadrant-enemies*)
+      (incf *super-commanders-here* 1))
+
+    ;; Put Commanders in the quadrant if there are any
+    (dolist (cq *commander-quadrants*)
+      (when (coord-equal *ship-quadrant* cq)
+        (push (drop-commander-in-quadrant) *quadrant-enemies*)
+        (incf *commanders-here* 1)))
+
+    ;; Position ordinary Klingons
+    (when (> (- *klingons-here* *super-commanders-here* *commanders-here*) 0)
+      (dotimes (i (- *klingons-here* *super-commanders-here* *commanders-here*))
+        (push (drop-klingon-in-quadrant) *quadrant-enemies*)))
+
+    ;; Put in Romulans if needed
+    (when (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0)
+      (dotimes (r (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)))
+        (push (drop-romulan-in-quadrant) *quadrant-enemies*)))
 
     ;; If quadrant needs a starbase then put it in.
     (when (> (quadrant-starbases (coord-ref *galaxy* *ship-quadrant*)) 0)
-      (setf *base-sector* (drop-entity-in-sector +starbase+)))
+      (setf *base-sector* (drop-entity-in-quadrant +starbase+)))
 
     ;; If quadrant needs a planet then put it in
     (when (assoc *ship-quadrant* *planets* :test #'coord-equal) ; non-nil when planet exists
       (setf *planet-coord* *ship-quadrant*)
       (let ((p (rest (assoc *ship-quadrant* *planets* :test #'coord-equal))))
         (if (planet-inhabitedp p)
-            (setf *current-planet* (drop-entity-in-sector +world+))
-            (setf *current-planet* (drop-entity-in-sector +planet+)))))
+            (setf *current-planet* (drop-entity-in-quadrant +world+))
+            (setf *current-planet* (drop-entity-in-quadrant +planet+)))))
 
     ;; And finally the stars
-    (do ((i 1 (1+ i))) ; another count
-        ((> i (quadrant-stars (coord-ref *galaxy* *ship-quadrant*))))
-      (drop-entity-in-sector +star+))
+    (dotimes (i (quadrant-stars (coord-ref *galaxy* *ship-quadrant*)))
+      (drop-entity-in-quadrant +star+))
 
     ;; Check for Romulan Neutral Zone: Romulans present, no Klingons, and no starbases.
     (when (and (> (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)) 0)
@@ -4427,7 +4418,7 @@ player has reached a base by abandoning ship or using the SOS command."
                (coord-equal *thing-location* *ship-quadrant*))
       (setf *thing-location* (get-random-quadrant))
       (setf *things-here* 1)
-      (push (drop-space-thing-in-sector) *quadrant-enemies*)
+      (push (drop-space-thing-in-quadrant) *quadrant-enemies*)
       (incf *enemies-here* 1)
       (unless (damagedp +short-range-sensors+)
         (print-message *message-window*
@@ -4443,7 +4434,7 @@ player has reached a base by abandoning ship or using the SOS command."
               (and (> *skill-level* +good+)
                    (<= (random 1.0) 0.08)))
       (setf *tholians-here* 1)
-      (push (drop-tholian-in-sector) *quadrant-enemies*)
+      (push (drop-tholian-in-quadrant) *quadrant-enemies*)
       (incf *enemies-here* 1)
       ;; Reserve unoccupied corners
       (when (string= (aref *quadrant* 0 0) +empty-sector+)
@@ -4459,7 +4450,7 @@ player has reached a base by abandoning ship or using the SOS command."
     (do ((i 0 (1+ i)))
         ((> i 3))
       (when (> (random 1.0) 0.5)
-        (drop-entity-in-sector +black-hole+)))
+        (drop-entity-in-quadrant +black-hole+)))
 
     ;; Take out X's in corners if Tholian present
     (when (> *tholians-here* 0)
@@ -4782,7 +4773,7 @@ object then it waits, in case the player helpfully removes the blocking object."
              (when all-holes-plugged-p
                ;; All plugged up -- Tholian splits
                (setf (coord-ref *quadrant* tholian-sector) +tholian-web+)
-               (drop-entity-in-sector +black-hole+)
+               (drop-entity-in-quadrant +black-hole+)
                (print-message *message-window*
                               (format nil "***Tholian at ~A completes web.~%"
                                       (format-sector-coordinates tholian-sector)))
@@ -5337,7 +5328,7 @@ this occurs every turn even if other enemies present might not attack."
 ;; TODO - when using curses, show the ship moving within the the current quadrant and withing the
 ;;        destination quadrant, and on the star chart when moving "over" quadrants.
 (defun move-ship-within-quadrant (&key course distance (nova-push-p nil)) ; C: imove(bool novapush)
-  "In-sector movement actions for warp and impulse drives. Supernova and tractor beam events
+  "in-quadrant movement actions for warp and impulse drives. Supernova and tractor beam events
 can occur."
 
   (when *in-orbit-p*
