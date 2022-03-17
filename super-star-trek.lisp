@@ -490,10 +490,12 @@ the same as the ship if the shuttle craft location is on-ship.")
 (defvar *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
 (defvar *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
 (defvar *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
+;; TODO - rename the enemies-here count with a function to calculate it dynamically?
 (defvar *enemies-here* nil "Number of enemies in quadrant") ; C: nenhere
 (defvar *romulan-neutral-zone-p* nil) ; C: neutz	, Romulan Neutral Zone
 (defvar *landedp* nil) ; C: landed	, party on planet (true), on ship (false)
 (defvar *attempted-escape-from-super-commander-p* nil) ; C: ientesc
+;; TODO - replace the tholians-here counter with a function to calculate it dynamically?
 (defvar *tholians-here* 0) ; C: ithere - Max 1 Tholian in a quadrant but this is an entity count not a boolean
 (defvar *base-attack-report-seen-p* nil) ; C: iseenit
 (defvar *current-planet* nil "Sector coordinate location of a planet in the current quadrant, if any") ; C: plnet
@@ -4245,10 +4247,12 @@ ship, and Thing power."
 
   (let ((c (drop-entity-in-sector +thing+)))
     (return-from drop-space-thing-in-sector
-      (values c
-              (distance *ship-sector* c)
-              (+ (* (random 1.0) 6000.0) 500.0
-                 *skill-level*))))) ; Rand()*6000.0 +500.0 +250.0*game.skill
+      (make-enemy :letter +thing+ :name "Thing"
+                  ;; Rand()*6000.0 +500.0 +250.0*game.skill
+                  :energy (+ (* (random 1.0) 6000.0) 500.0 *skill-level*)
+                  :distance (distance *ship-sector* c)
+                  :average-distance (distance *ship-sector* c)
+                  :sector-coordinates c))))
 
 (defun drop-tholian-in-sector ()
   "Drop a Tholian into the current quadrant. Tholians only occupy the perimeter of a quadrant.
@@ -4423,11 +4427,8 @@ player has reached a base by abandoning ship or using the SOS command."
                (coord-equal *thing-location* *ship-quadrant*))
       (setf *thing-location* (get-random-quadrant))
       (setf *things-here* 1)
-      (multiple-value-bind (coordinates distance power) (drop-space-thing-in-sector)
-        (push (make-enemy :energy power :distance distance :average-distance distance
-                          :sector-coordinates coordinates)
-              *quadrant-enemies*)
-        (incf *enemies-here* 1))
+      (push (drop-space-thing-in-sector) *quadrant-enemies*)
+      (incf *enemies-here* 1)
       (unless (damagedp +short-range-sensors+)
         (print-message *message-window*
                        (format nil "Mr. Spock- \"Captain, this is most unusual.~%"))
@@ -6806,10 +6807,7 @@ was an event that requires aborting the operation carried out by the calling fun
            (let (enemy-sector)
              (dolist (enemy (enemies-sorted-by-distance)) ; Affect closest enemies first
                (setf enemy-sector (enemy-sector-coordinates enemy))
-               (dead-enemy enemy-sector (coord-ref *quadrant* enemy-sector) enemy-sector)
-               (setf *quadrant-enemies*
-                     (remove enemy-sector *quadrant-enemies* :test #'coord-equal
-                                                             :key #'enemy-sector-coordinates))))
+               (dead-enemy enemy-sector (coord-ref *quadrant* enemy-sector) enemy-sector)))
            (print-message *message-window*
                           (format nil "Ensign Chekov-  \"Congratulations, Captain!\"~%"))
            (print-message *message-window*
