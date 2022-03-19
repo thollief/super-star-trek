@@ -436,7 +436,7 @@ shortest string, are the same."
 (defun print-message (message-to-print &key print-slowly)
   "Print a message in the message window."
 
-  (print-paged *message-window* message-to-print print-slowly))
+  (print-paged *message-window* message-to-print :print-slowly print-slowly))
 
 (defgeneric print-paged (output-window message-to-print &key print-slowly)
   (:documentation "Print a string in the specified window. Page the window after each newline."))
