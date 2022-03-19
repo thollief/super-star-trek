@@ -887,7 +887,7 @@ affected."
                                              :y (+ adjacent-y (- adjacent-y (coordinate-y n-sector))))))
                              (print-message *message-window*
                                             (format nil "~A at ~A damaged"
-                                                    (letter-to-name (coord-ref *quadrant* adjacent-coord))
+                                                    (enemy-name enemy)
                                                     (format-sector-coordinates adjacent-coord)))
                              (cond
                                ;; can't leave quadrant
@@ -2162,6 +2162,8 @@ scan. Long-range sensors can scan all adjacent quadrants."
 ;;        before destroying them, e.g. nova buffet or photon torpedo displacedment. Can the move
 ;;        be completed by the calling function before killing the enemy? Black holes are a problem
 ;;        because they should not be replaced by an empty sector.
+;; resume here - pass in an enemy struct instead of coordinates and a letter. do the same for the
+;;               ram function
 (defun dead-enemy (enemy-coord enemy-letter move-coordinate) ; C: deadkl(coord w, feature type, coord mv)
   "Kill a Klingon, Tholian, Romulan, or Thingy. move-coordinate allows enemy to move before dying."
 
@@ -2420,10 +2422,10 @@ order by enemy distance from the player."
                 (boom *short-range-scan-window*
                       (coord-ref *quadrant* e-coord) (coordinate-x e-coord) (coordinate-y e-coord)))
               (print-message *message-window* (format nil "~A unit hit on ~A at ~A~%" (truncate hit)
-                                                      (letter-to-name (coord-ref *quadrant* e-coord))
+                                                      (enemy-name enemy)
                                                       (format-sector-coordinates e-coord))))
             (print-message *message-window* (format nil "Very small hit on ~A at ~A~%"
-                                                    (letter-to-name (coord-ref *quadrant* e-coord))
+                                                    (enemy-name enemy)
                                                     (format-sector-coordinates e-coord))))
         (when (string= (coord-ref *quadrant* e-coord) +thing+)
           (setf *thing-is-angry-p* t))
@@ -2661,7 +2663,7 @@ order by enemy distance from the player."
                   (progn
                     (print-message *message-window*
                                    (format nil "~A can't be located without short range scan.~%"
-                                           (letter-to-name enemy-letter)))
+                                           (enemy-name enemy)))
                     (clear-type-ahead-buffer)
                     (setf hits (append hits (list 0)))) ; prevent overflow -- thanks to Alexei Voitenko
                   (progn
@@ -2672,7 +2674,7 @@ order by enemy distance from the player."
                                    (format nil "~D"
                                            (truncate (recommended-energy-for-enemy enemy)))
                                    "??")
-                               (letter-to-name enemy-letter)
+                               (enemy-name enemy)
                                (format-sector-coordinates enemy-coord))))
                     (let ((input-item (scan-input)))
                       (unless (numberp input-item)
@@ -4837,9 +4839,8 @@ object then it waits, in case the player helpfully removes the blocking object."
               *dockedp*)
       (print-message *message-window*
                      (format nil "***~A at ~A escapes to ~A (and regains strength).~%"
-                             (letter-to-name enemy-letter)
-                             (format-sector-coordinates
-                              (enemy-sector-coordinates enemy))
+                             (enemy-name enemy)
+                             (format-sector-coordinates (enemy-sector-coordinates enemy))
                              (format-quadrant-coordinates destination-quadrant))))
     ;; Handle local matters related to escape
     (setf (coord-ref *quadrant* (enemy-sector-coordinates enemy)) +empty-sector+)
@@ -5086,7 +5087,7 @@ retreat, especially at high skill levels.
       (when (or (not (damagedp +short-range-sensors+))
                 *dockedp*)
         (print-message *message-window* (format nil "***~A from ~A ~A to ~A~%"
-                               (letter-to-name enemy-letter)
+                               (enemy-name enemy)
                                (format-sector-coordinates (enemy-sector-coordinates enemy))
                                (if (< (enemy-distance enemy) enemy-dist)
                                    "advances"
@@ -5175,11 +5176,11 @@ hit on the player, and the total amount of hits on the player."
                 (if (<= *skill-level* +fair+)
                     (print-message *message-window*
                                    (format nil " From ~A at ~A  ~%"
-                                           (letter-to-name enemy-letter)
+                                           (enemy-name enemy)
                                            (format-sector-coordinates enemy-sector)))
                     (print-message *message-window*
                                    (format nil " From ~A at ~A  ~%"
-                                           (letter-to-name enemy-letter)
+                                           (enemy-name enemy)
                                            (format-coordinates enemy-sector)))))
               (setf random-variation (- (* (+ (random 1.0) (random 1.0)) 0.5) 0.5))
               (incf random-variation (* 0.002 (enemy-energy enemy) random-variation))
@@ -5227,10 +5228,10 @@ hit on the player, and the total amount of hits on the player."
                        (eql weapon 'phasers))
               (if (<= *skill-level* +fair+)
                   (print-message *message-window*
-                                 (format nil " from ~A at ~A~%" (letter-to-name enemy-letter)
+                                 (format nil " from ~A at ~A~%" (enemy-name enemy)
                                          (format-sector-coordinates enemy-sector)))
                   (print-message *message-window*
-                                 (format nil " from ~A at ~A~%" (letter-to-name enemy-letter)
+                                 (format nil " from ~A at ~A~%" (enemy-name enemy)
                                          (format-coordinates enemy-sector)))))
             (when (> hit hit-max)
               (setf hit-max hit))
