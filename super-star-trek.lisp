@@ -869,7 +869,7 @@ affected."
                    (incf nova-pushes 1))
                   ;; Kill klingon
                   ((string= (aref *quadrant* adjacent-x adjacent-y) +klingon+)
-                   (dead-enemy adjacent-coord +klingon+ adjacent-coord))
+                   (remove-enemy adjacent-coord +klingon+))
                   ;; Damage/destroy big enemies
                   ((or (string= (coord-ref *quadrant* adjacent-coord) +commander+)
                        (string= (coord-ref *quadrant* adjacent-coord) +super-commander+)
@@ -880,8 +880,7 @@ affected."
                        (decf (enemy-energy enemy) 800.0)
                        (if (<= (enemy-energy enemy) 0)
                            ;; If firepower is lost, die
-                           (dead-enemy adjacent-coord (coord-ref *quadrant* adjacent-coord)
-                                       adjacent-coord)
+                           (remove-enemy adjacent-coord (coord-ref *quadrant* adjacent-coord))
                            (let ((new-coord (make-sector-coordinate
                                              :x (+ adjacent-x (- adjacent-x (coordinate-x n-sector)))
                                              :y (+ adjacent-y (- adjacent-y (coordinate-y n-sector))))))
@@ -898,8 +897,7 @@ affected."
                                 (print-message *message-window*
                                                (format nil ", blasted into black hole at ~A.~%"
                                                        (format-sector-coordinates new-coord)))
-                                (dead-enemy adjacent-coord (coord-ref *quadrant* adjacent-coord)
-                                            adjacent-coord))
+                                (remove-enemy adjacent-coord (coord-ref *quadrant* adjacent-coord)))
                                ;; can't move into something else
                                ((string/= (coord-ref *quadrant* new-coord) +empty-sector+)
                                 (print-message *message-window* (format nil ".~%")))
@@ -2158,17 +2156,18 @@ scan. Long-range sensors can scan all adjacent quadrants."
 
   (print-out *prompt-window* prompt-to-print))
 
-;; TODO - move-coordinate is effective when the calling function has displaced the enemy just
-;;        before destroying them, e.g. nova buffet or photon torpedo displacedment. Can the move
-;;        be completed by the calling function before killing the enemy? Black holes are a problem
-;;        because they should not be replaced by an empty sector.
 ;; resume here - pass in an enemy struct instead of coordinates and a letter. do the same for the
 ;;               ram function
-(defun dead-enemy (enemy-coord enemy-letter move-coordinate) ; C: deadkl(coord w, feature type, coord mv)
-  "Kill a Klingon, Tholian, Romulan, or Thingy. move-coordinate allows enemy to move before dying."
+(defun remove-enemy (enemy-coord enemy-letter &optional (final-coordinates nil)) ; C: deadkl(coord w, feature type, coord mv)
+  "Kill a Klingon, Tholian, Romulan, or Thingy. final-coordinates are supplied when the enemy being
+removed has rammed the player ship. In that case report the final-coordinates as the location of
+the enemy rather than the enemy-coord location. final-coordinates will normally be the same as
+the *ship-sector*."
 
-  ;; move-coordinate allows an enemy to "move" before dying
-  (print-message *message-window* (format nil "~A at ~A" (letter-to-name enemy-letter) (format-sector-coordinates move-coordinate)))
+  (print-message *message-window* (format nil "~A at ~A"
+                                          (letter-to-name enemy-letter)
+                                          (format-sector-coordinates
+                                           (if final-coordinates final-coordinates enemy-coord))))
   ;; Decide what kind of enemy it is and update appropriately
   (cond
     ;; Chalk up a Romulan
@@ -2431,7 +2430,7 @@ order by enemy distance from the player."
           (setf *thing-is-angry-p* t))
         (if (= (enemy-energy enemy) 0)
             (progn
-              (dead-enemy e-coord (coord-ref *quadrant* e-coord) e-coord)
+              (remove-enemy e-coord (coord-ref *quadrant* e-coord))
               (when (not (enemies-remaining-p))
                 (finish 'won))
               (when *all-done-p*
@@ -2809,7 +2808,7 @@ is a function of that Klingon's remaining power, our power, etc."
                      (decf *brig-free* klingons-captured)
                      (print-message *message-window*
                                     (format nil "~D captives taken~%" klingons-captured)))))
-             (dead-enemy k-coord (coord-ref *quadrant* k-coord) k-coord)
+             (remove-enemy k-coord (coord-ref *quadrant* k-coord))
              (when (not (enemies-remaining-p))
                (finish 'won)))))))
 
@@ -3037,7 +3036,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                                                           (- enemy-hit)
                                                           enemy-hit)))
                          (if (= (enemy-energy enemy) 0)
-                             (dead-enemy torpedo-sector sector-contents torpedo-sector)
+                             (remove-enemy torpedo-sector sector-contents)
                              ;; If enemy damaged but not destroyed, try to displace
                              (progn
                                (print-message *message-window*
@@ -3060,7 +3059,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                                            +black-hole+)
                                   (print-message *message-window*
                                                  (format nil " buffeted into black hole.~%"))
-                                  (dead-enemy torpedo-sector sector-contents torpedo-sector))
+                                  (remove-enemy torpedo-sector sector-contents))
 
                                  (t
                                   (print-out *message-window* " damaged --")
@@ -3145,7 +3144,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                        (print-message *message-window* "~%Mr. Spock-")
                        (print-message *message-window*
                                       (format nil "  \"Fascinating!\"~%~%") :print-slowly t)
-                       (dead-enemy torpedo-sector sector-contents torpedo-sector))
+                       (remove-enemy torpedo-sector sector-contents))
                      ;; Stas Sergeev added the possibility that you can shove the Thingy and
                      ;; piss it off. It then becomes an enemy and may fire at you.
                      (progn
@@ -3182,7 +3181,7 @@ handling the result. Return the amount of damage if the player ship was hit."
                         600)
                     (setf (coord-ref *quadrant* torpedo-sector) +empty-sector+)
                     (setf *tholians-here* 0)
-                    (dead-enemy torpedo-sector sector-contents torpedo-sector))
+                    (remove-enemy torpedo-sector sector-contents))
                    ;; Tholian survives
                    ((> (random 1.0) 0.05)
                     (print-message *message-window*
@@ -3609,7 +3608,7 @@ coordinates of the enemy being rammed or the original coordinates of ramming ene
                          (letter-to-name enemy)
                          (format-coordinates enemy-coordinates)
                          (if rammed-by-p " (original position)" "")))
-  (dead-enemy enemy-coordinates enemy *ship-sector*)
+  (remove-enemy enemy-coordinates enemy *ship-sector*)
   (setf *shields-are-up-p* nil)
   (print-message *message-window* (format nil "***Shields are down.~%"))
   (let ((number-of-casualties (truncate(+ 10.0 (* 20.0 (random 1.0))))))
@@ -4167,9 +4166,8 @@ cloaking-while-in-neutral-zone - Cloaking when Romulans are present, but no othe
   (let ((whammo (* 25.0 *ship-energy*)))
     (dolist (enemy (quadrant-enemies))
       (when (<= (* (enemy-energy enemy) (enemy-distance enemy)) whammo)
-      (dead-enemy (enemy-sector-coordinates enemy)
-                  (coord-ref *quadrant* (enemy-sector-coordinates enemy))
-                  (enemy-sector-coordinates enemy)))))
+      (remove-enemy (enemy-sector-coordinates enemy)
+                    (coord-ref *quadrant* (enemy-sector-coordinates enemy))))))
   (finish 'dilithium-crystals-failed))
 
 (defun expran (average)
@@ -6799,7 +6797,7 @@ was an event that requires aborting the operation carried out by the calling fun
            (let (enemy-sector)
              (dolist (enemy (enemies-sorted-by-distance)) ; Affect closest enemies first
                (setf enemy-sector (enemy-sector-coordinates enemy))
-               (dead-enemy enemy-sector (coord-ref *quadrant* enemy-sector) enemy-sector)))
+               (remove-enemy enemy-sector (coord-ref *quadrant* enemy-sector))))
            (print-message *message-window*
                           (format nil "Ensign Chekov-  \"Congratulations, Captain!\"~%"))
            (print-message *message-window*
