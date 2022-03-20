@@ -387,7 +387,8 @@ the entity may continue moving indefinitely, until it exits the current sector (
 (defvar *captured-klingons* 0 "number of captured Klingons") ; C: kcaptured
 
 (defvar *initial-commanders* 0) ; C: incom
-(defvar *commander-quadrants* () "List of coordinate structs, these are quadrants containing commanders.")
+(defvar *commander-quadrants* ()
+  "List of coordinate structs, these are quadrants containing commanders.")
 
 (defvar *initial-super-commanders* 0); C: inscom
 (defvar *remaining-super-commanders* 0) ; C: nscrem
@@ -489,8 +490,6 @@ the same as the ship if the shuttle craft location is on-ship.")
 (defvar *super-commanders-here* 0) ; C: ishere - refers to the current quadrant
 (defvar *romulans-here* nil) ; C: irhere	, number of Romulans in quadrant
 (defvar *planet-coord* nil) ; C: iplnet - coordinates of a planet in the current quadrant, if any
-;; TODO - rename the enemies-here count with a function to calculate it dynamically?
-(defvar *enemies-here* nil "Number of enemies in quadrant") ; C: nenhere
 (defvar *romulan-neutral-zone-p* nil) ; C: neutz	, Romulan Neutral Zone
 (defvar *landedp* nil) ; C: landed	, party on planet (true), on ship (false)
 (defvar *attempted-escape-from-super-commander-p* nil) ; C: ientesc
@@ -1187,7 +1186,6 @@ Return true on successful move."
                                          :test #'coord-equal
                                          :key #'enemy-sector-coordinates))))
     (decf *klingons-here* 1)
-    (decf *enemies-here* 1)
     (update-condition))
   ;; Check for a helpful planet
   (let ((helpful-planet (rest (assoc *super-commander-quadrant* *planets* :test #'coord-equal))))
@@ -1787,7 +1785,6 @@ tractor-beamed the ship then the other will not."
                    (incf *remaining-klingons* 1)
                    (incf (quadrant-klingons (coord-ref *galaxy* build-quadrant)) 1)
                    (when (coord-equal *ship-quadrant* build-quadrant)
-                     (incf *enemies-here* 1)
                      (incf *klingons-here* 1)
                      (multiple-value-bind (coordinates distance power) (drop-klingon-in-quadrant)
                        ;; Add the new enemy to the list of enemies
@@ -2193,8 +2190,7 @@ the enemy rather than the enemy-coord location. If final-coordinates has a value
       (when (coord-equal enemy-coord (enemy-sector-coordinates enemy))
         (setf *quadrant-enemies*
               (remove enemy-coord *quadrant-enemies* :test #'coord-equal
-                                                     :key #'enemy-sector-coordinates))
-        (decf *enemies-here* 1))))
+                                                     :key #'enemy-sector-coordinates)))))
   (update-condition))
 
 (defun apply-critical-hit (hit) ; C: void fry(double hit)
@@ -2479,7 +2475,7 @@ order by enemy distance from the player."
                (not targeting-support-available-p))
       (setf fire-mode 'force-manual))
 
-    (when (= *enemies-here* 0)
+    (when (= (enemies-here) 0)
       (when (or (eql fire-mode 'manual)
                 (eql fire-mode 'force-manual))
         (print-message (format nil "There is no enemy present to select.~%"))
@@ -2490,7 +2486,7 @@ order by enemy distance from the player."
     (if (eql fire-mode 'automatic)
         (progn
           (when (and (not requested-energy)
-                     (> *enemies-here* 0))
+                     (> (enemies-here) 0))
             (print-message "Phasers locked on target. "))
           (do (input-item)
               ((and requested-energy
@@ -2520,7 +2516,7 @@ order by enemy distance from the player."
                 (hits ()) ; C: hits, ordered by enemy distance
                 over ; 'fuzz factor' to ensure enemy is destroyed
                 temp)
-            (when (> *enemies-here* 0)
+            (when (> (enemies-here) 0)
               (setf excess-energy 0.0)
               (dolist (enemy (enemies-sorted-by-distance))
                 (setf required-energy 0)
@@ -2547,7 +2543,7 @@ order by enemy distance from the player."
               (if (> *tholians-here* 0)
                   (progn
                     (print-message "*** Tholian web absorbs ")
-                    (when (> *enemies-here* 0)
+                    (when (> (enemies-here) 0)
                       (print-message "excess "))
                     (print-message (format nil "phaser energy.~%")))
                   (print-message (format nil "~,2F units expended on empty space.~%" excess-energy))))))
@@ -2713,7 +2709,7 @@ is a function of that Klingon's remaining power, our power, etc."
        ;; (setf x (+ 300 (* 25 *skill-level*))) - just use ship energy for now
        ;; Multiplier would originally have been equivalent of 1.4, but we want the command to
        ;; work more often, more humanely
-       (setf x (* (/ *ship-energy* (* (enemy-energy klingon-to-capture) *enemies-here*)) 2.5))
+       (setf x (* (/ *ship-energy* (* (enemy-energy klingon-to-capture) (enemies-here))) 2.5))
        (if (<= x (* (random 1.0) 100))
            ;; Big surprise, he refuses to surrender
            (progn
@@ -3117,7 +3113,6 @@ handling the result. Return the amount of damage if the player ship was hit."
                     (setf (coord-ref *quadrant* torpedo-sector)
                           +tholian-web+)
                     (setf *tholians-here* 0)
-                    (decf *enemies-here* 1)
                     (drop-entity-in-quadrant +black-hole+))))
                 ;; Problem!
                 (t
@@ -4211,9 +4206,15 @@ structure."
   ;; TODO - if this were a 2d array, like a quadrant, then a pair of nested loops would be ideal
   *quadrant-enemies*)
 
+(defun enemies-here ()
+  "Return the number of enemies in the current quadrant."
+
+  (length (quadrant-enemies)))
+
 (defun new-quadrant (&key (show-thing t))
-  "Set up a new quadrant when it is entered or re-entered. The thing should only be shown when the
-player has reached a base by abandoning ship or using the SOS command."
+  "Set up a new quadrant when it is entered or re-entered. According to the C source, the thing
+ should only be shown when the player has reached a base by abandoning ship or using the SOS
+ command."
 
   (setf *just-in-p* t)
   (setf *klingons-here* 0)
@@ -4222,7 +4223,6 @@ player has reached a base by abandoning ship or using the SOS command."
   (setf *romulans-here* 0)
   (setf *romulan-neutral-zone-p* nil)
   (setf *cloaking-violation-reported-p* nil)
-  (setf *enemies-here* 0)
   (setf *tholians-here* 0)
   (setf *things-here* 0)
   (setf *thing-is-angry-p* nil)
@@ -4249,7 +4249,6 @@ player has reached a base by abandoning ship or using the SOS command."
 
     (setf *klingons-here* (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)))
     (setf *romulans-here* (quadrant-romulans (coord-ref *galaxy* *ship-quadrant*)))
-    (setf *enemies-here* (+ *klingons-here* *romulans-here*))
 
     ;; Position starship. Do this first, all sectors are still empty.
     (setf (coord-ref *quadrant* *ship-sector*) *ship*)
@@ -4309,7 +4308,6 @@ player has reached a base by abandoning ship or using the SOS command."
       (setf *thing-location* (get-random-quadrant))
       (setf *things-here* 1)
       (push (drop-space-thing-in-quadrant) *quadrant-enemies*)
-      (incf *enemies-here* 1)
       (unless (damagedp +short-range-sensors+)
         (print-message (format nil "Mr. Spock- \"Captain, this is most unusual.~%"))
         (print-message (format nil "    Please examine your short-range scan.\"~%"))))
@@ -4323,7 +4321,6 @@ player has reached a base by abandoning ship or using the SOS command."
                    (<= (random 1.0) 0.08)))
       (setf *tholians-here* 1)
       (push (drop-tholian-in-quadrant) *quadrant-enemies*)
-      (incf *enemies-here* 1)
       ;; Reserve unoccupied corners
       (when (string= (aref *quadrant* 0 0) +empty-sector+)
         (setf (aref *quadrant* 0 0) +reserved+))
@@ -4669,8 +4666,7 @@ object then it waits, in case the player helpfully removes the blocking object."
                (setf *quadrant-enemies* (remove tholian-sector *quadrant-enemies*
                                          :test #'coord-equal
                                          :key #'enemy-sector-coordinates))
-               (setf *tholians-here* 0)
-               (decf *enemies-here* 1)))
+               (setf *tholians-here* 0)))
           (when (and (string/= (aref *quadrant* 0 i) +tholian-web+)
                      (string/= (aref *quadrant* 0 i) +tholian+))
             (setf all-holes-plugged-p nil))
@@ -4734,7 +4730,6 @@ object then it waits, in case the player helpfully removes the blocking object."
                                      :test #'coord-equal
                                      :key #'enemy-sector-coordinates))
     (decf *klingons-here* 1)
-    (decf *enemies-here* 1)
     (update-condition)
     ;; Handle global matters related to escape
     (decf (quadrant-klingons (coord-ref *galaxy* *ship-quadrant*)) 1)
@@ -4825,7 +4820,7 @@ retreat, especially at high skill levels.
                                                       2.0)))
                   (setf enemy-multiplier (+ *commanders-here* *super-commanders-here*)))
               (setf forces (+ (enemy-energy enemy)
-                              (* *enemies-here* 100.0)
+                              (* (enemies-here) 100.0)
                               (* (1- enemy-multiplier) 400))))
             (unless *shields-are-up-p*
               (incf forces 1000)) ; Good for enemy if shield is down!
@@ -5148,8 +5143,8 @@ this occurs every turn even if other enemies present might not attack."
                      torpedoes-ok-p) ; TODO - why should use of torpedoes affect movement? Because torpedoes are ok when it is the game's turn to attack, and it is ok for enemies to move during the game's turn.
             (move-enemies))
           ;; If no enemies remain after movement, we're done
-          (unless (or (<= *enemies-here* 0)
-                      (and (= *enemies-here* 1)
+          (unless (or (<= (enemies-here) 0)
+                      (and (= (enemies-here) 1)
                            (>= *things-here* 1)
                            (not *thing-is-angry-p*)))
             (skip-line *message-window*)
@@ -5269,7 +5264,7 @@ can occur."
         ;; if Klingons are present and your skill is good.
         (when (and (not nova-push-p)
                    (not (quadrant-supernovap (coord-ref *galaxy* *ship-quadrant*)))
-                   (> *enemies-here* 0)
+                   (> (enemies-here) 0)
                    (> *klingons-here* 0) ; Romulans don't get another attack
                    (> *skill-level* +good+)
                    (not *cloakedp*))
@@ -5909,7 +5904,7 @@ quadrant experiencing a supernova)."
     (setf original-time input-item)
     (setf time-to-wait input-item)
     (when (or (>= input-item *remaining-time*)
-              (> *enemies-here* 0))
+              (> (enemies-here) 0))
       ;; TODO - have Spock calculate remaining time and ask "Are you sure this is wise?"
       ;; TODO - for number of enemies just prompt "Are you sure?", player will figure it out eventually
       (print-prompt "Are you sure? ")
@@ -5928,7 +5923,7 @@ quadrant experiencing a supernova)."
         (return-from wait nil))
       (setf temp time-to-wait)
       (setf *time-taken-by-current-operation* time-to-wait)
-      (when (> *enemies-here* 0)
+      (when (> (enemies-here) 0)
         (setf random-time (+ 1.0 (random 1.0)))
         (when (< random-time temp)
           (setf temp random-time))
@@ -6611,7 +6606,7 @@ was an event that requires aborting the operation carried out by the calling fun
     ((string= *ship* +faerie-queene+)
      (print-message (format nil "Ye Faerie Queene has no death ray.~%")))
 
-    ((= *enemies-here* 0)
+    ((= (enemies-here) 0)
      (print-message (format nil "Sulu-  \"But Sir, there are no enemies in this quadrant.\"~%")))
 
     ((damagedp +death-ray+)
@@ -7157,7 +7152,6 @@ it's your problem."
     (setf *super-commanders-here* (read s))
     (setf *romulans-here* (read s))
     (setf *planet-coord* (read s))
-    (setf *enemies-here* (read s))
     (setf *romulan-neutral-zone-p* (read s))
     (setf *dockedp* (read s))
     (setf *in-orbit-p* (read s))
@@ -7268,7 +7262,6 @@ loop, in effect continuously saving the current state of the game."
     (print *super-commanders-here* s)
     (print *romulans-here* s)
     (print *planet-coord* s)
-    (print *enemies-here* s)
     (print *romulan-neutral-zone-p* s)
     (print *dockedp* s)
     (print *in-orbit-p* s)
@@ -7688,7 +7681,7 @@ values, expecially number of entities in the game."
       (print-message " YOU'LL NEED IT."))
     (skip-line *message-window* 2)
     (new-quadrant :show-thing nil)
-    (when (> (- *enemies-here* *things-here* *tholians-here*) 0)
+    (when (> (- (enemies-here) *things-here* *tholians-here*) 0)
       (setf *shields-are-up-p* t))
     (when *romulan-neutral-zone-p*
       (attack-player))))
