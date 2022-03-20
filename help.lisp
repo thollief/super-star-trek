@@ -1605,7 +1605,7 @@ unique.")
   "Print a list of help topics."
 
   (restart-paging *message-window*)
-  (print-message *message-window* (format nil "~%Available help topics are:~%~%"))
+  (print-message (format nil "~%Available help topics are:~%~%"))
   (let ((longest-topic-title 0))
     (dolist (topic help-topics)
       (when (> (length topic) longest-topic-title)
@@ -1614,7 +1614,7 @@ unique.")
     ;; Arrange the help topics into columns and the columns into lines, then display one line at a
     ;; time.
     (dolist (topic-line (split-sequence #\newline (format nil "~{~17@<~%~:;~A ~>~}" help-topics)))
-      (print-message *message-window* (format nil "~A~%" topic-line))))
+      (print-message (format nil "~A~%" topic-line))))
   (skip-line *message-window*))
 
 (defun display-online-help () ; C: helpme(void)
@@ -1639,10 +1639,9 @@ unique.")
       (skip-line *message-window*)
       (when (> (length contents) 0)
         (restart-paging *message-window*)
-        (print-message *message-window* (format nil "Spock- \"Captain, I've found the following information:\"~%~%"))
+        (print-message (format nil "Spock- \"Captain, I've found the following information:\"~%~%"))
         (dolist (content-line (split-sequence #\newline contents))
-          (print-message *message-window* (format nil "~A~%" content-line))))
+          (print-message (format nil "~A~%" content-line))))
       (when (and (= (length contents) 0)
                  (> (length topic) 0))
-        (print-message *message-window*
-         (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
+        (print-message (format nil "Spock- \"Captain, there is no information on that command.\"~%"))))))
