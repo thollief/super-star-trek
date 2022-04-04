@@ -1592,7 +1592,7 @@ Information is normally displayed in panels, or windows, on the terminal. If win
 used for some reason then information is displayed in line-by-line mode. This command toggles
 between the two forms of display.
 
-This command clears the display, so existing narrative is also cleared.
+This command clears the display, so existing information is also cleared.
 
 Win32 displays are always line-by-line."))
 
