@@ -564,10 +564,8 @@ that specific form of coordinate addressing."))
   (:documentation "Output visuals and sound effects when an enemy is destroyed."))
 
 (defmethod boom ((output-window screen) symbol x y)
-  "Output sound effects and visuals for a destroyd enemy. For the default scren there are no visuals
-or sound."
-
-  )
+  "Output sound effects and visuals for a destroyed enemy. For the default screen there are no
+ visuals or sound.")
 
 (defmethod boom ((output-window window) symbol x y)
   "Use curses functions to output effects when an enemy is destroyed."
