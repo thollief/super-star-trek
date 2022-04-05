@@ -424,11 +424,24 @@ shortest string, are the same."
     (wrefresh (curses-window output-window))
     (page-window output-window)))
 
-;; TODO - rename this to something like print-paged; more descriptive
-(defgeneric print-message (output-window message-to-print &key print-slowly)
+(defun print-prompt (prompt-to-print)
+  "Print a string. In curses mode print it in the prompt window, otherwise just print it."
+
+  (if (eql *prompt-window* *message-window*)
+      (skip-line *prompt-window*)
+      (clear-window *prompt-window*))
+
+  (print-out *prompt-window* prompt-to-print))
+
+(defun print-message (message-to-print &key print-slowly)
+  "Print a message in the message window."
+
+  (print-paged *message-window* message-to-print :print-slowly print-slowly))
+
+(defgeneric print-paged (output-window message-to-print &key print-slowly)
   (:documentation "Print a string in the specified window. Page the window after each newline."))
 
-(defmethod print-message ((output-window screen) message-to-print &key (print-slowly nil))
+(defmethod print-paged ((output-window screen) message-to-print &key (print-slowly nil))
 
   (let (message-line
         (first-newline-position (position #\newline message-to-print)))
@@ -441,8 +454,8 @@ shortest string, are the same."
     (when first-newline-position
       (page-window output-window)
       (when (> (length message-to-print) first-newline-position)
-        (print-message output-window (subseq message-to-print first-newline-position)
-                       :print-slowly print-slowly)))))
+        (print-paged output-window (subseq message-to-print first-newline-position)
+                     :print-slowly print-slowly)))))
 
 (defgeneric page-window (output-window)
   (:documentation "Pause output in the specified window if it has been filled with the maximum
@@ -551,10 +564,8 @@ that specific form of coordinate addressing."))
   (:documentation "Output visuals and sound effects when an enemy is destroyed."))
 
 (defmethod boom ((output-window screen) symbol x y)
-  "Output sound effects and visuals for a destroyd enemy. For the default scren there are no visuals
-or sound."
-
-  )
+  "Output sound effects and visuals for a destroyed enemy. For the default screen there are no
+ visuals or sound.")
 
 (defmethod boom ((output-window window) symbol x y)
   "Use curses functions to output effects when an enemy is destroyed."
@@ -591,6 +602,6 @@ or sound."
 
   ;; (short-range-scan) ; this was in the C source, is it needed here?
   (turn-sound-on 50)
-  (print-message *message-window* "     . . . . .     " :print-slowly t)
+  (print-message "     . . . . .     " :print-slowly t)
   (sleep 1)
   (turn-sound-off))
